@@ -65,9 +65,9 @@ func TestDuckDBDriver_RelativePath(t *testing.T) {
 		t.Fatalf("Failed to ping database: %v", err)
 	}
 
-	// 执行一个简单查询来触发文件创建
+	// 执行一个写入操作来触发文件创建（DuckDB 只在有写入操作时才创建文件）
 	ctx := context.Background()
-	_, err = db.ExecContext(ctx, "SELECT 1")
+	_, err = db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS test_table (id INTEGER)")
 	if err != nil {
 		t.Fatalf("Failed to execute query: %v", err)
 	}

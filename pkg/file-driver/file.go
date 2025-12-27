@@ -107,16 +107,22 @@ func (d *fileDriver) Open(name string) (driver.Conn, error) {
 	} else {
 		// 解析 URL，确定存储类型
 		baseURL, path := url.Split(name, file.Scheme)
-		if baseURL == "" {
-			// 如果没有指定 scheme，默认为本地文件系统
-			localPath = name
-			isLocalFile = true
-		} else if baseURL == file.Scheme {
-			// 本地文件系统
-			localPath = path
-			// 处理可能的 // 前缀
-			if strings.HasPrefix(localPath, "//") {
-				localPath = strings.TrimPrefix(localPath, "//")
+		// 检查是否是已知的远程存储 scheme
+		isRemoteScheme := strings.HasPrefix(name, "s3://") ||
+			strings.HasPrefix(name, "gs://") ||
+			strings.HasPrefix(name, "http://") ||
+			strings.HasPrefix(name, "https://")
+
+		if baseURL == "" || (!isRemoteScheme && baseURL == file.Scheme) {
+			// 如果没有指定 scheme 或者是 file scheme，默认为本地文件系统
+			if baseURL == file.Scheme {
+				localPath = path
+				// 处理可能的 // 前缀
+				if strings.HasPrefix(localPath, "//") {
+					localPath = strings.TrimPrefix(localPath, "//")
+				}
+			} else {
+				localPath = name
 			}
 			isLocalFile = true
 		}

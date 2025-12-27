@@ -1,6 +1,7 @@
 package sqlite3_driver
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
 	"os"
@@ -58,11 +59,6 @@ func ensureDataPath(path string) (string, error) {
 }
 
 func init() {
-	// 从环境变量获取扩展路径
-	if e := os.Getenv("SQLITE_VSS_EXT_PATH"); e != "" {
-		fts5Exts = append([]ext{{filepath.Join(e, "fts5"), "sqlite3_fts5_init"}}, fts5Exts...)
-	}
-
 	// 创建基础驱动
 	baseDriver := &sqlite3.SQLiteDriver{
 		ConnectHook: func(conn *sqlite3.SQLiteConn) error {
@@ -84,6 +80,8 @@ func init() {
 		},
 	}
 
+	// 注册 sqlite3 驱动（包装后的驱动，支持自动路径处理）
+	sql.Register("sqlite3", &sqlite3DriverWrapper{driver: baseDriver})
 }
 
 // sqlite3DriverWrapper 包装 SQLiteDriver，自动处理路径
