@@ -8,12 +8,32 @@ import (
 	"testing"
 )
 
+// getProjectRootTestdata 获取工程根目录的 testdata 路径
+func getProjectRootTestdata() string {
+	// 从当前文件位置向上查找 go.mod 来确定工程根目录
+	wd, _ := os.Getwd()
+	// 如果从 pkg/file-driver 目录运行，向上两级
+	// 如果从工程根目录运行，直接使用 testdata
+	if filepath.Base(wd) == "file-driver" {
+		return filepath.Join(wd, "..", "..", "testdata")
+	}
+	// 尝试查找 go.mod 文件来确定工程根目录
+	for dir := wd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return filepath.Join(dir, "testdata")
+		}
+	}
+	// 如果找不到，使用相对路径
+	return filepath.Join("..", "..", "testdata")
+}
+
 func TestFileDriver_OpenLocalFile(t *testing.T) {
-	// 使用 testdata 目录
-	dbPath := filepath.Join("testdata", "file_test.db")
+	// 使用工程根目录的 testdata
+	testdataDir := getProjectRootTestdata()
+	dbPath := filepath.Join(testdataDir, "file_test.db")
 
 	// 确保 testdata 目录存在
-	if err := os.MkdirAll("testdata", 0755); err != nil {
+	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 
@@ -35,9 +55,10 @@ func TestFileDriver_OpenLocalFile(t *testing.T) {
 }
 
 func TestFileDriver_OpenWithFileScheme(t *testing.T) {
-	dbPath := filepath.Join("testdata", "file_scheme.db")
+	testdataDir := getProjectRootTestdata()
+	dbPath := filepath.Join(testdataDir, "file_scheme.db")
 
-	if err := os.MkdirAll("testdata", 0755); err != nil {
+	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
@@ -60,21 +81,23 @@ func TestFileDriver_RelativePath(t *testing.T) {
 	// 测试相对路径，应该自动构建到 testdata/files 目录
 	dbPath := "relative_file_test.db"
 
+	// 获取工程根目录的 testdata
+	testdataDir := getProjectRootTestdata()
 	// 确保 testdata 目录存在
-	if err := os.MkdirAll("testdata", 0755); err != nil {
+	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 
-	// 设置环境变量指向 testdata
+	// 设置环境变量指向工程根目录的 testdata
 	originalDataDir := os.Getenv("DATA_DIR")
-	os.Setenv("DATA_DIR", "testdata")
+	os.Setenv("DATA_DIR", testdataDir)
 	defer func() {
 		if originalDataDir == "" {
 			os.Unsetenv("DATA_DIR")
 		} else {
 			os.Setenv("DATA_DIR", originalDataDir)
 		}
-		_ = os.RemoveAll(filepath.Join("testdata", "files"))
+		_ = os.RemoveAll(filepath.Join(testdataDir, "files"))
 	}()
 
 	db, err := sql.Open("file", dbPath)
@@ -88,16 +111,17 @@ func TestFileDriver_RelativePath(t *testing.T) {
 	}
 
 	// 验证文件确实创建在 testdata/files 目录
-	expectedPath := filepath.Join("testdata", "files", dbPath)
+	expectedPath := filepath.Join(testdataDir, "files", dbPath)
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
 		t.Errorf("Database file should be created at %s", expectedPath)
 	}
 }
 
 func TestFileDriver_CreateTable(t *testing.T) {
-	dbPath := filepath.Join("testdata", "file_create.db")
+	testdataDir := getProjectRootTestdata()
+	dbPath := filepath.Join(testdataDir, "file_create.db")
 
-	if err := os.MkdirAll("testdata", 0755); err != nil {
+	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
@@ -142,9 +166,10 @@ func TestFileDriver_CreateTable(t *testing.T) {
 }
 
 func TestFileDriver_Transaction(t *testing.T) {
-	dbPath := filepath.Join("testdata", "file_tx.db")
+	testdataDir := getProjectRootTestdata()
+	dbPath := filepath.Join(testdataDir, "file_tx.db")
 
-	if err := os.MkdirAll("testdata", 0755); err != nil {
+	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
@@ -213,7 +238,8 @@ func TestFileDriver_EmptyPath(t *testing.T) {
 
 func TestFileDriver_AbsolutePath(t *testing.T) {
 	// 测试绝对路径
-	absPath, err := filepath.Abs(filepath.Join("testdata", "file_abs.db"))
+	testdataDir := getProjectRootTestdata()
+	absPath, err := filepath.Abs(filepath.Join(testdataDir, "file_abs.db"))
 	if err != nil {
 		t.Fatalf("Failed to get absolute path: %v", err)
 	}

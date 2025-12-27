@@ -84,13 +84,19 @@ func ensureDataPath(dsn string) (string, error) {
 
 	fullPath := filepath.Join(dataDir, "duck", dsn) + queryPart
 
+	// 转换为绝对路径
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
 	// 确保目录存在
-	dir := filepath.Dir(filepath.Join(dataDir, "duck", dsn))
+	dir := filepath.Dir(absPath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	return fullPath, nil
+	return absPath, nil
 }
 
 // ensureReadWriteMode 确保连接字符串默认使用读写模式

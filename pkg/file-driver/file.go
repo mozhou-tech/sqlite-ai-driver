@@ -105,28 +105,36 @@ func (d *fileDriver) Open(name string) (driver.Conn, error) {
 		}
 		isLocalFile = true
 	} else {
-		// 解析 URL，确定存储类型
-		baseURL, path := url.Split(name, file.Scheme)
 		// 检查是否是已知的远程存储 scheme
 		isRemoteScheme := strings.HasPrefix(name, "s3://") ||
 			strings.HasPrefix(name, "gs://") ||
 			strings.HasPrefix(name, "http://") ||
 			strings.HasPrefix(name, "https://")
 
-		if baseURL == "" || (!isRemoteScheme && baseURL == file.Scheme) {
-			// 如果没有指定 scheme 或者是 file scheme，默认为本地文件系统
-			if baseURL == file.Scheme {
-				localPath = path
-				// 处理可能的 // 前缀
-				if strings.HasPrefix(localPath, "//") {
-					localPath = strings.TrimPrefix(localPath, "//")
+		if isRemoteScheme {
+			// 远程存储，localPath 保持为空，isLocalFile 为 false
+			isLocalFile = false
+		} else {
+			// 解析 URL，确定存储类型
+			baseURL, path := url.Split(name, file.Scheme)
+			if baseURL == "" || baseURL == file.Scheme {
+				// 如果没有指定 scheme 或者是 file scheme，默认为本地文件系统
+				if baseURL == file.Scheme {
+					localPath = path
+					// 处理可能的 // 前缀
+					if strings.HasPrefix(localPath, "//") {
+						localPath = strings.TrimPrefix(localPath, "//")
+					}
+				} else {
+					localPath = name
 				}
+				isLocalFile = true
 			} else {
+				// 其他未知的 scheme，尝试作为本地文件处理
 				localPath = name
+				isLocalFile = true
 			}
-			isLocalFile = true
 		}
-		// 如果是远程存储，localPath 保持为空，isLocalFile 为 false
 	}
 
 	// 如果是本地文件系统，自动处理路径
