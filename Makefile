@@ -1,13 +1,3 @@
-# 扩展下载相关
-EXT_DIR := $(shell pwd)/exts
-
-.PHONY: download-exts
-download-exts:
-	@mkdir -p $(EXT_DIR)
-	@$(EXT_DIR)/download-exts.sh
-
-test: download-exts
-	@SQLITE_VSS_EXT_PATH=$(EXT_DIR) go test ./ -v
 # 发布相关命令
 .PHONY: tag release verify-release
 
@@ -28,7 +18,7 @@ verify-release:
 	@go vet ./pkg/... || true
 	@echo "✓ 代码检查完成"
 	@echo "运行测试..."
-	# go test ./pkg/... -v
+	go test ./pkg/... -v
 	@echo "验证通过！"
 
 # 完整发布流程（自动使用当前时间生成版本标签）
@@ -50,5 +40,10 @@ release: verify-release
 	git push github master; \
 	git push github v0.0.0-$$VERSION
 
-make install:
+install:
 	go mod tidy
+
+test:
+	go test ./pkg/...
+
+

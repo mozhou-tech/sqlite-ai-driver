@@ -6,6 +6,8 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/marcboeker/go-duckdb/v2"
@@ -22,11 +24,74 @@ var extensions = []string{
 func init() {
 	// 注册 duckdb 驱动，默认安装并加载扩展
 	// 使用 duckdb.NewConnector 创建连接器，并在初始化时安装和加载扩展
-	sql.Register("duckdb", &duckdbDriver{})
+	// 使用 recover 捕获重复注册的 panic（可能 go-duckdb 包本身也注册了）
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// 如果是因为重复注册而 panic，忽略它
+				errStr := fmt.Sprintf("%v", r)
+				if strings.Contains(errStr, "Register called twice for driver duckdb") {
+					return
+				}
+				// 其他 panic 重新抛出
+				panic(r)
+			}
+		}()
+		sql.Register("duckdb", &duckdbDriver{})
+	}()
 }
 
 // duckdbDriver 实现了 driver.Driver 接口
 type duckdbDriver struct{}
+
+// getDataDir 获取基础数据目录
+// 优先从环境变量 DATA_DIR 获取，如果未设置则使用默认值 ./data
+func getDataDir() string {
+	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
+		return dataDir
+	}
+	return "./data"
+}
+
+// ensureDataPath 确保数据路径存在，如果是相对路径则自动构建到 duck 子目录
+func ensureDataPath(dsn string) (string, error) {
+	// 如果 DSN 包含路径分隔符或已经是完整路径，直接使用
+	if strings.Contains(dsn, string(filepath.Separator)) || strings.Contains(dsn, "/") || strings.Contains(dsn, "\\") {
+		// 提取路径部分（去掉查询参数）
+		pathPart := dsn
+		if idx := strings.Index(dsn, "?"); idx != -1 {
+			pathPart = dsn[:idx]
+		}
+
+		// 确保目录存在
+		dir := filepath.Dir(pathPart)
+		if dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				return "", fmt.Errorf("failed to create directory: %w", err)
+			}
+		}
+		return dsn, nil
+	}
+
+	// 如果是相对路径（不包含路径分隔符），自动构建到 duck 子目录
+	dataDir := getDataDir()
+	// 提取查询参数
+	queryPart := ""
+	if idx := strings.Index(dsn, "?"); idx != -1 {
+		queryPart = dsn[idx:]
+		dsn = dsn[:idx]
+	}
+
+	fullPath := filepath.Join(dataDir, "duck", dsn) + queryPart
+
+	// 确保目录存在
+	dir := filepath.Dir(filepath.Join(dataDir, "duck", dsn))
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	return fullPath, nil
+}
 
 // ensureReadWriteMode 确保连接字符串默认使用读写模式
 // 如果连接字符串中没有 access_mode 参数，则添加 access_mode=read_write
@@ -48,9 +113,18 @@ func ensureReadWriteMode(dsn string) string {
 }
 
 // Open 实现 driver.Driver 接口
+// name 参数可以是：
+// - 完整路径：/path/to/duck.db 或 /path/to/duck.db?access_mode=read_write
+// - 相对路径（如 "duck.db"）：自动构建到 {DATA_DIR}/duck/ 目录
 func (d *duckdbDriver) Open(name string) (driver.Conn, error) {
+	// 自动构建路径并创建目录
+	finalPath, err := ensureDataPath(name)
+	if err != nil {
+		return nil, err
+	}
+
 	// 确保默认使用读写模式
-	dsn := ensureReadWriteMode(name)
+	dsn := ensureReadWriteMode(finalPath)
 
 	// 使用 NewConnector 创建连接器，并在初始化时安装和加载扩展
 	connector, err := duckdb.NewConnector(dsn, func(execer driver.ExecerContext) error {
