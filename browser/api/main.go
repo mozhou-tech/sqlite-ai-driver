@@ -98,7 +98,7 @@ func main() {
 	}
 
 	// 确保数据目录存在
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+	if err := os.MkdirAll(dbPath, 0755); err != nil {
 		logrus.WithError(err).Fatal("Failed to create data directory")
 	}
 
@@ -106,9 +106,11 @@ func main() {
 	dbContext = ctx
 
 	// 初始化 SQLite3 数据库（使用 GORM）
+	// SQLite 需要文件路径，而不是目录路径
+	sqliteDBPath := filepath.Join(dbPath, "browser.db")
 	var err error
 	// 使用 sqlite3-driver，支持自动路径处理
-	gormDB, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	gormDB, err = gorm.Open(sqlite.Open(sqliteDBPath), &gorm.Config{})
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to connect database")
 	}
