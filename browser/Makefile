@@ -40,6 +40,16 @@ largeseed:
 	@echo "🚀 生成大量数据用于性能测试（1万条）..."
 	@cd api && go run largeseed.go
 
+# 停止所有相关进程
+stop:
+	@echo "🛑 停止后端服务..."
+	@-lsof -ti :40111 | xargs kill -9 2>/dev/null || true
+	@-pkill -f "air" || true
+	@-pkill -f "tmp/main" || true
+	@-pkill -f "go run.*main.go" || true
+	@sleep 1
+	@echo "✅ 后端服务已停止"
+
 # 清理数据库锁文件（当遇到 "Another process is using this Badger database" 错误时使用）
 clean-lock:
 	@echo "🧹 清理数据库锁文件..."

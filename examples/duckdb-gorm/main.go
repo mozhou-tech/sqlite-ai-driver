@@ -20,6 +20,43 @@ type User struct {
 	UpdatedAt time.Time `gorm:"autoUpdateTime"`
 }
 
+// checkFulltextIndexSupport 检查数据库是否支持全文索引
+func checkFulltextIndexSupport(db *gorm.DB) {
+	// 方法1: 尝试安装 fts 扩展
+	err := db.Exec("INSTALL fts").Error
+	if err != nil {
+		log.Printf("⚠️  安装 fts 扩展失败: %v", err)
+	} else {
+		fmt.Println("✅ fts 扩展安装成功（或已安装）")
+	}
+
+	// 方法2: 尝试加载 fts 扩展
+	err = db.Exec("LOAD fts").Error
+	if err != nil {
+		fmt.Printf("❌ 加载 fts 扩展失败: %v\n", err)
+		fmt.Println("❌ 全文索引不支持")
+		return
+	}
+	fmt.Println("✅ fts 扩展加载成功")
+
+	// 方法3: 检查扩展是否可用（通过查询已加载的扩展）
+	var extensions []struct {
+		ExtensionName string `gorm:"column:extension_name"`
+		Loaded        bool   `gorm:"column:loaded"`
+	}
+	err = db.Raw("SELECT extension_name, loaded FROM duckdb_extensions() WHERE extension_name = 'fts'").Scan(&extensions).Error
+	if err != nil {
+		log.Printf("⚠️  查询扩展信息失败: %v", err)
+		fmt.Println("⚠️  无法确认全文索引支持状态")
+	} else {
+		if len(extensions) > 0 && extensions[0].Loaded {
+			fmt.Println("✅ 全文索引支持已确认")
+		} else {
+			fmt.Println("⚠️  fts 扩展未加载")
+		}
+	}
+}
+
 func main() {
 	// 数据库路径（支持扩展名：.ddb, .duckdb, .db）
 	// 也可以使用绝对路径，如："/path/to/duck.db"
@@ -46,6 +83,10 @@ func main() {
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	fmt.Println("✅ 成功连接到 DuckDB 数据库")
+
+	// 检查是否支持全文索引
+	fmt.Println("\n🔍 检查全文索引支持...")
+	checkFulltextIndexSupport(db)
 
 	// 自动迁移（创建表）
 	if err := db.AutoMigrate(&User{}); err != nil {
