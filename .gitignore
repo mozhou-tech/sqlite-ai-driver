@@ -4,3 +4,4 @@ testdata
 .idea
 *.db
 *.log
+node_modules
