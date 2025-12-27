@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // Triple 表示图数据库中的三元组（subject-predicate-object）
@@ -117,25 +117,19 @@ func NewGraph(path string) (Graph, error) {
 	}
 
 	// 打开数据库连接
-	db, err := sql.Open("sqlite3", finalPath)
+	// 使用 modernc.org/sqlite 驱动，通过连接字符串参数设置 PRAGMA
+	dsn := finalPath + "?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// 设置 PRAGMA
-	ctx := context.Background()
-	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to set WAL mode: %w", err)
-	}
-	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys=1"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
-	}
+	// PRAGMA 已通过连接字符串参数设置，无需再次执行
 
 	graph := &cayleyGraph{db: db}
 
 	// 初始化数据库表结构
+	ctx := context.Background()
 	if err := graph.initSchema(ctx); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)

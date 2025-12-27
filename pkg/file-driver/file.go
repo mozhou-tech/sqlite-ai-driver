@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mattn/go-sqlite3"
 	"github.com/viant/afs"
 	"github.com/viant/afs/file"
 	"github.com/viant/afs/url"
+	_ "modernc.org/sqlite"
 )
 
 func init() {
@@ -145,9 +145,19 @@ func (d *fileDriver) Open(name string) (driver.Conn, error) {
 			return nil, err
 		}
 
-		// 使用 sqlite3 驱动直接打开本地文件
-		sqliteDriver := &sqlite3.SQLiteDriver{}
-		return sqliteDriver.Open(finalPath)
+		// 使用 modernc.org/sqlite 驱动直接打开本地文件
+		// 通过连接字符串参数设置 PRAGMA
+		dsn := finalPath + "?_pragma=journal_mode(WAL)"
+		db, err := sql.Open("sqlite", dsn)
+		if err != nil {
+			return nil, err
+		}
+		conn, err := db.Conn(nil)
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+		return &fileConnWrapper{db: db, conn: conn}, nil
 	}
 
 	// 对于远程存储（S3、GCS 等），需要先下载到临时文件
@@ -181,33 +191,151 @@ func (d *fileDriver) Open(name string) (driver.Conn, error) {
 		return nil, fmt.Errorf("file driver: failed to copy remote file to temp: %w", err)
 	}
 
-	// 使用 sqlite3 驱动打开临时文件
-	sqliteDriver := &sqlite3.SQLiteDriver{}
-	conn, err := sqliteDriver.Open(tmpPath)
+	// 使用 modernc.org/sqlite 驱动打开临时文件
+	// 通过连接字符串参数设置 PRAGMA
+	dsn := tmpPath + "?_pragma=journal_mode(WAL)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		os.Remove(tmpPath)
-		return nil, fmt.Errorf("file driver: failed to open sqlite3 connection: %w", err)
+		return nil, fmt.Errorf("file driver: failed to open sqlite connection: %w", err)
+	}
+	conn, err := db.Conn(nil)
+	if err != nil {
+		db.Close()
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("file driver: failed to get connection: %w", err)
 	}
 
 	// 返回包装的连接，在关闭时清理临时文件
-	return &fileConn{
-		Conn:    conn,
+	return &fileConnWrapper{
+		db:      db,
+		conn:    conn,
 		tmpPath: tmpPath,
 	}, nil
 }
 
-// fileConn 包装了 driver.Conn，在关闭时清理临时文件
-type fileConn struct {
-	driver.Conn
+// fileConnWrapper 包装了 sql.DB 和 sql.Conn，在关闭时清理临时文件
+type fileConnWrapper struct {
+	db      *sql.DB
+	conn    *sql.Conn
 	tmpPath string
 }
 
-func (c *fileConn) Close() error {
-	err := c.Conn.Close()
+func (c *fileConnWrapper) Prepare(query string) (driver.Stmt, error) {
+	stmt, err := c.conn.PrepareContext(nil, query)
+	if err != nil {
+		return nil, err
+	}
+	return &fileStmtWrapper{stmt: stmt}, nil
+}
+
+func (c *fileConnWrapper) Close() error {
+	err1 := c.conn.Close()
+	err2 := c.db.Close()
 	if c.tmpPath != "" {
-		if rmErr := os.Remove(c.tmpPath); rmErr != nil && err == nil {
-			err = rmErr
+		if rmErr := os.Remove(c.tmpPath); rmErr != nil && err1 == nil && err2 == nil {
+			err1 = rmErr
 		}
 	}
-	return err
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}
+
+func (c *fileConnWrapper) Begin() (driver.Tx, error) {
+	tx, err := c.conn.BeginTx(nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &fileTxWrapper{tx: tx}, nil
+}
+
+// fileStmtWrapper 包装 sql.Stmt 以实现 driver.Stmt 接口
+type fileStmtWrapper struct {
+	stmt *sql.Stmt
+}
+
+func (s *fileStmtWrapper) Close() error {
+	return s.stmt.Close()
+}
+
+func (s *fileStmtWrapper) NumInput() int {
+	return -1
+}
+
+func (s *fileStmtWrapper) Exec(args []driver.Value) (driver.Result, error) {
+	return s.stmt.Exec(convertFileArgs(args)...)
+}
+
+func (s *fileStmtWrapper) Query(args []driver.Value) (driver.Rows, error) {
+	rows, err := s.stmt.Query(convertFileArgs(args)...)
+	if err != nil {
+		return nil, err
+	}
+	return &fileRowsWrapper{rows: rows}, nil
+}
+
+// fileTxWrapper 包装 sql.Tx 以实现 driver.Tx 接口
+type fileTxWrapper struct {
+	tx *sql.Tx
+}
+
+func (t *fileTxWrapper) Commit() error {
+	return t.tx.Commit()
+}
+
+func (t *fileTxWrapper) Rollback() error {
+	return t.tx.Rollback()
+}
+
+// fileRowsWrapper 包装 sql.Rows 以实现 driver.Rows 接口
+type fileRowsWrapper struct {
+	rows *sql.Rows
+}
+
+func (r *fileRowsWrapper) Columns() []string {
+	cols, err := r.rows.Columns()
+	if err != nil {
+		return nil
+	}
+	return cols
+}
+
+func (r *fileRowsWrapper) Close() error {
+	return r.rows.Close()
+}
+
+func (r *fileRowsWrapper) Next(dest []driver.Value) error {
+	if !r.rows.Next() {
+		return r.rows.Err()
+	}
+	cols := r.Columns()
+	if len(dest) < len(cols) {
+		return fmt.Errorf("not enough destination values")
+	}
+	values := make([]interface{}, len(cols))
+	for i := range values {
+		values[i] = new(interface{})
+	}
+	if err := r.rows.Scan(values...); err != nil {
+		return err
+	}
+	for i, v := range values {
+		if ptr, ok := v.(*interface{}); ok {
+			dest[i] = *ptr
+		} else {
+			dest[i] = v
+		}
+	}
+	return nil
+}
+
+// convertFileArgs 将 driver.Value 转换为 interface{}
+func convertFileArgs(args []driver.Value) []interface{} {
+	result := make([]interface{}, len(args))
+	for i, v := range args {
+		result[i] = v
+	}
+	return result
 }

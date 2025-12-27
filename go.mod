@@ -1,10 +1,9 @@
 module github.com/mozhou-tech/sqlite-ai-driver
 
-go 1.25.5
+go 1.24
 
 require (
 	github.com/marcboeker/go-duckdb/v2 v2.0.0
-	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/viant/afs v1.20.0
 	modernc.org/sqlite v1.29.6
 )

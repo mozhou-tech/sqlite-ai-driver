@@ -56,10 +56,17 @@ func skipIfExtensionNotAvailable(t *testing.T, dbPath string) {
 
 func TestSQLite3Driver_RelativePath(t *testing.T) {
 	// 测试相对路径，应该自动构建到 testdata/db 目录
-	dbPath := "relative_test.db"
 
 	// 获取工程根目录的 testdata
 	testdataDir := getProjectRootTestdata()
+
+	// 转换为绝对路径
+	absTestdataDir, err := filepath.Abs(testdataDir)
+	if err != nil {
+		t.Fatalf("Failed to get absolute path for testdata directory: %v", err)
+	}
+	testdataDir = absTestdataDir
+
 	// 确保 testdata 目录存在
 	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
@@ -77,10 +84,14 @@ func TestSQLite3Driver_RelativePath(t *testing.T) {
 		_ = os.RemoveAll(filepath.Join(testdataDir, "db"))
 	}()
 
-	// 检查扩展是否可用
-	skipIfExtensionNotAvailable(t, filepath.Join(testdataDir, "db", dbPath))
+	// 使用相对路径（不包含路径分隔符），这样 ensureDataPath 会将其构建到 db 子目录
+	relativeDbPath := "relative_test.db"
+	expectedPath := filepath.Join(testdataDir, "db", relativeDbPath)
 
-	db, err := sql.Open("sqlite3", dbPath)
+	// 检查扩展是否可用
+	skipIfExtensionNotAvailable(t, expectedPath)
+
+	db, err := sql.Open("sqlite3", relativeDbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database with relative path: %v", err)
 	}
@@ -91,9 +102,30 @@ func TestSQLite3Driver_RelativePath(t *testing.T) {
 	}
 
 	// 验证文件确实创建在 testdata/db 目录
-	expectedPath := filepath.Join(testdataDir, "db", dbPath)
 	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
-		t.Errorf("Database file should be created at %s", expectedPath)
+		// 检查文件是否被创建在其他位置
+		// 可能被创建在当前工作目录的 db 子目录
+		wd, _ := os.Getwd()
+		altPath := filepath.Join(wd, "db", relativeDbPath)
+		if _, err := os.Stat(altPath); err == nil {
+			t.Errorf("Database file was created at %s instead of expected %s", altPath, expectedPath)
+			return
+		}
+		// 检查默认的 ./data/db 位置
+		defaultPath := filepath.Join("data", "db", relativeDbPath)
+		if absDefaultPath, err := filepath.Abs(defaultPath); err == nil {
+			if _, err := os.Stat(absDefaultPath); err == nil {
+				t.Errorf("Database file was created at %s instead of expected %s. DATA_DIR was set to %s", absDefaultPath, expectedPath, testdataDir)
+				return
+			}
+		}
+		// 检查是否文件被创建在 testdataDir 的根目录（如果驱动没有使用包装器）
+		directPath := filepath.Join(testdataDir, relativeDbPath)
+		if _, err := os.Stat(directPath); err == nil {
+			t.Errorf("Database file was created at %s instead of expected %s. The driver wrapper may not be working correctly.", directPath, expectedPath)
+			return
+		}
+		t.Errorf("Database file should be created at %s, but it doesn't exist. DATA_DIR=%s", expectedPath, os.Getenv("DATA_DIR"))
 	}
 }
 
