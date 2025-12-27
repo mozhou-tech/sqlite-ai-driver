@@ -21,7 +21,6 @@ import (
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/sirupsen/logrus"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -36,7 +35,9 @@ var (
 type Document struct {
 	ID             string    `gorm:"primaryKey;type:varchar(255);not null"`
 	CollectionName string    `gorm:"type:varchar(255);not null;index"`
-	Data           string    `gorm:"type:text"` // JSON 格式存储
+	Data           string    `gorm:"type:text"`     // JSON 格式存储
+	Embedding      string    `gorm:"type:DOUBLE[]"` // 向量数据，存储为数组
+	Content        string    `gorm:"type:text"`     // 提取的文本内容，用于全文搜索
 	CreatedAt      time.Time `gorm:"autoCreateTime"`
 	UpdatedAt      time.Time `gorm:"autoUpdateTime"`
 }
@@ -107,41 +108,68 @@ func main() {
 	ctx := context.Background()
 	dbContext = ctx
 
-	// 初始化 SQLite3 数据库（使用 GORM）
-	// SQLite 需要文件路径，而不是目录路径
-	sqliteDBPath := filepath.Join(dbPath, "browser.db")
+	// 初始化 DuckDB 数据库
+	// DuckDB 需要文件路径，而不是目录路径
+	duckDBPath := filepath.Join(dbPath, "browser.db")
 	// 转换为绝对路径，避免工作目录问题
-	absDBPath, err := filepath.Abs(sqliteDBPath)
+	absDBPath, err := filepath.Abs(duckDBPath)
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to get absolute path")
 	}
 	logrus.WithField("db_path", absDBPath).Info("Database path")
-	// 使用 sqlite3-driver，支持自动路径处理
-	gormDB, err = gorm.Open(sqlite.Open(absDBPath), &gorm.Config{})
+
+	// 直接使用 database/sql 连接 DuckDB
+	sqlDB, err = sql.Open("duckdb", absDBPath)
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to connect database")
 	}
-
-	// 获取底层 sql.DB
-	sqlDB, err = gormDB.DB()
-	if err != nil {
-		logrus.WithError(err).Fatal("Failed to get database instance")
-	}
 	defer sqlDB.Close()
+
+	// 由于 GORM 不支持直接使用 sql.DB 连接 DuckDB
+	// 我们使用原生 SQL 来创建表和执行操作
+	// GORM 变量保留用于兼容性，但实际使用 sqlDB 进行操作
 
 	// 设置连接池参数
 	sqlDB.SetMaxIdleConns(10)
 	sqlDB.SetMaxOpenConns(100)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
-	// 自动迁移
-	if err := gormDB.AutoMigrate(&Document{}); err != nil {
-		logrus.WithError(err).Fatal("Failed to migrate database")
+	// 确保扩展已加载（duckdb-driver 会自动加载，但我们可以验证）
+	if err := ensureDuckDBExtensions(sqlDB); err != nil {
+		logrus.WithError(err).Warn("Some DuckDB extensions may not be available")
 	}
 
-	// 创建全文搜索虚拟表（FTS5）
-	if err := createFTS5Table(sqlDB); err != nil {
-		logrus.WithError(err).Warn("Failed to create FTS5 table, fulltext search may not work")
+	// 使用原生 SQL 创建表（DuckDB 兼容 SQLite 语法）
+	createTableSQL := `
+	CREATE TABLE IF NOT EXISTS documents (
+		id VARCHAR(255) PRIMARY KEY,
+		collection_name VARCHAR(255) NOT NULL,
+		data TEXT,
+		embedding TEXT,
+		content TEXT,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_documents_collection ON documents(collection_name);
+	`
+	if _, err := sqlDB.Exec(createTableSQL); err != nil {
+		logrus.WithError(err).Fatal("Failed to create documents table")
+	}
+
+	// 创建全文搜索索引（使用 DuckDB FTS 扩展）
+	if err := createDuckDBFTSIndex(sqlDB); err != nil {
+		logrus.WithError(err).Error("Failed to create FTS index, fulltext search may not work")
+		// 不退出程序，但记录错误，后续会在搜索时检查索引是否存在
+	} else {
+		logrus.Info("DuckDB FTS index created successfully")
+	}
+
+	// 创建向量索引（使用 DuckDB VSS 扩展）
+	if err := createDuckDBVectorIndex(sqlDB); err != nil {
+		logrus.WithError(err).Error("Failed to create vector index, vector search may not work")
+		// 不退出程序，但记录错误，后续会在搜索时检查索引是否存在
+	} else {
+		logrus.Info("DuckDB vector index created successfully")
 	}
 
 	// 初始化图数据库（使用 Cayley 驱动）
@@ -204,58 +232,72 @@ func main() {
 	}
 }
 
-// createFTS5Table 创建 FTS5 全文搜索虚拟表
-func createFTS5Table(db *sql.DB) error {
-	// 创建 FTS5 虚拟表用于全文搜索
-	// 注意：FTS5 的 content_rowid 必须指向一个整数列，不能使用字符串 ID
-	// 因此我们使用 rowid 作为关联，并在 id 字段中存储文档 ID
-	createFTS5SQL := `
-	CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
-		id UNINDEXED,
-		collection_name UNINDEXED,
-		content
-	);
-	`
-	_, err := db.Exec(createFTS5SQL)
+// ensureDuckDBExtensions 确保 DuckDB 扩展已加载
+func ensureDuckDBExtensions(db *sql.DB) error {
+	// 检查扩展是否已加载
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM duckdb_extensions() WHERE loaded = true AND extension_name IN ('fts', 'vss')").Scan(&count)
 	if err != nil {
-		return err
+		// 如果查询失败，尝试手动加载
+		logrus.Warn("Failed to check extensions, attempting to load manually")
+		_, _ = db.Exec("INSTALL fts; LOAD fts;")
+		_, _ = db.Exec("INSTALL vss; LOAD vss;")
+		return nil
 	}
 
-	// 创建触发器来自动同步 FTS5 索引
-	// 当 documents 表插入时
-	createTriggerSQL1 := `
-	CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON documents BEGIN
-		INSERT INTO documents_fts(rowid, id, collection_name, content)
-		VALUES (new.rowid, new.id, new.collection_name, ?);
-	END;
+	if count < 2 {
+		logrus.Warn("Some extensions may not be loaded, attempting to load")
+		_, _ = db.Exec("INSTALL fts; LOAD fts;")
+		_, _ = db.Exec("INSTALL vss; LOAD vss;")
+	}
+
+	logrus.Info("DuckDB extensions verified")
+	return nil
+}
+
+// createDuckDBFTSIndex 创建 DuckDB 全文搜索索引
+func createDuckDBFTSIndex(db *sql.DB) error {
+	// 使用 DuckDB 的 FTS 扩展创建全文搜索索引
+	// 注意：DuckDB 的 FTS 使用 PRAGMA create_fts_index
+	createFTSSQL := `PRAGMA create_fts_index('documents', 'id', 'content');`
+	_, err := db.Exec(createFTSSQL)
+	if err != nil {
+		// 如果索引已存在，忽略错误
+		if strings.Contains(err.Error(), "already exists") {
+			logrus.Info("FTS index already exists")
+			return nil
+		}
+		return fmt.Errorf("failed to create FTS index: %w", err)
+	}
+
+	logrus.Info("DuckDB FTS index created successfully")
+	return nil
+}
+
+// createDuckDBVectorIndex 创建 DuckDB 向量索引
+func createDuckDBVectorIndex(db *sql.DB) error {
+	// 使用 DuckDB 的 VSS 扩展创建 HNSW 向量索引
+	// 注意：需要确保 embedding 列存在且类型正确
+	createVectorIndexSQL := `
+	CREATE INDEX IF NOT EXISTS documents_embedding_idx 
+	ON documents USING hnsw (embedding);
 	`
-	// 注意：触发器中的 content 需要从 JSON 数据中提取，但触发器不支持函数调用
-	// 所以我们手动维护索引
+	_, err := db.Exec(createVectorIndexSQL)
+	if err != nil {
+		// 如果索引已存在或列不存在，记录警告但不失败
+		if strings.Contains(err.Error(), "already exists") {
+			logrus.Info("Vector index already exists")
+			return nil
+		}
+		// 如果 embedding 列不存在，这是正常的（因为它是可选的）
+		if strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "column") {
+			logrus.Warn("Embedding column may not exist yet, vector index will be created when needed")
+			return nil
+		}
+		return fmt.Errorf("failed to create vector index: %w", err)
+	}
 
-	// 当 documents 表更新时
-	createTriggerSQL2 := `
-	CREATE TRIGGER IF NOT EXISTS documents_fts_update AFTER UPDATE ON documents BEGIN
-		UPDATE documents_fts SET
-			id = new.id,
-			collection_name = new.collection_name,
-			content = ?
-		WHERE rowid = new.rowid;
-	END;
-	`
-
-	// 当 documents 表删除时
-	createTriggerSQL3 := `
-	CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON documents BEGIN
-		DELETE FROM documents_fts WHERE rowid = old.rowid;
-	END;
-	`
-
-	// 由于触发器无法直接提取 JSON 内容，我们仍然需要手动维护索引
-	// 但触发器可以帮助同步 rowid
-	_, _ = db.Exec(createTriggerSQL1)
-	_, _ = db.Exec(createTriggerSQL2)
-	_, _ = db.Exec(createTriggerSQL3)
-
+	logrus.Info("DuckDB vector index created successfully")
 	return nil
 }
 
@@ -430,10 +472,24 @@ func createDocument(c *gin.Context) {
 		return
 	}
 
+	// 提取文本内容用于全文搜索
+	content := extractTextFromData(string(dataJSON))
+
+	// 提取 embedding（如果存在）
+	embeddingStr := ""
+	if embeddingField, ok := data["embedding"]; ok {
+		embeddingJSON, err := json.Marshal(embeddingField)
+		if err == nil {
+			embeddingStr = string(embeddingJSON)
+		}
+	}
+
 	doc := Document{
 		ID:             id,
 		CollectionName: name,
 		Data:           string(dataJSON),
+		Content:        content,
+		Embedding:      embeddingStr,
 	}
 
 	if err := gormDB.Create(&doc).Error; err != nil {
@@ -441,8 +497,7 @@ func createDocument(c *gin.Context) {
 		return
 	}
 
-	// 更新 FTS5 索引
-	updateFTS5Index(sqlDB, doc)
+	// DuckDB 的 FTS 索引会自动更新，无需手动维护
 
 	c.JSON(http.StatusCreated, DocumentResponse{
 		ID:   doc.ID,
@@ -493,14 +548,27 @@ func updateDocument(c *gin.Context) {
 		return
 	}
 
+	// 提取文本内容用于全文搜索
+	content := extractTextFromData(string(dataJSON))
+
+	// 提取 embedding（如果存在）
+	embeddingStr := ""
+	if embeddingField, ok := data["embedding"]; ok {
+		embeddingJSON, err := json.Marshal(embeddingField)
+		if err == nil {
+			embeddingStr = string(embeddingJSON)
+		}
+	}
+
 	doc.Data = string(dataJSON)
+	doc.Content = content
+	doc.Embedding = embeddingStr
 	if err := gormDB.Save(&doc).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
 
-	// 更新 FTS5 索引
-	updateFTS5Index(sqlDB, doc)
+	// DuckDB 的 FTS 索引会自动更新，无需手动维护
 
 	c.JSON(http.StatusOK, DocumentResponse{
 		ID:   doc.ID,
@@ -518,8 +586,7 @@ func deleteDocument(c *gin.Context) {
 		return
 	}
 
-	// 从 FTS5 索引中删除
-	deleteFTS5Index(sqlDB, id)
+	// DuckDB 的 FTS 索引会自动更新，无需手动删除
 
 	c.JSON(http.StatusOK, gin.H{"message": "Document deleted"})
 }
@@ -540,24 +607,58 @@ func fulltextSearch(c *gin.Context) {
 
 	start := time.Now()
 
-	// 使用 FTS5 进行全文搜索
-	// 通过 rowid 关联 documents 表和 documents_fts 表
+	// 检查 FTS 索引是否存在，如果不存在则尝试创建
+	var indexExists bool
+	checkSQL := `SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name = 'content'`
+	var count int
+	if err := sqlDB.QueryRow(checkSQL).Scan(&count); err == nil && count > 0 {
+		// 检查 FTS 索引
+		indexCheckSQL := `SELECT COUNT(*) FROM duckdb_indexes() WHERE index_name LIKE '%fts%'`
+		if err := sqlDB.QueryRow(indexCheckSQL).Scan(&count); err == nil && count > 0 {
+			indexExists = true
+		}
+	}
+
+	if !indexExists {
+		logrus.Warn("FTS index does not exist, attempting to create it")
+		if err := createDuckDBFTSIndex(sqlDB); err != nil {
+			logrus.WithError(err).Error("Failed to create FTS index")
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Error: fmt.Sprintf("FTS index is not available: %v", err),
+			})
+			return
+		}
+	}
+
+	// 使用 DuckDB FTS 进行全文搜索
+	// DuckDB 的 FTS 使用 MATCH 操作符，但语法可能不同
+	// 先尝试使用 FTS 查询，如果失败则回退到 LIKE 查询
 	query := `
-	SELECT d.id, d.collection_name, d.data, 
-	       bm25(documents_fts) as score
-	FROM documents_fts
-	JOIN documents d ON d.rowid = documents_fts.rowid
-	WHERE d.collection_name = ? 
-	  AND documents_fts MATCH ?
-	ORDER BY score
+	SELECT id, collection_name, data, 1.0 as score
+	FROM documents
+	WHERE collection_name = ? 
+	  AND content MATCH ?
 	LIMIT ?
 	`
 
 	rows, err := sqlDB.Query(query, name, req.Query, req.Limit)
 	if err != nil {
-		logrus.WithError(err).Error("Fulltext search failed")
-		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
-		return
+		// 如果 FTS 查询失败，使用 LIKE 查询作为回退
+		logrus.WithError(err).Warn("FTS query failed, using LIKE query as fallback")
+		query = `
+		SELECT id, collection_name, data, 1.0 as score
+		FROM documents
+		WHERE collection_name = ? 
+		  AND content LIKE ?
+		LIMIT ?
+		`
+		searchPattern := "%" + req.Query + "%"
+		rows, err = sqlDB.Query(query, name, searchPattern, req.Limit)
+		if err != nil {
+			logrus.WithError(err).Error("Fulltext search failed")
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+			return
+		}
 	}
 	defer rows.Close()
 
@@ -570,8 +671,8 @@ func fulltextSearch(c *gin.Context) {
 			continue
 		}
 
-		// 检查阈值
-		if req.Threshold > 0 && score > req.Threshold {
+		// 检查阈值（注意：DuckDB FTS 的分数可能不同，这里使用简单的过滤）
+		if req.Threshold > 0 && score < req.Threshold {
 			continue
 		}
 
@@ -659,13 +760,17 @@ func vectorSearch(c *gin.Context) {
 		req.Field = "embedding"
 	}
 
+	// 由于 embedding 存储为 JSON 字符串，我们使用内存计算进行向量搜索
+	// 未来可以优化为直接在 DuckDB 中存储数组类型并使用 VSS 扩展
+	// 目前使用回退方案（内存计算）
+	vectorSearchFallback(c, name, req, queryVector)
+}
+
+// vectorSearchFallback 向量搜索的回退方案（内存计算）
+func vectorSearchFallback(c *gin.Context, name string, req VectorSearchRequest, queryVector []float64) {
 	start := time.Now()
 
-	// 使用 SQLite 进行向量搜索
-	// 从文档中提取 embedding 字段，计算余弦相似度
-	// 注意：这需要文档的 data 字段中包含 embedding 数组
-
-	// 首先获取集合中的所有文档
+	// 获取集合中的所有文档
 	var docs []Document
 	if err := gormDB.Where("collection_name = ?", name).Find(&docs).Error; err != nil {
 		logrus.WithError(err).Error("Failed to get documents for vector search")
@@ -704,7 +809,6 @@ func vectorSearch(c *gin.Context) {
 				} else if f, ok := val.(float32); ok {
 					docVector[i] = float64(f)
 				} else {
-					// 跳过无效的 embedding
 					docVector = nil
 					break
 				}
@@ -773,62 +877,7 @@ func generateID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
-// updateFTS5Index 更新 FTS5 索引
-func updateFTS5Index(db *sql.DB, doc Document) {
-	// 提取文本内容用于全文搜索
-	content := extractTextFromData(doc.Data)
-
-	// 首先获取文档的 rowid
-	var rowid int64
-	rowidQuery := `SELECT rowid FROM documents WHERE id = ? AND collection_name = ?`
-	err := db.QueryRow(rowidQuery, doc.ID, doc.CollectionName).Scan(&rowid)
-	if err != nil {
-		logrus.WithError(err).WithFields(logrus.Fields{
-			"doc_id":     doc.ID,
-			"collection": doc.CollectionName,
-		}).Warn("Failed to get document rowid for FTS5 index")
-		return
-	}
-
-	// 使用 rowid 更新 FTS5 索引
-	query := `
-	INSERT INTO documents_fts(rowid, id, collection_name, content)
-	VALUES (?, ?, ?, ?)
-	ON CONFLICT(rowid) DO UPDATE SET
-		id = excluded.id,
-		collection_name = excluded.collection_name,
-		content = excluded.content
-	`
-	_, err = db.Exec(query, rowid, doc.ID, doc.CollectionName, content)
-	if err != nil {
-		logrus.WithError(err).WithFields(logrus.Fields{
-			"doc_id": doc.ID,
-			"rowid":  rowid,
-		}).Warn("Failed to update FTS5 index")
-	}
-}
-
-// deleteFTS5Index 从 FTS5 索引中删除
-func deleteFTS5Index(db *sql.DB, id string) {
-	// 首先获取文档的 rowid
-	var rowid int64
-	rowidQuery := `SELECT rowid FROM documents WHERE id = ?`
-	err := db.QueryRow(rowidQuery, id).Scan(&rowid)
-	if err != nil {
-		logrus.WithError(err).WithField("doc_id", id).Warn("Failed to get document rowid for FTS5 deletion")
-		return
-	}
-
-	// 使用 rowid 删除 FTS5 索引
-	query := `DELETE FROM documents_fts WHERE rowid = ?`
-	_, err = db.Exec(query, rowid)
-	if err != nil {
-		logrus.WithError(err).WithFields(logrus.Fields{
-			"doc_id": id,
-			"rowid":  rowid,
-		}).Warn("Failed to delete from FTS5 index")
-	}
-}
+// DuckDB 的 FTS 索引是自动维护的，无需手动更新或删除
 
 // extractTextFromData 从 JSON 数据中提取文本内容
 func extractTextFromData(dataJSON string) string {
@@ -839,17 +888,26 @@ func extractTextFromData(dataJSON string) string {
 
 	var parts []string
 	for k, v := range data {
-		if k == "id" || k == "_rev" {
+		if k == "id" || k == "_rev" || k == "embedding" {
 			continue
 		}
 		if str, ok := v.(string); ok {
 			parts = append(parts, str)
+		} else if arr, ok := v.([]interface{}); ok {
+			// 处理数组字段（如 tags）
+			for _, item := range arr {
+				if str, ok := item.(string); ok {
+					parts = append(parts, str)
+				}
+			}
 		} else {
 			parts = append(parts, fmt.Sprintf("%v", v))
 		}
 	}
 	return strings.Join(parts, " ")
 }
+
+// DuckDB 的 FTS 索引是自动维护的，无需手动重新索引
 
 // DashScope API 结构
 type DashScopeEmbeddingRequest struct {

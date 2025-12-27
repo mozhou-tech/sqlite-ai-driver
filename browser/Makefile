@@ -3,7 +3,7 @@
 # 安装前端依赖
 install:
 	pnpm install
-	cd api && go mod download
+	cd api && go mod tidy
 
 # 停止后台运行的 API 服务器
 stop:
