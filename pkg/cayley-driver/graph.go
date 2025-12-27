@@ -75,7 +75,7 @@ func getDataDir() string {
 	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
 		return dataDir
 	}
-	return "./data"
+	return "./testdata"
 }
 
 // ensureDataPath 确保数据路径存在，如果是相对路径则自动构建到 cayley 子目录

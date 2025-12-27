@@ -249,11 +249,9 @@ func setupLitestream(ctx context.Context, dbPath string) (*litestream.DB, func()
 	lsDB.MonitorInterval = 1 * time.Second
 	lsDB.CheckpointInterval = 1 * time.Minute
 	lsDB.MinCheckpointPageN = 1000
-	lsDB.MaxCheckpointPageN = 10000
 
 	// 创建文件副本客户端（用于本地文件备份）
-	fileClient := file.NewReplicaClient()
-	fileClient.Path = backupDir
+	fileClient := file.NewReplicaClient(backupDir)
 
 	// 创建副本并附加到数据库
 	replica := litestream.NewReplica(lsDB)

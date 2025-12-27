@@ -1,8 +1,6 @@
 data
 # 测试过程中产生的数据库文件
-testdata/*.db
-testdata/*.db-shm
-testdata/*.db-wal
+testdata
 .idea
 *.db
 *.log
