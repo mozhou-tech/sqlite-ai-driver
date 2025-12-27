@@ -64,3 +64,8 @@ force-clean: stop
 test:
 	cd api &&  go mod tidy && go test ./...
 
+build-api:
+	@echo "🏗️  构建后端服务 (不包含 Swagger)..."
+	@cd api && go mod tidy && go build -ldflags="-s -w" -o browser-api .
+	@gsa api/browser-api
+

@@ -18,6 +18,8 @@ package rxdb
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/cloudwego/eino/callbacks"
@@ -25,13 +27,16 @@ import (
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/rxdb-go/pkg/rxdb"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 )
 
 type IndexerConfig struct {
-	// Collection is an RxDB collection.
-	Collection rxdb.Collection
-	// DocumentToMap supports customize how to convert eino document to rxdb map.
+	// DB is a DuckDB database connection.
+	DB *sql.DB
+	// TableName is the name of the table to store documents.
+	// Default "documents".
+	TableName string
+	// DocumentToMap supports customize how to convert eino document to map.
 	// It should return the map and a mapping of which fields in the map should be embedded.
 	// The key in fieldsToEmbed is the field whose value (should be string) will be embedded,
 	// and the value is the field name where the resulting vector should be stored.
@@ -49,11 +54,11 @@ type Indexer struct {
 
 func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 	if config.Embedding == nil {
-		return nil, fmt.Errorf("[NewIndexer] embedding not provided for rxdb indexer")
+		return nil, fmt.Errorf("[NewIndexer] embedding not provided for duckdb indexer")
 	}
 
-	if config.Collection == nil {
-		return nil, fmt.Errorf("[NewIndexer] rxdb collection not provided")
+	if config.DB == nil {
+		return nil, fmt.Errorf("[NewIndexer] duckdb database connection not provided")
 	}
 
 	if config.DocumentToMap == nil {
@@ -64,9 +69,20 @@ func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 		config.BatchSize = 10
 	}
 
-	return &Indexer{
+	if config.TableName == "" {
+		config.TableName = "documents"
+	}
+
+	indexer := &Indexer{
 		config: config,
-	}, nil
+	}
+
+	// Initialize table schema
+	if err := indexer.initSchema(ctx); err != nil {
+		return nil, fmt.Errorf("[NewIndexer] failed to initialize schema: %w", err)
+	}
+
+	return indexer, nil
 }
 
 func (i *Indexer) Store(ctx context.Context, docs []*schema.Document, opts ...indexer.Option) (ids []string, err error) {
@@ -126,8 +142,8 @@ func (i *Indexer) bulkStore(ctx context.Context, docs []*schema.Document, option
 			}
 		}
 
-		if _, err := i.config.Collection.BulkUpsert(ctx, toStore); err != nil {
-			return fmt.Errorf("[bulkStore] rxdb bulk upsert failed: %w", err)
+		if err := i.bulkUpsert(ctx, toStore); err != nil {
+			return fmt.Errorf("[bulkStore] duckdb bulk upsert failed: %w", err)
 		}
 
 		toStore = toStore[:0]
@@ -206,7 +222,7 @@ func (i *Indexer) makeEmbeddingCtx(ctx context.Context, emb embedding.Embedder) 
 	return callbacks.ReuseHandlers(ctx, runInfo)
 }
 
-const typ = "RxDB"
+const typ = "DuckDB"
 
 func (i *Indexer) GetType() string {
 	return typ
@@ -233,4 +249,102 @@ func defaultDocumentToMap(ctx context.Context, doc *schema.Document) (map[string
 	}
 
 	return docMap, fieldsToEmbed, nil
+}
+
+// initSchema initializes the database table schema
+func (i *Indexer) initSchema(ctx context.Context) error {
+	// Create table with dynamic columns support
+	// DuckDB supports JSON columns and we'll store metadata as JSON
+	createTableSQL := fmt.Sprintf(`
+		CREATE TABLE IF NOT EXISTS %s (
+			id VARCHAR PRIMARY KEY,
+			content TEXT,
+			vector_content FLOAT[],
+			metadata JSON,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)
+	`, i.config.TableName)
+
+	_, err := i.config.DB.ExecContext(ctx, createTableSQL)
+	if err != nil {
+		return fmt.Errorf("[initSchema] failed to create table: %w", err)
+	}
+
+	return nil
+}
+
+// bulkUpsert inserts or updates documents in DuckDB
+func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
+	if len(docs) == 0 {
+		return nil
+	}
+
+	// Start a transaction for batch operations
+	tx, err := i.config.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("[bulkUpsert] failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Prepare upsert statement using INSERT OR REPLACE
+	// DuckDB supports INSERT OR REPLACE syntax
+	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
+		INSERT OR REPLACE INTO %s (id, content, vector_content, metadata)
+		VALUES (?, ?, ?, ?)
+	`, i.config.TableName))
+	if err != nil {
+		return fmt.Errorf("[bulkUpsert] failed to prepare statement: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, doc := range docs {
+		// Extract id, content, vector_content, and metadata
+		id, ok := doc["id"].(string)
+		if !ok {
+			return fmt.Errorf("[bulkUpsert] document id is not a string")
+		}
+
+		content, _ := doc[defaultReturnFieldContent].(string)
+
+		// Get vector_content
+		var vectorContent []float64
+		if vec, ok := doc[defaultReturnFieldVectorContent]; ok {
+			if vecSlice, ok := vec.([]float64); ok {
+				vectorContent = vecSlice
+			}
+		}
+
+		// Build metadata JSON (all fields except id, content, and vector fields)
+		metadata := make(map[string]any)
+		for k, v := range doc {
+			if k != "id" && k != defaultReturnFieldContent && k != defaultReturnFieldVectorContent {
+				metadata[k] = v
+			}
+		}
+
+		// Convert metadata to JSON
+		metadataJSON, err := json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("[bulkUpsert] failed to marshal metadata: %w", err)
+		}
+
+		// Convert vector to DuckDB array format
+		// DuckDB expects FLOAT[] which can be passed as []float64
+		// If vectorContent is nil or empty, pass NULL
+		var vectorArg interface{} = vectorContent
+		if len(vectorContent) == 0 {
+			vectorArg = nil
+		}
+
+		_, err = stmt.ExecContext(ctx, id, content, vectorArg, string(metadataJSON))
+		if err != nil {
+			return fmt.Errorf("[bulkUpsert] failed to execute statement: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("[bulkUpsert] failed to commit transaction: %w", err)
+	}
+
+	return nil
 }
