@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -78,6 +79,7 @@ type VectorSearchRequest struct {
 	QueryText  string    `json:"query_text,omitempty"`
 	Limit      int       `json:"limit,omitempty"`
 	Field      string    `json:"field,omitempty"`
+	Threshold  float64   `json:"threshold,omitempty"`
 }
 
 // ErrorResponse 错误响应
@@ -108,9 +110,14 @@ func main() {
 	// 初始化 SQLite3 数据库（使用 GORM）
 	// SQLite 需要文件路径，而不是目录路径
 	sqliteDBPath := filepath.Join(dbPath, "browser.db")
-	var err error
+	// 转换为绝对路径，避免工作目录问题
+	absDBPath, err := filepath.Abs(sqliteDBPath)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to get absolute path")
+	}
+	logrus.WithField("db_path", absDBPath).Info("Database path")
 	// 使用 sqlite3-driver，支持自动路径处理
-	gormDB, err = gorm.Open(sqlite.Open(sqliteDBPath), &gorm.Config{})
+	gormDB, err = gorm.Open(sqlite.Open(absDBPath), &gorm.Config{})
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to connect database")
 	}
@@ -200,16 +207,56 @@ func main() {
 // createFTS5Table 创建 FTS5 全文搜索虚拟表
 func createFTS5Table(db *sql.DB) error {
 	// 创建 FTS5 虚拟表用于全文搜索
+	// 注意：FTS5 的 content_rowid 必须指向一个整数列，不能使用字符串 ID
+	// 因此我们使用 rowid 作为关联，并在 id 字段中存储文档 ID
 	createFTS5SQL := `
 	CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
 		id UNINDEXED,
-		collection_name,
-		content,
-		content_rowid=id
+		collection_name UNINDEXED,
+		content
 	);
 	`
 	_, err := db.Exec(createFTS5SQL)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 创建触发器来自动同步 FTS5 索引
+	// 当 documents 表插入时
+	createTriggerSQL1 := `
+	CREATE TRIGGER IF NOT EXISTS documents_fts_insert AFTER INSERT ON documents BEGIN
+		INSERT INTO documents_fts(rowid, id, collection_name, content)
+		VALUES (new.rowid, new.id, new.collection_name, ?);
+	END;
+	`
+	// 注意：触发器中的 content 需要从 JSON 数据中提取，但触发器不支持函数调用
+	// 所以我们手动维护索引
+
+	// 当 documents 表更新时
+	createTriggerSQL2 := `
+	CREATE TRIGGER IF NOT EXISTS documents_fts_update AFTER UPDATE ON documents BEGIN
+		UPDATE documents_fts SET
+			id = new.id,
+			collection_name = new.collection_name,
+			content = ?
+		WHERE rowid = new.rowid;
+	END;
+	`
+
+	// 当 documents 表删除时
+	createTriggerSQL3 := `
+	CREATE TRIGGER IF NOT EXISTS documents_fts_delete AFTER DELETE ON documents BEGIN
+		DELETE FROM documents_fts WHERE rowid = old.rowid;
+	END;
+	`
+
+	// 由于触发器无法直接提取 JSON 内容，我们仍然需要手动维护索引
+	// 但触发器可以帮助同步 rowid
+	_, _ = db.Exec(createTriggerSQL1)
+	_, _ = db.Exec(createTriggerSQL2)
+	_, _ = db.Exec(createTriggerSQL3)
+
+	return nil
 }
 
 // getDBInfo 获取数据库信息
@@ -494,11 +541,12 @@ func fulltextSearch(c *gin.Context) {
 	start := time.Now()
 
 	// 使用 FTS5 进行全文搜索
+	// 通过 rowid 关联 documents 表和 documents_fts 表
 	query := `
 	SELECT d.id, d.collection_name, d.data, 
 	       bm25(documents_fts) as score
-	FROM documents d
-	JOIN documents_fts ON documents_fts.id = d.id
+	FROM documents_fts
+	JOIN documents d ON d.rowid = documents_fts.rowid
 	WHERE d.collection_name = ? 
 	  AND documents_fts MATCH ?
 	ORDER BY score
@@ -611,11 +659,112 @@ func vectorSearch(c *gin.Context) {
 		req.Field = "embedding"
 	}
 
-	// 使用 DuckDB VSS 扩展进行向量搜索
-	// 注意：这里需要切换到 DuckDB 数据库或使用 SQLite 的向量扩展
-	// 为了简化，这里先返回一个占位实现
-	c.JSON(http.StatusNotImplemented, ErrorResponse{
-		Error: "Vector search using DuckDB VSS is not yet implemented. Please use fulltext search instead.",
+	start := time.Now()
+
+	// 使用 SQLite 进行向量搜索
+	// 从文档中提取 embedding 字段，计算余弦相似度
+	// 注意：这需要文档的 data 字段中包含 embedding 数组
+
+	// 首先获取集合中的所有文档
+	var docs []Document
+	if err := gormDB.Where("collection_name = ?", name).Find(&docs).Error; err != nil {
+		logrus.WithError(err).Error("Failed to get documents for vector search")
+		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	type VectorResult struct {
+		Document DocumentResponse
+		Score    float64
+	}
+
+	var results []VectorResult
+
+	// 遍历文档，计算相似度
+	for _, doc := range docs {
+		var data map[string]interface{}
+		if err := json.Unmarshal([]byte(doc.Data), &data); err != nil {
+			continue
+		}
+
+		// 获取文档的 embedding
+		embeddingField, ok := data[req.Field]
+		if !ok {
+			continue
+		}
+
+		// 转换 embedding 为 []float64
+		var docVector []float64
+		switch v := embeddingField.(type) {
+		case []interface{}:
+			docVector = make([]float64, len(v))
+			for i, val := range v {
+				if f, ok := val.(float64); ok {
+					docVector[i] = f
+				} else if f, ok := val.(float32); ok {
+					docVector[i] = float64(f)
+				} else {
+					// 跳过无效的 embedding
+					docVector = nil
+					break
+				}
+			}
+		case []float64:
+			docVector = v
+		default:
+			continue
+		}
+
+		if docVector == nil || len(docVector) == 0 {
+			continue
+		}
+
+		// 计算余弦相似度
+		similarity := cosineSimilarity(queryVector, docVector)
+
+		// 应用阈值过滤（如果设置了）
+		if req.Threshold > 0 && similarity < req.Threshold {
+			continue
+		}
+
+		results = append(results, VectorResult{
+			Document: DocumentResponse{
+				ID:   doc.ID,
+				Data: data,
+			},
+			Score: similarity,
+		})
+	}
+
+	// 按相似度排序（降序）
+	for i := 0; i < len(results)-1; i++ {
+		for j := i + 1; j < len(results); j++ {
+			if results[i].Score < results[j].Score {
+				results[i], results[j] = results[j], results[i]
+			}
+		}
+	}
+
+	// 限制结果数量
+	if len(results) > req.Limit {
+		results = results[:req.Limit]
+	}
+
+	took := time.Since(start).Milliseconds()
+
+	// 转换为响应格式
+	responseResults := make([]gin.H, len(results))
+	for i, r := range results {
+		responseResults[i] = gin.H{
+			"document": r.Document,
+			"score":    r.Score,
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"results": responseResults,
+		"query":   req.QueryText,
+		"took":    took,
 	})
 }
 
@@ -629,23 +778,55 @@ func updateFTS5Index(db *sql.DB, doc Document) {
 	// 提取文本内容用于全文搜索
 	content := extractTextFromData(doc.Data)
 
-	// 使用 INSERT OR REPLACE 更新 FTS5 索引
-	query := `
-	INSERT OR REPLACE INTO documents_fts(id, collection_name, content)
-	VALUES (?, ?, ?)
-	`
-	_, err := db.Exec(query, doc.ID, doc.CollectionName, content)
+	// 首先获取文档的 rowid
+	var rowid int64
+	rowidQuery := `SELECT rowid FROM documents WHERE id = ? AND collection_name = ?`
+	err := db.QueryRow(rowidQuery, doc.ID, doc.CollectionName).Scan(&rowid)
 	if err != nil {
-		logrus.WithError(err).Warn("Failed to update FTS5 index")
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"doc_id":     doc.ID,
+			"collection": doc.CollectionName,
+		}).Warn("Failed to get document rowid for FTS5 index")
+		return
+	}
+
+	// 使用 rowid 更新 FTS5 索引
+	query := `
+	INSERT INTO documents_fts(rowid, id, collection_name, content)
+	VALUES (?, ?, ?, ?)
+	ON CONFLICT(rowid) DO UPDATE SET
+		id = excluded.id,
+		collection_name = excluded.collection_name,
+		content = excluded.content
+	`
+	_, err = db.Exec(query, rowid, doc.ID, doc.CollectionName, content)
+	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"doc_id": doc.ID,
+			"rowid":  rowid,
+		}).Warn("Failed to update FTS5 index")
 	}
 }
 
 // deleteFTS5Index 从 FTS5 索引中删除
 func deleteFTS5Index(db *sql.DB, id string) {
-	query := `DELETE FROM documents_fts WHERE id = ?`
-	_, err := db.Exec(query, id)
+	// 首先获取文档的 rowid
+	var rowid int64
+	rowidQuery := `SELECT rowid FROM documents WHERE id = ?`
+	err := db.QueryRow(rowidQuery, id).Scan(&rowid)
 	if err != nil {
-		logrus.WithError(err).Warn("Failed to delete from FTS5 index")
+		logrus.WithError(err).WithField("doc_id", id).Warn("Failed to get document rowid for FTS5 deletion")
+		return
+	}
+
+	// 使用 rowid 删除 FTS5 索引
+	query := `DELETE FROM documents_fts WHERE rowid = ?`
+	_, err = db.Exec(query, rowid)
+	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"doc_id": id,
+			"rowid":  rowid,
+		}).Warn("Failed to delete from FTS5 index")
 	}
 }
 
@@ -764,6 +945,31 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// cosineSimilarity 计算两个向量的余弦相似度
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return 0.0
+	}
+
+	var dotProduct, normA, normB float64
+	for i := 0; i < len(a); i++ {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+
+	if normA == 0 || normB == 0 {
+		return 0.0
+	}
+
+	return dotProduct / (sqrt(normA) * sqrt(normB))
+}
+
+// sqrt 计算平方根（使用标准库）
+func sqrt(x float64) float64 {
+	return math.Sqrt(x)
 }
 
 // ========================================
@@ -932,7 +1138,7 @@ func graphQuery(c *gin.Context) {
 		return
 	}
 
-	logrus.Info("🔍 解析查询字符串: %s", req.Query)
+	logrus.WithField("query", req.Query).Info("🔍 解析查询字符串")
 
 	// 解析 V('nodeId')
 	if !strings.HasPrefix(req.Query, "V(") {
@@ -972,7 +1178,7 @@ func graphQuery(c *gin.Context) {
 		vEndIndex = nodeStart + 2 + relEnd + 2
 	}
 
-	logrus.Info("📌 提取节点ID: %s", nodeID)
+	logrus.WithField("node_id", nodeID).Info("📌 提取节点ID")
 
 	// 创建基础查询
 	queryImpl := query.V(nodeID)
@@ -988,7 +1194,7 @@ func graphQuery(c *gin.Context) {
 	if vEndIndex < len(req.Query) {
 		remainingQuery = req.Query[vEndIndex:]
 	}
-	logrus.Info("📋 剩余查询部分: '%s'", remainingQuery)
+	logrus.WithField("remaining_query", remainingQuery).Info("📋 剩余查询部分")
 
 	if strings.HasPrefix(remainingQuery, ".Out(") {
 		relStart := strings.Index(remainingQuery, "('")
@@ -1004,7 +1210,7 @@ func graphQuery(c *gin.Context) {
 				return
 			}
 			relation := remainingQuery[relStart+2 : relStart+2+relEnd]
-			logrus.Info("🔗 提取关系: %s (Out)", relation)
+			logrus.WithField("relation", relation).Info("🔗 提取关系 (Out)")
 			queryImpl = queryImpl.Out(relation)
 		} else {
 			relEnd := strings.Index(remainingQuery[relStart+2:], "')")
@@ -1013,7 +1219,7 @@ func graphQuery(c *gin.Context) {
 				return
 			}
 			relation := remainingQuery[relStart+2 : relStart+2+relEnd]
-			logrus.Info("🔗 提取关系: %s (Out)", relation)
+			logrus.WithField("relation", relation).Info("🔗 提取关系 (Out)")
 			queryImpl = queryImpl.Out(relation)
 		}
 	} else if strings.HasPrefix(remainingQuery, ".In(") {
@@ -1030,7 +1236,7 @@ func graphQuery(c *gin.Context) {
 				return
 			}
 			relation := remainingQuery[relStart+2 : relStart+2+relEnd]
-			logrus.Info("🔗 提取关系: %s (In)", relation)
+			logrus.WithField("relation", relation).Info("🔗 提取关系 (In)")
 			queryImpl = queryImpl.In(relation)
 		} else {
 			relEnd := strings.Index(remainingQuery[relStart+2:], "')")
@@ -1039,7 +1245,7 @@ func graphQuery(c *gin.Context) {
 				return
 			}
 			relation := remainingQuery[relStart+2 : relStart+2+relEnd]
-			logrus.Info("🔗 提取关系: %s (In)", relation)
+			logrus.WithField("relation", relation).Info("🔗 提取关系 (In)")
 			queryImpl = queryImpl.In(relation)
 		}
 	}
@@ -1055,12 +1261,12 @@ func graphQuery(c *gin.Context) {
 	logrus.Info("🚀 执行图查询...")
 	queryResults, err := queryImpl.All(dbContext)
 	if err != nil {
-		logrus.Info("❌ 查询执行失败: %v", err)
+		logrus.WithError(err).Info("❌ 查询执行失败")
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
 
-	logrus.Info("✅ 查询成功，找到 %d 条结果", len(queryResults))
+	logrus.WithField("count", len(queryResults)).Info("✅ 查询成功，找到结果")
 
 	// 转换结果
 	results := make([]gin.H, len(queryResults))

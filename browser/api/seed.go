@@ -255,7 +255,13 @@ func main() {
 	// 初始化 SQLite3 数据库（使用 GORM）
 	// SQLite 需要文件路径，而不是目录路径
 	sqliteDBPath := filepath.Join(dbPath, "browser.db")
-	gormDB, err := gorm.Open(sqlite.Open(sqliteDBPath), &gorm.Config{})
+	// 转换为绝对路径，避免工作目录问题
+	absDBPath, err := filepath.Abs(sqliteDBPath)
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to get absolute path")
+	}
+	fmt.Printf("📁 数据库文件路径: %s\n", absDBPath)
+	gormDB, err := gorm.Open(sqlite.Open(absDBPath), &gorm.Config{})
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to connect database")
 	}
@@ -632,4 +638,18 @@ func main() {
 	fmt.Println("  - 使用 'articles' 集合测试全文搜索")
 	fmt.Println("  - 使用 'products' 集合测试向量搜索")
 	fmt.Println("  - 使用 'users' 集合和图数据库测试图查询")
+
+	// 显式关闭数据库连接，确保数据已刷新到磁盘
+	fmt.Println("\n💾 正在关闭数据库连接...")
+	// 确保所有事务都已提交
+	if err := sqlDB.Close(); err != nil {
+		logrus.WithError(err).Warn("关闭 SQL 数据库连接时出错")
+	}
+	// 验证数据库文件是否存在
+	if _, err := os.Stat(absDBPath); err == nil {
+		fmt.Printf("   ✅ 数据库文件已保存: %s\n", absDBPath)
+	} else {
+		logrus.WithError(err).Warn("数据库文件不存在或无法访问")
+	}
+	fmt.Println("   ✅ 数据库连接已关闭，数据已保存")
 }
