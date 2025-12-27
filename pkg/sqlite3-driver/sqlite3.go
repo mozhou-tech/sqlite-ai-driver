@@ -81,7 +81,21 @@ func init() {
 	}
 
 	// 注册 sqlite3 驱动（包装后的驱动，支持自动路径处理）
-	sql.Register("sqlite3", &sqlite3DriverWrapper{driver: baseDriver})
+	// 使用 recover 捕获重复注册的 panic（可能 go-sqlite3 包本身也注册了）
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// 如果是因为重复注册而 panic，忽略它
+				errStr := fmt.Sprintf("%v", r)
+				if strings.Contains(errStr, "Register called twice for driver sqlite3") {
+					return
+				}
+				// 其他 panic 重新抛出
+				panic(r)
+			}
+		}()
+		sql.Register("sqlite3", &sqlite3DriverWrapper{driver: baseDriver})
+	}()
 }
 
 // sqlite3DriverWrapper 包装 SQLiteDriver，自动处理路径
