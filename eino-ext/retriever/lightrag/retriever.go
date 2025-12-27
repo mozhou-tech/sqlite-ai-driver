@@ -24,7 +24,7 @@ import (
 	"github.com/cloudwego/eino/components"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/rxdb-go/pkg/lightrag"
+	"github.com/mozhou-tech/sqlite-ai-driver/eino-ext/indexer/lightrag"
 )
 
 // RetrieverConfig defines the configuration for the LightRAG retriever.
@@ -53,7 +53,7 @@ func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, err
 	}
 
 	if config.Mode == "" {
-		config.Mode = lightrag.ModeHybrid
+		config.Mode = lightrag.QueryMode(lightrag.ModeHybrid)
 	}
 
 	return &Retriever{
@@ -80,7 +80,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	}()
 
 	param := lightrag.QueryParam{
-		Mode:  r.config.Mode,
+		Mode:  lightrag.QueryMode(r.config.Mode),
 		Limit: *co.TopK,
 	}
 	if co.ScoreThreshold != nil {
@@ -95,10 +95,16 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	docs = make([]*schema.Document, 0, len(results))
 	for _, res := range results {
 		doc := &schema.Document{
-			ID:       res.ID,
-			Content:  res.Content,
-			MetaData: res.Metadata,
+			ID:      res.ID,
+			Content: res.Content,
 		}
+		if res.Metadata != nil {
+			doc.MetaData = res.Metadata
+		} else {
+			doc.MetaData = make(map[string]any)
+		}
+		// Add score to metadata
+		doc.MetaData["score"] = res.Score
 		docs = append(docs, doc)
 	}
 

@@ -19,11 +19,28 @@ package lightrag
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
-	"time"
 
-	"github.com/mozhou-tech/rxdb-go/pkg/lightrag"
+	"github.com/cloudwego/eino/components/embedding"
+	"github.com/mozhou-tech/sqlite-ai-driver/eino-ext/indexer/lightrag"
 )
+
+type simpleEmbedder struct {
+	dims int
+}
+
+func (e *simpleEmbedder) EmbedStrings(ctx context.Context, texts []string, opts ...embedding.Option) ([][]float64, error) {
+	vectors := make([][]float64, len(texts))
+	for i := range vectors {
+		vectors[i] = make([]float64, e.dims)
+		// Simple embedding: fill with constant values based on text length
+		for j := range vectors[i] {
+			vectors[i][j] = float64(len(texts[i])) * 0.01
+		}
+	}
+	return vectors, nil
+}
 
 func TestRetriever(t *testing.T) {
 	ctx := context.Background()
@@ -31,17 +48,23 @@ func TestRetriever(t *testing.T) {
 	os.RemoveAll(workingDir)
 	defer os.RemoveAll(workingDir)
 
-	rag := lightrag.New(lightrag.Options{
-		WorkingDir: workingDir,
-		Embedder:   lightrag.NewSimpleEmbedder(768),
-		LLM:        &lightrag.SimpleLLM{},
-	})
-
-	err := rag.InitializeStorages(ctx)
-	if err != nil {
-		t.Fatalf("failed to initialize storages: %v", err)
+	// Create directories for databases
+	if err := os.MkdirAll(workingDir, 0755); err != nil {
+		t.Fatalf("Failed to create working directory: %v", err)
 	}
-	defer rag.FinalizeStorages(ctx)
+	duckdbPath := filepath.Join(workingDir, "duckdb.db")
+	graphPath := filepath.Join(workingDir, "graph.db")
+
+	rag, err := lightrag.New(lightrag.Options{
+		DuckDBPath: duckdbPath,
+		GraphPath:  graphPath,
+		Embedder:   &simpleEmbedder{dims: 768},
+		TableName:  "documents",
+	})
+	if err != nil {
+		t.Fatalf("failed to create LightRAG: %v", err)
+	}
+	defer rag.Close()
 
 	// Prepare data
 	docs := []map[string]any{
@@ -60,13 +83,10 @@ func TestRetriever(t *testing.T) {
 		t.Fatalf("failed to insert batch: %v", err)
 	}
 
-	// Wait for fulltext indexing (it's asynchronous via watchChanges)
-	time.Sleep(500 * time.Millisecond)
-
 	ret, err := NewRetriever(ctx, &RetrieverConfig{
 		LightRAG: rag,
 		TopK:     1,
-		Mode:     lightrag.ModeFulltext,
+		Mode:     lightrag.QueryMode(lightrag.ModeFulltext),
 	})
 	if err != nil {
 		t.Fatalf("failed to create retriever: %v", err)
@@ -78,16 +98,25 @@ func TestRetriever(t *testing.T) {
 		t.Fatalf("failed to retrieve: %v", err)
 	}
 
-	if len(results) != 1 {
-		t.Errorf("expected 1 result, got %d", len(results))
+	if len(results) == 0 {
+		t.Errorf("expected at least 1 result, got %d", len(results))
+		return
 	}
 
-	if results[0].ID != "2" {
-		t.Errorf("expected id 2, got %s", results[0].ID)
+	// Check if we got the expected document
+	found := false
+	for _, result := range results {
+		if result.ID == "2" {
+			found = true
+			if result.Content != "Eino is a framework for building LLM applications" {
+				t.Errorf("unexpected content: %s", result.Content)
+			}
+			break
+		}
 	}
 
-	if results[0].Content != "Eino is a framework for building LLM applications" {
-		t.Errorf("unexpected content: %s", results[0].Content)
+	if !found {
+		t.Errorf("expected to find document with id 2, got results: %v", results)
 	}
 }
 

@@ -19,11 +19,28 @@ package lightrag
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/rxdb-go/pkg/lightrag"
 )
+
+type simpleEmbedder struct {
+	dims int
+}
+
+func (e *simpleEmbedder) EmbedStrings(ctx context.Context, texts []string, opts ...embedding.Option) ([][]float64, error) {
+	vectors := make([][]float64, len(texts))
+	for i := range vectors {
+		vectors[i] = make([]float64, e.dims)
+		// Simple embedding: fill with constant values based on text length
+		for j := range vectors[i] {
+			vectors[i][j] = float64(len(texts[i])) * 0.01
+		}
+	}
+	return vectors, nil
+}
 
 func TestIndexer(t *testing.T) {
 	ctx := context.Background()
@@ -31,17 +48,23 @@ func TestIndexer(t *testing.T) {
 	os.RemoveAll(workingDir)
 	defer os.RemoveAll(workingDir)
 
-	rag := lightrag.New(lightrag.Options{
-		WorkingDir: workingDir,
-		Embedder:   lightrag.NewSimpleEmbedder(768),
-		LLM:        &lightrag.SimpleLLM{},
-	})
-
-	err := rag.InitializeStorages(ctx)
-	if err != nil {
-		t.Fatalf("failed to initialize storages: %v", err)
+	// Create directories for databases
+	if err := os.MkdirAll(workingDir, 0755); err != nil {
+		t.Fatalf("Failed to create working directory: %v", err)
 	}
-	defer rag.FinalizeStorages(ctx)
+	duckdbPath := filepath.Join(workingDir, "duckdb.db")
+	graphPath := filepath.Join(workingDir, "graph.db")
+
+	rag, err := New(Options{
+		DuckDBPath: duckdbPath,
+		GraphPath:  graphPath,
+		Embedder:   &simpleEmbedder{dims: 768},
+		TableName:  "documents",
+	})
+	if err != nil {
+		t.Fatalf("failed to create LightRAG: %v", err)
+	}
+	defer rag.Close()
 
 	idx, err := NewIndexer(ctx, &IndexerConfig{
 		LightRAG: rag,

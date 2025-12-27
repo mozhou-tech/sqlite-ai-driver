@@ -80,7 +80,7 @@ func TestNewRetriever(t *testing.T) {
 				DB:        nil,
 				Embedding: &mockEmbedding{},
 			})
-			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] duckdb database connection not provided"))
+			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] duckdb database connection not provided, must pass an already opened *sql.DB instance"))
 			convey.So(r, convey.ShouldBeNil)
 		})
 

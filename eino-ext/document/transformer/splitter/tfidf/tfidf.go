@@ -18,6 +18,7 @@ package tfidf
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"regexp"
 	"strings"
@@ -26,7 +27,6 @@ import (
 
 	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/rxdb-go/pkg/sego"
 	"github.com/rioloc/tfidf-go"
 	"github.com/rioloc/tfidf-go/token"
 )
@@ -229,33 +229,9 @@ func (s *tfidfSplitter) initSego() error {
 }
 
 func (s *tfidfSplitter) segoTokenize(sentences []string) ([]string, [][]string, error) {
-	segmenter, err := sego.GetSegmenter()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	var vocabulary []string
-	vocabMap := make(map[string]bool)
-	var tokens [][]string
-
-	for _, sent := range sentences {
-		segments := segmenter.Segment([]byte(sent))
-		var sentTokens []string
-		for _, seg := range segments {
-			word := sent[seg.Start():seg.End()]
-			word = strings.TrimSpace(word)
-			if word == "" {
-				continue
-			}
-			sentTokens = append(sentTokens, word)
-			if !vocabMap[word] {
-				vocabMap[word] = true
-				vocabulary = append(vocabulary, word)
-			}
-		}
-		tokens = append(tokens, sentTokens)
-	}
-	return vocabulary, tokens, nil
+	// sego package is not available, fallback to regular tokenizer
+	// Return error to trigger fallback in splitText
+	return nil, nil, fmt.Errorf("sego tokenizer is not available: package github.com/mozhou-tech/rxdb-go/pkg/sego not found")
 }
 
 func splitIntoSentences(text string) []string {

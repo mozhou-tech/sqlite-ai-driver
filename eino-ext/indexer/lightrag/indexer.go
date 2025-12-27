@@ -24,13 +24,12 @@ import (
 	"github.com/cloudwego/eino/components"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/rxdb-go/pkg/lightrag"
 )
 
 // IndexerConfig defines the configuration for the LightRAG indexer.
 type IndexerConfig struct {
 	// LightRAG is the LightRAG instance to use for indexing.
-	LightRAG *lightrag.LightRAG
+	LightRAG *LightRAG
 	// DocumentToMap optionally overrides the default conversion from eino document to map.
 	DocumentToMap func(ctx context.Context, doc *schema.Document) (map[string]any, error)
 }
@@ -74,7 +73,8 @@ func (i *Indexer) Store(ctx context.Context, docs []*schema.Document, opts ...in
 		toStore = append(toStore, docMap)
 	}
 
-	if ids, err = i.config.LightRAG.InsertBatch(ctx, toStore); err != nil {
+	ids, err = i.config.LightRAG.InsertBatch(ctx, toStore)
+	if err != nil {
 		return nil, fmt.Errorf("[Store] failed to insert batch into lightrag: %w", err)
 	}
 
