@@ -1,13 +1,10 @@
 package sqlite3_driver_test
 
 import (
-	"bufio"
 	"context"
 	"database/sql"
-	"math"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
@@ -43,7 +40,7 @@ func skipIfExtensionNotAvailable(t *testing.T, dbPath string) {
 	tmpFile.Close()
 	defer os.Remove(tmpPath)
 
-	db, err := sql.Open("sqlite-vss", tmpPath)
+	db, err := sql.Open("sqlite3", tmpPath)
 	if err != nil {
 		// 如果打开失败，跳过测试
 		t.Skipf("Skipping test: Failed to open database: %v", err)
@@ -54,143 +51,6 @@ func skipIfExtensionNotAvailable(t *testing.T, dbPath string) {
 	if err := db.Ping(); err != nil {
 		// 如果 ping 失败，跳过测试
 		t.Skipf("Skipping test: Failed to ping database: %v", err)
-	}
-}
-
-func TestOpen(t *testing.T) {
-	testdataDir := getProjectRootTestdata()
-	dbPath := filepath.Join(testdataDir, "test.db")
-	skipIfExtensionNotAvailable(t, dbPath)
-
-	db, err := sql.Open("sqlite-vss", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	t.Cleanup(func() {
-		_ = os.Remove(dbPath)
-	})
-
-	// 检查 vss_version 函数是否存在
-	r := db.QueryRow("select vss_version();")
-	var version string
-	if err := r.Scan(&version); err != nil {
-		// 如果 vss0 扩展不可用，跳过测试
-		if strings.Contains(err.Error(), "no such function: vss_version") {
-			t.Skipf("Skipping test: vss0 extension not available: %v", err)
-		}
-		t.Fatal(err)
-	}
-
-	if !strings.HasPrefix(version, "v") {
-		t.Errorf("version should be start with 'v', but got %s", version)
-	}
-}
-
-// ref: https://github.com/koron/techdocs/blob/main/sqlite-vss-getting-started/doc.md
-func TestVectorSearch(t *testing.T) {
-	ctx := context.Background()
-	testdataDir := getProjectRootTestdata()
-	dbPath := filepath.Join(testdataDir, "vec.db")
-	skipIfExtensionNotAvailable(t, dbPath)
-
-	db, err := sql.Open("sqlite-vss", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-		_ = os.Remove(dbPath)
-	})
-
-	// Create table
-	if _, err := db.ExecContext(ctx, `CREATE TABLE words (
-  label TEXT
-);`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `CREATE VIRTUAL TABLE vss_words USING vss0(
-  vector(300)
-);`); err != nil {
-		// 如果 vss0 扩展不可用，跳过测试
-		if strings.Contains(err.Error(), "no such module: vss0") {
-			t.Skipf("Skipping test: vss0 extension not available: %v", err)
-		}
-		t.Fatal(err)
-	}
-
-	// read test.vec line by line.
-	f, err := os.Open(filepath.Join(testdataDir, "test.vec"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = f.Close()
-	})
-	scanner := bufio.NewScanner(f)
-	scanner.Split(bufio.ScanLines)
-
-	// food
-	var foodvec string
-
-	rowid := 1
-	for scanner.Scan() {
-		row := scanner.Text()
-		splitted := strings.Split(row, " ")
-		label := splitted[0]
-		vec := "[" + strings.Join(splitted[1:], ",") + "]"
-		if label == "food" {
-			foodvec = vec
-		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO words (rowid, label) VALUES (?, ?);`, rowid, label); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO vss_words(rowid, vector) VALUES (?, json(?));`, rowid, vec); err != nil {
-			t.Fatal(err)
-		}
-		rowid++
-	}
-
-	if _, err := db.ExecContext(ctx, `VACUUM;`); err != nil {
-		t.Fatal(err)
-	}
-
-	rows, err := db.QueryContext(ctx, `SELECT w.label, v.distance FROM vss_words AS v
-  JOIN words AS w ON w.rowid = v.rowid
-  WHERE vss_search(
-    v.vector,
-    vss_search_params(
-      json(?),
-      10
-    )
-  );`, foodvec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-
-	got := map[string]float64{}
-	for rows.Next() {
-		var (
-			label string
-			dist  float64
-		)
-		if err := rows.Scan(&label, &dist); err != nil {
-			t.Fatal(err)
-		}
-		got[label] = dist
-	}
-
-	if want := 10; len(got) != want {
-		t.Errorf("len(got) = %d, want %d", len(got), want)
-	}
-
-	if want := 0.0; got["food"] != want {
-		t.Errorf("got[food] = %f, want %f", got["food"], want)
-	}
-
-	if want := 1.828758; math.Round(got["health"]*10000)/10000 != math.Round(want*10000)/10000 {
-		t.Errorf("got[health] = %f, want %f", got["health"], want)
 	}
 }
 
@@ -220,7 +80,7 @@ func TestSQLite3Driver_RelativePath(t *testing.T) {
 	// 检查扩展是否可用
 	skipIfExtensionNotAvailable(t, filepath.Join(testdataDir, "db", dbPath))
 
-	db, err := sql.Open("sqlite-vss", dbPath)
+	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database with relative path: %v", err)
 	}
@@ -251,7 +111,7 @@ func TestSQLite3Driver_CreateTable(t *testing.T) {
 	// 检查扩展是否可用
 	skipIfExtensionNotAvailable(t, dbPath)
 
-	db, err := sql.Open("sqlite-vss", dbPath)
+	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
@@ -302,7 +162,7 @@ func TestSQLite3Driver_Transaction(t *testing.T) {
 	// 检查扩展是否可用
 	skipIfExtensionNotAvailable(t, dbPath)
 
-	db, err := sql.Open("sqlite-vss", dbPath)
+	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}

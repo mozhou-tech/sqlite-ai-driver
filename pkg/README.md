@@ -93,7 +93,7 @@ func main() {
     defer duckDB.Close()
     
     // 4. 使用 sqlite3-driver - 自动存储到 {DATA_DIR}/db/sqlite.db
-    sqliteDB, _ := sql.Open("sqlite-vss", "sqlite.db")
+    sqliteDB, _ := sql.Open("sqlite3", "sqlite.db")
     defer sqliteDB.Close()
 }
 ```

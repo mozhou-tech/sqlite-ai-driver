@@ -81,7 +81,7 @@ func init() {
 	}
 
 	// 注册 sqlite3 驱动（包装后的驱动，支持自动路径处理）
-	sql.Register("sqlite-vss", &sqlite3DriverWrapper{driver: baseDriver})
+	sql.Register("sqlite3", &sqlite3DriverWrapper{driver: baseDriver})
 }
 
 // sqlite3DriverWrapper 包装 SQLiteDriver，自动处理路径
