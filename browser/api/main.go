@@ -21,7 +21,6 @@ import (
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/sirupsen/logrus"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -181,18 +180,9 @@ func main() {
 	}
 	defer graphDB.Close()
 
-	// 初始化 GORM（使用 SQLite，因为 GORM 对 DuckDB 支持有限）
-	// 使用与 DuckDB 相同的数据库文件路径，但通过 SQLite driver 连接
-	sqliteDBPath := filepath.Join(dbPath, "browser.db")
-	gormDB, err = gorm.Open(sqlite.Open(sqliteDBPath), &gorm.Config{})
-	if err != nil {
-		logrus.WithError(err).Fatal("Failed to initialize GORM")
-	}
-
-	// 自动迁移（确保表结构正确）
-	if err := gormDB.AutoMigrate(&Document{}); err != nil {
-		logrus.WithError(err).Warn("Failed to auto migrate, but continuing")
-	}
+	// 注意：由于 GORM 不支持直接使用 sql.DB 连接 DuckDB
+	// 我们使用原生 SQL 来执行所有操作
+	// 如果需要使用 GORM，可以考虑使用 github.com/alifiroozi80/duckdb 驱动
 
 	logrus.Info("Database initialized successfully")
 
@@ -271,13 +261,13 @@ func ensureDuckDBExtensions(db *sql.DB) error {
 
 // createDuckDBFTSIndex 创建 DuckDB 全文搜索索引
 func createDuckDBFTSIndex(db *sql.DB) error {
-	// 使用 DuckDB 的 FTS 扩展创建全文搜索索引
-	// 注意：DuckDB 的 FTS 使用 PRAGMA create_fts_index
+	// DuckDB 的 FTS 扩展使用 PRAGMA create_fts_index 创建索引
+	// 语法：PRAGMA create_fts_index('table_name', 'id_column', 'text_column1', 'text_column2', ...)
 	createFTSSQL := `PRAGMA create_fts_index('documents', 'id', 'content');`
 	_, err := db.Exec(createFTSSQL)
 	if err != nil {
 		// 如果索引已存在，忽略错误
-		if strings.Contains(err.Error(), "already exists") {
+		if strings.Contains(err.Error(), "already exists") || strings.Contains(err.Error(), "duplicate") {
 			logrus.Info("FTS index already exists")
 			return nil
 		}
@@ -325,12 +315,21 @@ func getDBInfo(c *gin.Context) {
 
 // getCollections 获取所有集合
 func getCollections(c *gin.Context) {
-	var collections []string
-	if err := gormDB.Model(&Document{}).
-		Distinct("collection_name").
-		Pluck("collection_name", &collections).Error; err != nil {
+	query := `SELECT DISTINCT collection_name FROM documents`
+	rows, err := sqlDB.Query(query)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
+	}
+	defer rows.Close()
+
+	var collections []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		collections = append(collections, name)
 	}
 
 	collectionInfos := make([]CollectionInfo, len(collections))
@@ -352,9 +351,8 @@ func getCollection(c *gin.Context) {
 
 	// 检查集合是否存在
 	var count int64
-	if err := gormDB.Model(&Document{}).
-		Where("collection_name = ?", name).
-		Count(&count).Error; err != nil {
+	query := `SELECT COUNT(*) FROM documents WHERE collection_name = ?`
+	if err := sqlDB.QueryRow(query, name).Scan(&count); err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -383,28 +381,51 @@ func getDocuments(c *gin.Context) {
 		"tag":        tagFilter,
 	}).Info("📄 getDocuments")
 
-	var docs []Document
-	query := gormDB.Where("collection_name = ?", name)
+	// 构建查询
+	baseQuery := `SELECT id, collection_name, data, embedding, content, created_at, updated_at FROM documents WHERE collection_name = ?`
+	args := []interface{}{name}
 
-	// 如果指定了 tag 过滤，需要在 JSON 数据中搜索
 	if tagFilter != "" {
-		// 使用 JSON 查询（SQLite 支持 JSON1 扩展）
-		query = query.Where("json_extract(data, '$.tags') LIKE ?", "%"+tagFilter+"%")
+		// DuckDB 支持 JSON 函数
+		baseQuery += ` AND json_extract(data, '$.tags') LIKE ?`
+		args = append(args, "%"+tagFilter+"%")
 	}
 
 	// 获取总数
+	countQuery := `SELECT COUNT(*) FROM documents WHERE collection_name = ?`
+	countArgs := []interface{}{name}
+	if tagFilter != "" {
+		countQuery += ` AND json_extract(data, '$.tags') LIKE ?`
+		countArgs = append(countArgs, "%"+tagFilter+"%")
+	}
+
 	var total int64
-	if err := query.Model(&Document{}).Count(&total).Error; err != nil {
+	if err := sqlDB.QueryRow(countQuery, countArgs...).Scan(&total); err != nil {
 		logrus.WithError(err).Error("❌ Failed to count documents")
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
 
 	// 分页查询
-	if err := query.Offset(skip).Limit(limit).Find(&docs).Error; err != nil {
+	query := baseQuery + ` ORDER BY created_at DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, skip)
+
+	rows, err := sqlDB.Query(query, args...)
+	if err != nil {
 		logrus.WithError(err).Error("❌ Failed to get documents")
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
+	}
+	defer rows.Close()
+
+	var docs []Document
+	for rows.Next() {
+		var doc Document
+		if err := rows.Scan(&doc.ID, &doc.CollectionName, &doc.Data, &doc.Embedding, &doc.Content, &doc.CreatedAt, &doc.UpdatedAt); err != nil {
+			logrus.WithError(err).Warn("Failed to scan document")
+			continue
+		}
+		docs = append(docs, doc)
 	}
 
 	logrus.WithFields(logrus.Fields{
@@ -441,8 +462,10 @@ func getDocument(c *gin.Context) {
 	id := c.Param("id")
 
 	var doc Document
-	if err := gormDB.Where("collection_name = ? AND id = ?", name, id).First(&doc).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+	query := `SELECT id, collection_name, data, embedding, content, created_at, updated_at FROM documents WHERE collection_name = ? AND id = ?`
+	err := sqlDB.QueryRow(query, name, id).Scan(&doc.ID, &doc.CollectionName, &doc.Data, &doc.Embedding, &doc.Content, &doc.CreatedAt, &doc.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, ErrorResponse{Error: "Document not found"})
 		} else {
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
@@ -498,15 +521,10 @@ func createDocument(c *gin.Context) {
 		}
 	}
 
-	doc := Document{
-		ID:             id,
-		CollectionName: name,
-		Data:           string(dataJSON),
-		Content:        content,
-		Embedding:      embeddingStr,
-	}
-
-	if err := gormDB.Create(&doc).Error; err != nil {
+	// 插入文档
+	insertQuery := `INSERT INTO documents (id, collection_name, data, embedding, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+	_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), embeddingStr, content)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -514,7 +532,7 @@ func createDocument(c *gin.Context) {
 	// DuckDB 的 FTS 索引会自动更新，无需手动维护
 
 	c.JSON(http.StatusCreated, DocumentResponse{
-		ID:   doc.ID,
+		ID:   id,
 		Data: data,
 	})
 }
@@ -524,9 +542,12 @@ func updateDocument(c *gin.Context) {
 	name := c.Param("name")
 	id := c.Param("id")
 
+	// 获取现有文档
 	var doc Document
-	if err := gormDB.Where("collection_name = ? AND id = ?", name, id).First(&doc).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+	query := `SELECT id, collection_name, data, embedding, content FROM documents WHERE collection_name = ? AND id = ?`
+	err := sqlDB.QueryRow(query, name, id).Scan(&doc.ID, &doc.CollectionName, &doc.Data, &doc.Embedding, &doc.Content)
+	if err != nil {
+		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, ErrorResponse{Error: "Document not found"})
 		} else {
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
@@ -574,10 +595,10 @@ func updateDocument(c *gin.Context) {
 		}
 	}
 
-	doc.Data = string(dataJSON)
-	doc.Content = content
-	doc.Embedding = embeddingStr
-	if err := gormDB.Save(&doc).Error; err != nil {
+	// 更新文档
+	updateQuery := `UPDATE documents SET data = ?, embedding = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
+	_, err = sqlDB.Exec(updateQuery, string(dataJSON), embeddingStr, content, name, id)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -595,7 +616,9 @@ func deleteDocument(c *gin.Context) {
 	name := c.Param("name")
 	id := c.Param("id")
 
-	if err := gormDB.Where("collection_name = ? AND id = ?", name, id).Delete(&Document{}).Error; err != nil {
+	deleteQuery := `DELETE FROM documents WHERE collection_name = ? AND id = ?`
+	_, err := sqlDB.Exec(deleteQuery, name, id)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
 	}
@@ -623,30 +646,25 @@ func fulltextSearch(c *gin.Context) {
 
 	// 检查 FTS 索引是否存在，如果不存在则尝试创建
 	var indexExists bool
+	// DuckDB 使用不同的系统表来检查索引
 	checkSQL := `SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name = 'content'`
 	var count int
 	if err := sqlDB.QueryRow(checkSQL).Scan(&count); err == nil && count > 0 {
-		// 检查 FTS 索引
-		indexCheckSQL := `SELECT COUNT(*) FROM duckdb_indexes() WHERE index_name LIKE '%fts%'`
-		if err := sqlDB.QueryRow(indexCheckSQL).Scan(&count); err == nil && count > 0 {
-			indexExists = true
-		}
+		// 尝试查询 FTS 索引（DuckDB FTS 索引可能不会在常规索引表中显示）
+		// 我们通过尝试创建索引来判断是否已存在
+		indexExists = false // 先假设不存在，尝试创建时会处理已存在的情况
 	}
 
 	if !indexExists {
 		logrus.Warn("FTS index does not exist, attempting to create it")
 		if err := createDuckDBFTSIndex(sqlDB); err != nil {
 			logrus.WithError(err).Error("Failed to create FTS index")
-			c.JSON(http.StatusInternalServerError, ErrorResponse{
-				Error: fmt.Sprintf("FTS index is not available: %v", err),
-			})
-			return
+			// 不返回错误，继续使用 LIKE 查询作为回退
 		}
 	}
 
 	// 使用 DuckDB FTS 进行全文搜索
-	// DuckDB 的 FTS 使用 MATCH 操作符，但语法可能不同
-	// 先尝试使用 FTS 查询，如果失败则回退到 LIKE 查询
+	// DuckDB 的 FTS 使用 MATCH 操作符，直接在表上搜索
 	query := `
 	SELECT id, collection_name, data, 1.0 as score
 	FROM documents
@@ -891,7 +909,7 @@ func generateID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
 
-// DuckDB 的 FTS 索引是自动维护的，无需手动更新或删除
+// DuckDB 的 FTS 索引是自动维护的，无需手动重新索引
 
 // extractTextFromData 从 JSON 数据中提取文本内容
 func extractTextFromData(dataJSON string) string {

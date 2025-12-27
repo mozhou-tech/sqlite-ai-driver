@@ -5,15 +5,6 @@ install:
 	pnpm install
 	cd api && go mod tidy
 
-# 停止后台运行的 API 服务器
-stop:
-	@echo "🛑 停止后台运行的 API 服务器..."
-	@pkill -f "go run.*main.go" 2>/dev/null || true
-	@pkill -f "air" 2>/dev/null || true
-	@sleep 1
-	@rm -f api/data/browser-db/LOCK
-	@rm -f api/data/browser-db/graph/LOCK 2>/dev/null || true
-	@echo "✅ 已停止并清理锁文件"
 
 # 启动开发服务器（前端和后端）
 dev: stop
