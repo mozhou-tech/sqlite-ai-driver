@@ -1,4 +1,4 @@
-package driver_test
+package sqlite3_driver_test
 
 import (
 	"bufio"
@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/mozhou-tech/sqlite-ai-driver/driver/sqlite3"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 )
 
 func TestOpen(t *testing.T) {

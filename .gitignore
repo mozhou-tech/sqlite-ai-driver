@@ -7,3 +7,4 @@ testdata/*.db-wal
 exts/*.dylib
 exts/*.so
 exts/*.dll
+.idea

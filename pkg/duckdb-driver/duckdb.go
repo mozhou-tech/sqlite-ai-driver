@@ -1,4 +1,4 @@
-package driver
+package duckdb_driver
 
 import (
 	"context"
