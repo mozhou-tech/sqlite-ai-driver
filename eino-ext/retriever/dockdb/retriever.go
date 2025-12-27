@@ -14,10 +14,12 @@
  * limitations under the License.
  */
 
-package rxdb
+package duckdb
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 
 	"github.com/cloudwego/eino/callbacks"
@@ -25,17 +27,22 @@ import (
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/rxdb-go/pkg/rxdb"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 )
 
 type RetrieverConfig struct {
-	// VectorSearch is an RxDB vector search instance.
-	VectorSearch *rxdb.VectorSearch
+	// DB is an already opened DuckDB database connection instance.
+	// This retriever does not open or close the database connection.
+	// The caller is responsible for managing the database connection lifecycle.
+	DB *sql.DB
+	// TableName is the name of the table to retrieve documents from.
+	// Default "documents".
+	TableName string
 	// ReturnFields limits the attributes returned from the document.
 	// Default []string{"content", "vector_content"}
 	ReturnFields []string
 	// DocumentConverter converts retrieved raw document to eino Document, default defaultResultParser.
-	DocumentConverter func(ctx context.Context, doc rxdb.Document) (*schema.Document, error)
+	DocumentConverter func(ctx context.Context, row *sql.Row) (*schema.Document, error)
 	// TopK limits number of results given, default 5.
 	TopK int
 	// Embedding vectorization method for query.
@@ -48,11 +55,15 @@ type Retriever struct {
 
 func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, error) {
 	if config.Embedding == nil {
-		return nil, fmt.Errorf("[NewRetriever] embedding not provided for rxdb retriever")
+		return nil, fmt.Errorf("[NewRetriever] embedding not provided for duckdb retriever")
 	}
 
-	if config.VectorSearch == nil {
-		return nil, fmt.Errorf("[NewRetriever] rxdb vector search not provided")
+	if config.DB == nil {
+		return nil, fmt.Errorf("[NewRetriever] duckdb database connection not provided, must pass an already opened *sql.DB instance")
+	}
+
+	if config.TableName == "" {
+		config.TableName = "documents"
 	}
 
 	if config.TopK == 0 {
@@ -96,7 +107,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 
 	emb := co.Embedding
 	if emb == nil {
-		return nil, fmt.Errorf("[rxdb retriever] embedding not provided")
+		return nil, fmt.Errorf("[duckdb retriever] embedding not provided")
 	}
 
 	vectors, err := emb.EmbedStrings(r.makeEmbeddingCtx(ctx, emb), []string{query})
@@ -105,31 +116,88 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	}
 
 	if len(vectors) != 1 {
-		return nil, fmt.Errorf("[rxdb retriever] invalid return length of vector, got=%d, expected=1", len(vectors))
+		return nil, fmt.Errorf("[duckdb retriever] invalid return length of vector, got=%d, expected=1", len(vectors))
 	}
 
-	searchOptions := rxdb.VectorSearchOptions{
-		Limit: *co.TopK,
-	}
+	queryVector := vectors[0]
+
+	// Build SQL query for vector search using DuckDB
+	// Use list_cosine_similarity for cosine similarity search
+	// Distance = 1 - similarity, so we order by similarity DESC
+	// DuckDB can accept []float64 directly as a parameter for FLOAT[] type
+	sqlQuery := fmt.Sprintf(`
+		SELECT 
+			id,
+			content,
+			vector_content,
+			metadata,
+			1 - list_cosine_similarity(vector_content, ?::FLOAT[]) as distance
+		FROM %s
+		WHERE vector_content IS NOT NULL
+	`, r.config.TableName)
+
+	args := []interface{}{queryVector}
+
 	if co.ScoreThreshold != nil {
-		searchOptions.MinScore = *co.ScoreThreshold
+		// For cosine similarity: similarity = 1 - distance
+		// So distance threshold = 1 - scoreThreshold
+		distanceThreshold := 1.0 - *co.ScoreThreshold
+		sqlQuery += " AND (1 - list_cosine_similarity(vector_content, ?::FLOAT[])) <= ?"
+		args = append(args, queryVector, distanceThreshold)
 	}
 
-	results, err := r.config.VectorSearch.Search(ctx, vectors[0], searchOptions)
+	sqlQuery += " ORDER BY list_cosine_similarity(vector_content, ?::FLOAT[]) DESC LIMIT ?"
+	args = append(args, queryVector, *co.TopK)
+
+	// Execute query
+	rows, err := r.config.DB.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
-		return nil, fmt.Errorf("[rxdb retriever] search failed: %w", err)
+		return nil, fmt.Errorf("[duckdb retriever] search failed: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id, content string
+		var vectorContent []float64
+		var metadataJSON sql.NullString
+		var distance float64
+
+		err := rows.Scan(&id, &content, &vectorContent, &metadataJSON, &distance)
+		if err != nil {
+			return nil, fmt.Errorf("[duckdb retriever] failed to scan row: %w", err)
+		}
+
+		// Create a mock row for DocumentConverter
+		// We'll pass the data directly instead of using sql.Row
+		doc := &schema.Document{
+			ID:       id,
+			Content:  content,
+			MetaData: make(map[string]any),
+		}
+
+		// Set vector content if available
+		if len(vectorContent) > 0 {
+			doc.WithDenseVector(vectorContent)
+		}
+
+		// Parse metadata JSON if available
+		if metadataJSON.Valid {
+			var metadata map[string]any
+			if err := json.Unmarshal([]byte(metadataJSON.String), &metadata); err == nil {
+				for k, v := range metadata {
+					doc.MetaData[k] = v
+				}
+			}
+		}
+
+		// Set distance
+		doc.MetaData[SortByDistanceAttributeName] = distance
+
+		docs = append(docs, doc)
 	}
 
-	for _, result := range results {
-		doc, err := r.config.DocumentConverter(ctx, result.Document)
-		if err != nil {
-			return nil, err
-		}
-		if doc.MetaData == nil {
-			doc.MetaData = make(map[string]any)
-		}
-		doc.MetaData[SortByDistanceAttributeName] = result.Distance
-		docs = append(docs, doc)
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("[duckdb retriever] row iteration error: %w", err)
 	}
 
 	callbacks.OnEnd(ctx, &retriever.CallbackOutput{Docs: docs})
@@ -151,7 +219,7 @@ func (r *Retriever) makeEmbeddingCtx(ctx context.Context, emb embedding.Embedder
 	return callbacks.ReuseHandlers(ctx, runInfo)
 }
 
-const typ = "RxDB"
+const typ = "DuckDB"
 
 func (r *Retriever) GetType() string {
 	return typ
@@ -161,34 +229,10 @@ func (r *Retriever) IsCallbacksEnabled() bool {
 	return true
 }
 
-func defaultResultParser(returnFields []string) func(ctx context.Context, doc rxdb.Document) (*schema.Document, error) {
-	return func(ctx context.Context, doc rxdb.Document) (*schema.Document, error) {
-		data := doc.Data()
-		resp := &schema.Document{
-			ID:       doc.ID(),
-			Content:  "",
-			MetaData: map[string]any{},
-		}
-
-		for _, field := range returnFields {
-			val, found := data[field]
-			if !found {
-				continue
-			}
-
-			if field == defaultReturnFieldContent {
-				if s, ok := val.(string); ok {
-					resp.Content = s
-				}
-			} else if field == defaultReturnFieldVectorContent {
-				if v, ok := val.([]float64); ok {
-					resp.WithDenseVector(v)
-				}
-			} else {
-				resp.MetaData[field] = val
-			}
-		}
-
-		return resp, nil
+func defaultResultParser(returnFields []string) func(ctx context.Context, row *sql.Row) (*schema.Document, error) {
+	return func(ctx context.Context, row *sql.Row) (*schema.Document, error) {
+		// This function is kept for compatibility but not used in the current implementation
+		// The actual parsing is done directly in Retrieve method
+		return nil, fmt.Errorf("defaultResultParser should not be called directly")
 	}
 }

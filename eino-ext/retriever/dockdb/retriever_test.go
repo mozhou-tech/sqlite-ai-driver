@@ -14,47 +14,80 @@
  * limitations under the License.
  */
 
-package rxdb
+package duckdb
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"testing"
 
 	. "github.com/bytedance/mockey"
 	"github.com/cloudwego/eino/components/embedding"
-	"github.com/mozhou-tech/rxdb-go/pkg/rxdb"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	"github.com/smartystreets/goconvey/convey"
 )
+
+// getProjectRootTestdata 获取工程根目录的 testdata 路径
+func getProjectRootTestdata() string {
+	wd, _ := os.Getwd()
+	if filepath.Base(wd) == "dockdb" {
+		return filepath.Join(wd, "..", "..", "..", "testdata")
+	}
+	// 尝试查找 go.mod 文件来确定工程根目录
+	for dir := wd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return filepath.Join(dir, "testdata")
+		}
+	}
+	return filepath.Join("..", "..", "..", "testdata")
+}
 
 func TestNewRetriever(t *testing.T) {
 	PatchConvey("test NewRetriever", t, func() {
 		ctx := context.Background()
-		mockVS := &rxdb.VectorSearch{}
+
+		// Create a temporary DuckDB database for testing
+		testdataDir := getProjectRootTestdata()
+		if err := os.MkdirAll(testdataDir, 0755); err != nil {
+			t.Fatalf("Failed to create testdata directory: %v", err)
+		}
+		dbPath := filepath.Join(testdataDir, "test_retriever.db")
+		defer func() {
+			_ = os.Remove(dbPath)
+		}()
+
+		db, err := sql.Open("duckdb", dbPath)
+		if err != nil {
+			t.Fatalf("Failed to open database: %v", err)
+		}
+		defer db.Close()
 
 		PatchConvey("test embedding not provided", func() {
 			r, err := NewRetriever(ctx, &RetrieverConfig{
-				VectorSearch: mockVS,
-				Embedding:    nil,
+				DB:        db,
+				Embedding: nil,
 			})
-			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] embedding not provided for rxdb retriever"))
+			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] embedding not provided for duckdb retriever"))
 			convey.So(r, convey.ShouldBeNil)
 		})
 
-		PatchConvey("test vector search not provided", func() {
+		PatchConvey("test database not provided", func() {
 			r, err := NewRetriever(ctx, &RetrieverConfig{
-				VectorSearch: nil,
-				Embedding:    &mockEmbedding{},
+				DB:        nil,
+				Embedding: &mockEmbedding{},
 			})
-			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] rxdb vector search not provided"))
+			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] duckdb database connection not provided"))
 			convey.So(r, convey.ShouldBeNil)
 		})
 
 		PatchConvey("test success", func() {
 			r, err := NewRetriever(ctx, &RetrieverConfig{
-				VectorSearch: mockVS,
-				Embedding:    &mockEmbedding{},
+				DB:        db,
+				Embedding: &mockEmbedding{},
 			})
 			convey.So(err, convey.ShouldBeNil)
 			convey.So(r, convey.ShouldNotBeNil)
@@ -78,7 +111,7 @@ func TestRetrieve(t *testing.T) {
 		PatchConvey("test Embedding not provided", func() {
 			r := &Retriever{config: &RetrieverConfig{Embedding: nil}}
 			resp, err := r.Retrieve(ctx, "test_query")
-			convey.So(err, convey.ShouldBeError, fmt.Errorf("[rxdb retriever] embedding not provided"))
+			convey.So(err, convey.ShouldBeError, fmt.Errorf("[duckdb retriever] embedding not provided"))
 			convey.So(resp, convey.ShouldBeNil)
 		})
 
@@ -93,7 +126,7 @@ func TestRetrieve(t *testing.T) {
 		PatchConvey("test vector size invalid", func() {
 			r := &Retriever{config: &RetrieverConfig{Embedding: &mockEmbedding{sizeForCall: []int{2}, dims: 10}}}
 			resp, err := r.Retrieve(ctx, "test_query")
-			convey.So(err, convey.ShouldBeError, fmt.Errorf("[rxdb retriever] invalid return length of vector, got=2, expected=1"))
+			convey.So(err, convey.ShouldBeError, fmt.Errorf("[duckdb retriever] invalid return length of vector, got=2, expected=1"))
 			convey.So(resp, convey.ShouldBeNil)
 		})
 

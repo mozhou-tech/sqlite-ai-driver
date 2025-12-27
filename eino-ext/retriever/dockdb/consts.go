@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package rxdb
+package duckdb
 
 const (
 	defaultReturnFieldContent       = "content"

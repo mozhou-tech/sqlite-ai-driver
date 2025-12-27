@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package rxdb
+package duckdb
 
 import (
 	"github.com/cloudwego/eino/components/retriever"

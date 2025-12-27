@@ -14,26 +14,60 @@
  * limitations under the License.
  */
 
-package rxdb
+package duckdb
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"testing"
 
 	. "github.com/bytedance/mockey"
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/rxdb-go/pkg/rxdb"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	"github.com/smartystreets/goconvey/convey"
 )
+
+// getProjectRootTestdata 获取工程根目录的 testdata 路径
+func getProjectRootTestdata() string {
+	wd, _ := os.Getwd()
+	if filepath.Base(wd) == "dockdb" {
+		return filepath.Join(wd, "..", "..", "..", "testdata")
+	}
+	// 尝试查找 go.mod 文件来确定工程根目录
+	for dir := wd; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return filepath.Join(dir, "testdata")
+		}
+	}
+	return filepath.Join("..", "..", "..", "testdata")
+}
 
 func TestBulkStore(t *testing.T) {
 	PatchConvey("test bulkStore", t, func() {
 		ctx := context.Background()
-		mockColl := &mockCollection{}
+
+		// Create a temporary DuckDB database for testing
+		testdataDir := getProjectRootTestdata()
+		if err := os.MkdirAll(testdataDir, 0755); err != nil {
+			t.Fatalf("Failed to create testdata directory: %v", err)
+		}
+		dbPath := filepath.Join(testdataDir, "test_indexer.db")
+		defer func() {
+			_ = os.Remove(dbPath)
+		}()
+
+		db, err := sql.Open("duckdb", dbPath)
+		if err != nil {
+			t.Fatalf("Failed to open database: %v", err)
+		}
+		defer db.Close()
+
 		d1 := &schema.Document{ID: "1", Content: "asd"}
 		d2 := &schema.Document{ID: "2", Content: "qwe", MetaData: map[string]any{
 			"mock_field_1": map[string]any{"extra_field_1": "asd"},
@@ -44,12 +78,13 @@ func TestBulkStore(t *testing.T) {
 		PatchConvey("test DocumentToMap failed", func() {
 			i := &Indexer{
 				config: &IndexerConfig{
-					Collection: mockColl,
+					DB: db,
 					DocumentToMap: func(ctx context.Context, doc *schema.Document) (map[string]any, map[string]string, error) {
 						return nil, nil, fmt.Errorf("mock err")
 					},
 					BatchSize: 10,
 					Embedding: nil,
+					TableName: "test_documents",
 				},
 			}
 
@@ -61,7 +96,7 @@ func TestBulkStore(t *testing.T) {
 		PatchConvey("test embSize > i.config.BatchSize", func() {
 			i := &Indexer{
 				config: &IndexerConfig{
-					Collection: mockColl,
+					DB: db,
 					DocumentToMap: func(ctx context.Context, doc *schema.Document) (map[string]any, map[string]string, error) {
 						return map[string]any{"content": doc.Content}, map[string]string{
 							"content": "vector_content",
@@ -70,6 +105,7 @@ func TestBulkStore(t *testing.T) {
 					},
 					BatchSize: 1,
 					Embedding: nil,
+					TableName: "test_documents",
 				},
 			}
 
@@ -82,10 +118,11 @@ func TestBulkStore(t *testing.T) {
 		PatchConvey("test embedding not provided error", func() {
 			i := &Indexer{
 				config: &IndexerConfig{
-					Collection:    mockColl,
+					DB:            db,
 					DocumentToMap: defaultDocumentToMap,
 					BatchSize:     1,
 					Embedding:     nil,
+					TableName:     "test_documents",
 				},
 			}
 
@@ -98,9 +135,10 @@ func TestBulkStore(t *testing.T) {
 			exp := fmt.Errorf("mock err")
 			i := &Indexer{
 				config: &IndexerConfig{
-					Collection:    mockColl,
+					DB:            db,
 					DocumentToMap: defaultDocumentToMap,
 					BatchSize:     1,
+					TableName:     "test_documents",
 				},
 			}
 
@@ -112,9 +150,10 @@ func TestBulkStore(t *testing.T) {
 		PatchConvey("test len(vectors) != len(texts)", func() {
 			i := &Indexer{
 				config: &IndexerConfig{
-					Collection:    mockColl,
+					DB:            db,
 					DocumentToMap: defaultDocumentToMap,
 					BatchSize:     1,
+					TableName:     "test_documents",
 				},
 			}
 
@@ -125,16 +164,19 @@ func TestBulkStore(t *testing.T) {
 
 		PatchConvey("test success", func() {
 			var storedDocs []map[string]any
-			mockColl.bulkUpsertFn = func(ctx context.Context, docs []map[string]any) ([]rxdb.Document, error) {
+
+			// Mock bulkUpsert to capture stored documents
+			Mock((*Indexer).bulkUpsert).To(func(i *Indexer, ctx context.Context, docs []map[string]any) error {
 				storedDocs = append(storedDocs, docs...)
-				return nil, nil
-			}
+				return nil
+			}).Build()
 
 			i := &Indexer{
 				config: &IndexerConfig{
-					Collection:    mockColl,
+					DB:            db,
 					DocumentToMap: defaultDocumentToMap,
 					BatchSize:     1,
+					TableName:     "test_documents",
 				},
 			}
 
@@ -162,18 +204,6 @@ func TestBulkStore(t *testing.T) {
 			contains(d2, storedDocs[1])
 		})
 	})
-}
-
-type mockCollection struct {
-	rxdb.Collection
-	bulkUpsertFn func(ctx context.Context, docs []map[string]any) ([]rxdb.Document, error)
-}
-
-func (m *mockCollection) BulkUpsert(ctx context.Context, docs []map[string]any) ([]rxdb.Document, error) {
-	if m.bulkUpsertFn != nil {
-		return m.bulkUpsertFn(ctx, docs)
-	}
-	return nil, nil
 }
 
 type mockEmbedding struct {

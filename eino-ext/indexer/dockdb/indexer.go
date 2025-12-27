@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package rxdb
+package duckdb
 
 import (
 	"context"
@@ -31,7 +31,9 @@ import (
 )
 
 type IndexerConfig struct {
-	// DB is a DuckDB database connection.
+	// DB is an already opened DuckDB database connection instance.
+	// This indexer does not open or close the database connection.
+	// The caller is responsible for managing the database connection lifecycle.
 	DB *sql.DB
 	// TableName is the name of the table to store documents.
 	// Default "documents".
@@ -58,7 +60,7 @@ func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 	}
 
 	if config.DB == nil {
-		return nil, fmt.Errorf("[NewIndexer] duckdb database connection not provided")
+		return nil, fmt.Errorf("[NewIndexer] duckdb database connection not provided, must pass an already opened *sql.DB instance")
 	}
 
 	if config.DocumentToMap == nil {

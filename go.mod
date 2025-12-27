@@ -16,6 +16,7 @@ require (
 	github.com/apache/arrow-go/v18 v18.2.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/cloudwego/eino v0.7.14 // indirect
 	github.com/duckdb/duckdb-go-bindings v0.1.9 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.4 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.4 // indirect

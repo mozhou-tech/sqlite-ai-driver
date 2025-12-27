@@ -44,6 +44,6 @@ install:
 	go mod tidy
 
 test:
-	go test ./pkg/...
+	go test ./...
 
 
