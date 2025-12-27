@@ -9,6 +9,7 @@ install:
 stop:
 	@echo "🛑 停止后台运行的 API 服务器..."
 	@pkill -f "go run.*main.go" 2>/dev/null || true
+	@pkill -f "air" 2>/dev/null || true
 	@sleep 1
 	@rm -f api/data/browser-db/LOCK
 	@rm -f api/data/browser-db/graph/LOCK 2>/dev/null || true
@@ -16,8 +17,8 @@ stop:
 
 # 启动开发服务器（前端和后端）
 dev: stop
-	@echo "启动后端 API 服务器..."
-	@cd api && go run main.go &
+	@echo "启动后端 API 服务器（使用 air 热重载）..."
+	@cd api && air &
 	@sleep 2
 	@echo "启动前端开发服务器..."
 	@pnpm dev

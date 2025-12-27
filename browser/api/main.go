@@ -21,6 +21,7 @@ import (
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/sirupsen/logrus"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -179,6 +180,19 @@ func main() {
 		logrus.WithError(err).Fatal("Failed to create graph database")
 	}
 	defer graphDB.Close()
+
+	// 初始化 GORM（使用 SQLite，因为 GORM 对 DuckDB 支持有限）
+	// 使用与 DuckDB 相同的数据库文件路径，但通过 SQLite driver 连接
+	sqliteDBPath := filepath.Join(dbPath, "browser.db")
+	gormDB, err = gorm.Open(sqlite.Open(sqliteDBPath), &gorm.Config{})
+	if err != nil {
+		logrus.WithError(err).Fatal("Failed to initialize GORM")
+	}
+
+	// 自动迁移（确保表结构正确）
+	if err := gormDB.AutoMigrate(&Document{}); err != nil {
+		logrus.WithError(err).Warn("Failed to auto migrate, but continuing")
+	}
 
 	logrus.Info("Database initialized successfully")
 
