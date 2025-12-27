@@ -6,6 +6,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/marcboeker/go-duckdb/v2"
 )
@@ -27,10 +28,32 @@ func init() {
 // duckdbDriver 实现了 driver.Driver 接口
 type duckdbDriver struct{}
 
+// ensureReadWriteMode 确保连接字符串默认使用读写模式
+// 如果连接字符串中没有 access_mode 参数，则添加 access_mode=read_write
+func ensureReadWriteMode(dsn string) string {
+	if dsn == "" {
+		return "?access_mode=read_write"
+	}
+
+	// 检查是否已经包含 access_mode 参数
+	if strings.Contains(dsn, "access_mode=") {
+		return dsn
+	}
+
+	// 如果连接字符串包含 ?，则追加参数；否则添加 ?
+	if strings.Contains(dsn, "?") {
+		return dsn + "&access_mode=read_write"
+	}
+	return dsn + "?access_mode=read_write"
+}
+
 // Open 实现 driver.Driver 接口
 func (d *duckdbDriver) Open(name string) (driver.Conn, error) {
+	// 确保默认使用读写模式
+	dsn := ensureReadWriteMode(name)
+
 	// 使用 NewConnector 创建连接器，并在初始化时安装和加载扩展
-	connector, err := duckdb.NewConnector(name, func(execer driver.ExecerContext) error {
+	connector, err := duckdb.NewConnector(dsn, func(execer driver.ExecerContext) error {
 		// 安装扩展（如果已安装会返回错误，可以忽略）
 		for _, ext := range extensions {
 			installQuery := fmt.Sprintf("INSTALL %s;", ext)
