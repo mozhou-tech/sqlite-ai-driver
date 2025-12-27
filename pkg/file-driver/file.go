@@ -152,7 +152,7 @@ func (d *fileDriver) Open(name string) (driver.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		conn, err := db.Conn(nil)
+		conn, err := db.Conn(context.Background())
 		if err != nil {
 			db.Close()
 			return nil, err
@@ -199,7 +199,7 @@ func (d *fileDriver) Open(name string) (driver.Conn, error) {
 		os.Remove(tmpPath)
 		return nil, fmt.Errorf("file driver: failed to open sqlite connection: %w", err)
 	}
-	conn, err := db.Conn(nil)
+	conn, err := db.Conn(context.Background())
 	if err != nil {
 		db.Close()
 		os.Remove(tmpPath)

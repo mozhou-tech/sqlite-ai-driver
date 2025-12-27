@@ -1,6 +1,7 @@
 package sqlite3_driver
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
@@ -129,7 +130,7 @@ func (w *sqliteDriverWrapper) Open(name string) (driver.Conn, error) {
 	// 获取底层连接
 	// 注意：sql.DB 内部维护连接池，我们需要获取一个连接
 	// 使用 Conn() 方法获取一个连接
-	conn, err := db.Conn(nil)
+	conn, err := db.Conn(context.Background())
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to get connection: %w", err)
