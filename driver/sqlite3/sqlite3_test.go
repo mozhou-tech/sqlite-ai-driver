@@ -9,17 +9,18 @@ import (
 	"strings"
 	"testing"
 
-	_ "github.com/mozhou-tech/sqlite-ai-driver"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/driver/sqlite3"
 )
 
 func TestOpen(t *testing.T) {
-	db, err := sql.Open("sqlite-vss", "test.db")
+	dbPath := "testdata/test.db"
+	db, err := sql.Open("sqlite-vss", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	t.Cleanup(func() {
-		_ = os.Remove("test.db")
+		_ = os.Remove(dbPath)
 	})
 
 	r := db.QueryRow("select vss_version();")
@@ -40,13 +41,14 @@ func TestOpen(t *testing.T) {
 // ref: https://github.com/koron/techdocs/blob/main/sqlite-vss-getting-started/doc.md
 func TestVectorSearch(t *testing.T) {
 	ctx := context.Background()
-	db, err := sql.Open("sqlite-vss", "vec.db")
+	dbPath := "testdata/vec.db"
+	db, err := sql.Open("sqlite-vss", dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		_ = db.Close()
-		_ = os.Remove("vec.db")
+		_ = os.Remove(dbPath)
 	})
 
 	// Create table

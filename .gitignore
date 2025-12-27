@@ -1,0 +1,9 @@
+data
+# 测试过程中产生的数据库文件
+testdata/*.db
+testdata/*.db-shm
+testdata/*.db-wal
+# SQLite 扩展文件（脚本文件需要提交）
+exts/*.dylib
+exts/*.so
+exts/*.dll
