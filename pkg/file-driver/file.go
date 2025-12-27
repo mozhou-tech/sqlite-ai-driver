@@ -222,7 +222,7 @@ type fileConnWrapper struct {
 }
 
 func (c *fileConnWrapper) Prepare(query string) (driver.Stmt, error) {
-	stmt, err := c.conn.PrepareContext(nil, query)
+	stmt, err := c.conn.PrepareContext(context.Background(), query)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +244,7 @@ func (c *fileConnWrapper) Close() error {
 }
 
 func (c *fileConnWrapper) Begin() (driver.Tx, error) {
-	tx, err := c.conn.BeginTx(nil, nil)
+	tx, err := c.conn.BeginTx(context.Background(), nil)
 	if err != nil {
 		return nil, err
 	}
