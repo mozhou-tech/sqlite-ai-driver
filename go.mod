@@ -6,6 +6,7 @@ require (
 	github.com/alifiroozi80/duckdb v1.1.1
 	github.com/marcboeker/go-duckdb/v2 v2.0.0
 	github.com/viant/afs v1.20.0
+	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
 	modernc.org/sqlite v1.29.6
 )
@@ -33,6 +34,7 @@ require (
 	github.com/marcboeker/go-duckdb/arrowmapping v0.0.2 // indirect
 	github.com/marcboeker/go-duckdb/mapping v0.0.2 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

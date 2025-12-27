@@ -75,7 +75,21 @@ func init() {
 	// 注册 sqlite3 驱动（包装后的驱动，支持自动路径处理）
 	// 我们注册为 "sqlite3" 以保持向后兼容性
 	// 在内部使用 modernc.org/sqlite 驱动（已注册为 "sqlite"）
-	sql.Register("sqlite3", &sqliteDriverWrapper{})
+	// 使用 recover 捕获重复注册的 panic（可能其他包也注册了 "sqlite3"）
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				// 如果是因为重复注册而 panic，忽略它
+				errStr := fmt.Sprintf("%v", r)
+				if strings.Contains(errStr, "Register called twice for driver sqlite3") {
+					return
+				}
+				// 其他 panic 重新抛出
+				panic(r)
+			}
+		}()
+		sql.Register("sqlite3", &sqliteDriverWrapper{})
+	}()
 }
 
 // replaceDriverWithReflection 使用反射替换已注册的驱动
