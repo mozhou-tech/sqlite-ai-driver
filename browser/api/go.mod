@@ -7,7 +7,7 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/mozhou-tech/sqlite-ai-driver v0.0.0
 	github.com/sirupsen/logrus v1.9.3
-	gorm.io/driver/sqlite v1.6.0
+	github.com/stretchr/testify v1.10.0
 	gorm.io/gorm v1.31.1
 )
 
@@ -19,6 +19,7 @@ require (
 	github.com/bytedance/sonic v1.14.1 // indirect
 	github.com/bytedance/sonic/loader v0.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
+	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/duckdb/duckdb-go-bindings v0.1.9 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.4 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.4 // indirect
@@ -46,12 +47,12 @@ require (
 	github.com/marcboeker/go-duckdb/mapping v0.0.2 // indirect
 	github.com/marcboeker/go-duckdb/v2 v2.0.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-sqlite3 v1.14.22 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
+	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rogpeppe/go-internal v1.9.0 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect

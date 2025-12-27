@@ -61,3 +61,6 @@ clean-lock:
 force-clean: stop
 	@echo "✅ 强制清理完成"
 
+test:
+	cd api &&  go mod tidy && go test ./...
+

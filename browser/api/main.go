@@ -236,6 +236,18 @@ func main() {
 	}
 }
 
+// columnExists 检查表中是否存在指定列
+func columnExists(db *sql.DB, tableName, columnName string) (bool, error) {
+	// DuckDB 使用 PRAGMA table_info 来获取表信息
+	query := `SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`
+	var count int
+	err := db.QueryRow(query, tableName, columnName).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // ensureDuckDBExtensions 确保 DuckDB 扩展已加载
 func ensureDuckDBExtensions(db *sql.DB) error {
 	// 检查扩展是否已加载
@@ -381,8 +393,31 @@ func getDocuments(c *gin.Context) {
 		"tag":        tagFilter,
 	}).Info("📄 getDocuments")
 
-	// 构建查询
-	baseQuery := `SELECT id, collection_name, data, embedding, content, created_at, updated_at FROM documents WHERE collection_name = ?`
+	// 检查 embedding 列是否存在
+	hasEmbedding, err := columnExists(sqlDB, "documents", "embedding")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check embedding column, assuming it exists")
+		hasEmbedding = true // 默认假设存在，保持向后兼容
+	}
+
+	// 检查 content 列是否存在
+	hasContent, err := columnExists(sqlDB, "documents", "content")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check content column, assuming it exists")
+		hasContent = true // 默认假设存在，保持向后兼容
+	}
+
+	// 构建查询 - 根据 embedding 和 content 列是否存在动态构建
+	var baseQuery string
+	if hasEmbedding && hasContent {
+		baseQuery = `SELECT id, collection_name, data, embedding, content, created_at, updated_at FROM documents WHERE collection_name = ?`
+	} else if hasEmbedding && !hasContent {
+		baseQuery = `SELECT id, collection_name, data, embedding, NULL as content, created_at, updated_at FROM documents WHERE collection_name = ?`
+	} else if !hasEmbedding && hasContent {
+		baseQuery = `SELECT id, collection_name, data, NULL as embedding, content, created_at, updated_at FROM documents WHERE collection_name = ?`
+	} else {
+		baseQuery = `SELECT id, collection_name, data, NULL as embedding, NULL as content, created_at, updated_at FROM documents WHERE collection_name = ?`
+	}
 	args := []interface{}{name}
 
 	if tagFilter != "" {
@@ -421,9 +456,17 @@ func getDocuments(c *gin.Context) {
 	var docs []Document
 	for rows.Next() {
 		var doc Document
-		if err := rows.Scan(&doc.ID, &doc.CollectionName, &doc.Data, &doc.Embedding, &doc.Content, &doc.CreatedAt, &doc.UpdatedAt); err != nil {
+		var embeddingNull sql.NullString
+		var contentNull sql.NullString
+		if err := rows.Scan(&doc.ID, &doc.CollectionName, &doc.Data, &embeddingNull, &contentNull, &doc.CreatedAt, &doc.UpdatedAt); err != nil {
 			logrus.WithError(err).Warn("Failed to scan document")
 			continue
+		}
+		if embeddingNull.Valid {
+			doc.Embedding = embeddingNull.String
+		}
+		if contentNull.Valid {
+			doc.Content = contentNull.String
 		}
 		docs = append(docs, doc)
 	}
@@ -461,9 +504,37 @@ func getDocument(c *gin.Context) {
 	name := c.Param("name")
 	id := c.Param("id")
 
+	// 检查 embedding 列是否存在
+	hasEmbedding, err := columnExists(sqlDB, "documents", "embedding")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check embedding column, assuming it exists")
+		hasEmbedding = true // 默认假设存在，保持向后兼容
+	}
+
+	// 检查 content 列是否存在
+	hasContent, err := columnExists(sqlDB, "documents", "content")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check content column, assuming it exists")
+		hasContent = true // 默认假设存在，保持向后兼容
+	}
+
 	var doc Document
-	query := `SELECT id, collection_name, data, embedding, content, created_at, updated_at FROM documents WHERE collection_name = ? AND id = ?`
-	err := sqlDB.QueryRow(query, name, id).Scan(&doc.ID, &doc.CollectionName, &doc.Data, &doc.Embedding, &doc.Content, &doc.CreatedAt, &doc.UpdatedAt)
+	var embeddingNull sql.NullString
+	var contentNull sql.NullString
+	var query string
+	if hasEmbedding && hasContent {
+		query = `SELECT id, collection_name, data, embedding, content, created_at, updated_at FROM documents WHERE collection_name = ? AND id = ?`
+	} else if hasEmbedding && !hasContent {
+		query = `SELECT id, collection_name, data, embedding, NULL as content, created_at, updated_at FROM documents WHERE collection_name = ? AND id = ?`
+	} else if !hasEmbedding && hasContent {
+		query = `SELECT id, collection_name, data, NULL as embedding, content, created_at, updated_at FROM documents WHERE collection_name = ? AND id = ?`
+	} else {
+		query = `SELECT id, collection_name, data, NULL as embedding, NULL as content, created_at, updated_at FROM documents WHERE collection_name = ? AND id = ?`
+	}
+	err = sqlDB.QueryRow(query, name, id).Scan(&doc.ID, &doc.CollectionName, &doc.Data, &embeddingNull, &contentNull, &doc.CreatedAt, &doc.UpdatedAt)
+	if contentNull.Valid {
+		doc.Content = contentNull.String
+	}
 	if err != nil {
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, ErrorResponse{Error: "Document not found"})
@@ -471,6 +542,9 @@ func getDocument(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		}
 		return
+	}
+	if embeddingNull.Valid {
+		doc.Embedding = embeddingNull.String
 	}
 
 	var data map[string]interface{}
@@ -521,9 +595,35 @@ func createDocument(c *gin.Context) {
 		}
 	}
 
-	// 插入文档
-	insertQuery := `INSERT INTO documents (id, collection_name, data, embedding, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
-	_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), embeddingStr, content)
+	// 检查 embedding 列是否存在
+	hasEmbedding, err := columnExists(sqlDB, "documents", "embedding")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check embedding column, assuming it exists")
+		hasEmbedding = true // 默认假设存在，保持向后兼容
+	}
+
+	// 检查 content 列是否存在
+	hasContent, err := columnExists(sqlDB, "documents", "content")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check content column, assuming it exists")
+		hasContent = true // 默认假设存在，保持向后兼容
+	}
+
+	// 插入文档 - 根据 embedding 和 content 列是否存在动态构建
+	var insertQuery string
+	if hasEmbedding && hasContent {
+		insertQuery = `INSERT INTO documents (id, collection_name, data, embedding, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), embeddingStr, content)
+	} else if hasEmbedding && !hasContent {
+		insertQuery = `INSERT INTO documents (id, collection_name, data, embedding, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), embeddingStr)
+	} else if !hasEmbedding && hasContent {
+		insertQuery = `INSERT INTO documents (id, collection_name, data, content, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), content)
+	} else {
+		insertQuery = `INSERT INTO documents (id, collection_name, data, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON))
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
@@ -542,10 +642,38 @@ func updateDocument(c *gin.Context) {
 	name := c.Param("name")
 	id := c.Param("id")
 
+	// 检查 embedding 列是否存在
+	hasEmbedding, err := columnExists(sqlDB, "documents", "embedding")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check embedding column, assuming it exists")
+		hasEmbedding = true // 默认假设存在，保持向后兼容
+	}
+
+	// 检查 content 列是否存在
+	hasContent, err := columnExists(sqlDB, "documents", "content")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check content column, assuming it exists")
+		hasContent = true // 默认假设存在，保持向后兼容
+	}
+
 	// 获取现有文档
 	var doc Document
-	query := `SELECT id, collection_name, data, embedding, content FROM documents WHERE collection_name = ? AND id = ?`
-	err := sqlDB.QueryRow(query, name, id).Scan(&doc.ID, &doc.CollectionName, &doc.Data, &doc.Embedding, &doc.Content)
+	var embeddingNull sql.NullString
+	var contentNull sql.NullString
+	var query string
+	if hasEmbedding && hasContent {
+		query = `SELECT id, collection_name, data, embedding, content FROM documents WHERE collection_name = ? AND id = ?`
+	} else if hasEmbedding && !hasContent {
+		query = `SELECT id, collection_name, data, embedding, NULL as content FROM documents WHERE collection_name = ? AND id = ?`
+	} else if !hasEmbedding && hasContent {
+		query = `SELECT id, collection_name, data, NULL as embedding, content FROM documents WHERE collection_name = ? AND id = ?`
+	} else {
+		query = `SELECT id, collection_name, data, NULL as embedding, NULL as content FROM documents WHERE collection_name = ? AND id = ?`
+	}
+	err = sqlDB.QueryRow(query, name, id).Scan(&doc.ID, &doc.CollectionName, &doc.Data, &embeddingNull, &contentNull)
+	if contentNull.Valid {
+		doc.Content = contentNull.String
+	}
 	if err != nil {
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, ErrorResponse{Error: "Document not found"})
@@ -553,6 +681,9 @@ func updateDocument(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		}
 		return
+	}
+	if embeddingNull.Valid {
+		doc.Embedding = embeddingNull.String
 	}
 
 	var updates map[string]interface{}
@@ -595,9 +726,21 @@ func updateDocument(c *gin.Context) {
 		}
 	}
 
-	// 更新文档
-	updateQuery := `UPDATE documents SET data = ?, embedding = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
-	_, err = sqlDB.Exec(updateQuery, string(dataJSON), embeddingStr, content, name, id)
+	// 更新文档 - 根据 embedding 和 content 列是否存在动态构建
+	var updateQuery string
+	if hasEmbedding && hasContent {
+		updateQuery = `UPDATE documents SET data = ?, embedding = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
+		_, err = sqlDB.Exec(updateQuery, string(dataJSON), embeddingStr, content, name, id)
+	} else if hasEmbedding && !hasContent {
+		updateQuery = `UPDATE documents SET data = ?, embedding = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
+		_, err = sqlDB.Exec(updateQuery, string(dataJSON), embeddingStr, name, id)
+	} else if !hasEmbedding && hasContent {
+		updateQuery = `UPDATE documents SET data = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
+		_, err = sqlDB.Exec(updateQuery, string(dataJSON), content, name, id)
+	} else {
+		updateQuery = `UPDATE documents SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
+		_, err = sqlDB.Exec(updateQuery, string(dataJSON), name, id)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
 		return
@@ -644,6 +787,71 @@ func fulltextSearch(c *gin.Context) {
 
 	start := time.Now()
 
+	// 检查 content 列是否存在
+	hasContent, err := columnExists(sqlDB, "documents", "content")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check content column, assuming it exists")
+		hasContent = true // 默认假设存在，保持向后兼容
+	}
+
+	// 如果 content 列不存在，使用 data 列进行搜索
+	if !hasContent {
+		logrus.Warn("Content column does not exist, using data column for search")
+		query := `
+		SELECT id, collection_name, data, CAST(1.0 AS DOUBLE) as score
+		FROM documents
+		WHERE collection_name = ? 
+		  AND data LIKE ?
+		LIMIT ?
+		`
+		searchPattern := "%" + req.Query + "%"
+		rows, err := sqlDB.Query(query, name, searchPattern, req.Limit)
+		if err != nil {
+			logrus.WithError(err).Error("Fulltext search failed")
+			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		var results []gin.H
+		for rows.Next() {
+			var docID, collectionName, dataJSON string
+			var score float64
+			if err := rows.Scan(&docID, &collectionName, &dataJSON, &score); err != nil {
+				logrus.WithError(err).Error("Failed to scan row")
+				continue
+			}
+
+			// 检查阈值
+			if req.Threshold > 0 && score < req.Threshold {
+				continue
+			}
+
+			var data map[string]interface{}
+			if err := json.Unmarshal([]byte(dataJSON), &data); err != nil {
+				logrus.WithError(err).Warn("Failed to unmarshal document data")
+				continue
+			}
+
+			results = append(results, gin.H{
+				"document": DocumentResponse{
+					ID:   docID,
+					Data: data,
+				},
+				"score": score,
+			})
+		}
+
+		took := time.Since(start).Milliseconds()
+
+		c.JSON(http.StatusOK, gin.H{
+			"results": results,
+			"query":   req.Query,
+			"took":    took,
+		})
+		return
+	}
+
 	// 检查 FTS 索引是否存在，如果不存在则尝试创建
 	var indexExists bool
 	// DuckDB 使用不同的系统表来检查索引
@@ -666,7 +874,7 @@ func fulltextSearch(c *gin.Context) {
 	// 使用 DuckDB FTS 进行全文搜索
 	// DuckDB 的 FTS 使用 MATCH 操作符，直接在表上搜索
 	query := `
-	SELECT id, collection_name, data, 1.0 as score
+	SELECT id, collection_name, data, CAST(1.0 AS DOUBLE) as score
 	FROM documents
 	WHERE collection_name = ? 
 	  AND content MATCH ?
@@ -678,7 +886,7 @@ func fulltextSearch(c *gin.Context) {
 		// 如果 FTS 查询失败，使用 LIKE 查询作为回退
 		logrus.WithError(err).Warn("FTS query failed, using LIKE query as fallback")
 		query = `
-		SELECT id, collection_name, data, 1.0 as score
+		SELECT id, collection_name, data, CAST(1.0 AS DOUBLE) as score
 		FROM documents
 		WHERE collection_name = ? 
 		  AND content LIKE ?
