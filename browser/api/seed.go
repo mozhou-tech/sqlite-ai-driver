@@ -28,6 +28,8 @@ type Document struct {
 	ID             string    `gorm:"primaryKey;type:varchar(255);not null"`
 	CollectionName string    `gorm:"type:varchar(255);not null;index"`
 	Data           string    `gorm:"type:text"` // JSON 格式存储
+	Embedding      string    `gorm:"type:text"` // 向量数据，存储为 JSON 字符串
+	Content        string    `gorm:"type:text"` // 提取的文本内容，用于全文搜索
 	CreatedAt      time.Time `gorm:"autoCreateTime"`
 	UpdatedAt      time.Time `gorm:"autoUpdateTime"`
 }
@@ -367,10 +369,14 @@ func main() {
 			continue
 		}
 
+		// 提取文本内容用于全文搜索
+		content := extractTextFromData(string(dataJSON))
+
 		doc := Document{
 			ID:             article["id"].(string),
 			CollectionName: "articles",
 			Data:           string(dataJSON),
+			Content:        content,
 		}
 
 		if err := gormDB.Create(&doc).Error; err != nil {
@@ -492,10 +498,22 @@ func main() {
 			continue
 		}
 
+		// 提取文本内容用于全文搜索
+		content := extractTextFromData(string(dataJSON))
+
+		// 将 embedding 序列化为 JSON 字符串（与 main.go 保持一致）
+		embeddingJSON, err := json.Marshal(embedding)
+		if err != nil {
+			logrus.WithError(err).WithField("product_id", product["id"]).Warn("序列化 embedding 失败")
+			embeddingJSON = []byte("")
+		}
+
 		doc := Document{
 			ID:             product["id"].(string),
 			CollectionName: "products",
 			Data:           string(dataJSON),
+			Embedding:      string(embeddingJSON),
+			Content:        content,
 		}
 
 		if err := gormDB.Create(&doc).Error; err != nil {
@@ -553,10 +571,14 @@ func main() {
 			continue
 		}
 
+		// 提取文本内容用于全文搜索
+		content := extractTextFromData(string(dataJSON))
+
 		doc := Document{
 			ID:             user["id"].(string),
 			CollectionName: "users",
 			Data:           string(dataJSON),
+			Content:        content,
 		}
 
 		if err := gormDB.Create(&doc).Error; err != nil {
