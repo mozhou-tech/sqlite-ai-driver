@@ -574,17 +574,30 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			}
 		}
 	case ModeGlobal:
-		// 全局搜索目前简化为：查找所有实体的共同关系或中心节点
-		// 暂时退回到混合搜索或图遍历
-		return r.Retrieve(ctx, query, QueryParam{Mode: ModeHybrid, Limit: param.Limit})
+		// 全局搜索：结合图谱搜索和混合搜索
+		graphData, _ := r.SearchGraph(ctx, query)
+		if graphData != nil {
+			recalledTriples = graphData.Relationships
+		}
+		// 获取混合搜索结果
+		hybridResults, err := r.Retrieve(ctx, query, QueryParam{Mode: ModeHybrid, Limit: param.Limit})
+		if err == nil {
+			// 将图谱三元组注入到每个结果中，以便上层获取
+			for i := range hybridResults {
+				hybridResults[i].RecalledTriples = recalledTriples
+			}
+			return hybridResults, nil
+		}
+		return nil, err
 	case ModeHybrid:
-		// 实现真正的混合搜索（向量 + 全文 + 可能的图）
+		// 实现真正的混合搜索（向量 + 全文 + 知识图谱）
 		var ftResults []FulltextSearchResult
 		var vecResults []VectorSearchResult
+		var mu sync.Mutex
 
 		g, gCtx := errgroup.WithContext(ctx)
 
-		// 全文搜索
+		// 1. 全文搜索
 		g.Go(func() error {
 			var err error
 			ftResults, err = r.fulltext.FindWithScores(gCtx, query, FulltextSearchOptions{
@@ -598,7 +611,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			return nil
 		})
 
-		// 向量搜索
+		// 2. 向量搜索
 		if r.vector != nil && r.embedder != nil {
 			g.Go(func() error {
 				emb, err := r.embedder.Embed(gCtx, query)
@@ -618,10 +631,26 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			})
 		}
 
+		// 3. 知识图谱搜索
+		if r.graph != nil {
+			g.Go(func() error {
+				graphData, err := r.SearchGraph(gCtx, query)
+				if err == nil && graphData != nil {
+					mu.Lock()
+					recalledTriples = append(recalledTriples, graphData.Relationships...)
+					mu.Unlock()
+				}
+				return nil
+			})
+		}
+
 		_ = g.Wait()
 
-		logrus.WithField("count", len(ftResults)).Debug("Hybrid mode: Fulltext results")
-		logrus.WithField("count", len(vecResults)).Debug("Hybrid mode: Vector results")
+		logrus.WithFields(logrus.Fields{
+			"ft_count":    len(ftResults),
+			"vec_count":   len(vecResults),
+			"graph_count": len(recalledTriples),
+		}).Debug("Hybrid search recall completed")
 
 		// 使用简单的 RRF 融合或加权融合
 		docScores := make(map[string]float64)

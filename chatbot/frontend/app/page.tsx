@@ -23,7 +23,7 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [documents, setDocuments] = useState<any[]>([]);
   const [showDocs, setShowDocs] = useState(false);
-  const [queryMode, setQueryMode] = useState<"global" | "hybrid" | "local" | "naive">("global");
+  const [queryMode, setQueryMode] = useState<"global" | "hybrid" | "local" | "graph" | "naive">("global");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -222,6 +222,7 @@ export default function Home() {
             <option value="global">Global Mode</option>
             <option value="hybrid">Hybrid Mode</option>
             <option value="local">Local Mode</option>
+            <option value="graph">Graph Mode</option>
             <option value="naive">Naive Mode</option>
           </select>
           <Link href="/graph">

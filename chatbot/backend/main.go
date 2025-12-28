@@ -192,18 +192,42 @@ func initLightRAG() error {
 	formatDocs := func(ctx context.Context, docs []*schema.Document) (map[string]any, error) {
 		if len(docs) == 0 {
 			logrus.Warn("No documents retrieved for context")
-			return map[string]any{"format_docs": "未找到相关文档。"}, nil
-		}
-		var contextText string
-		for i, doc := range docs {
-			score, _ := doc.MetaData["score"].(float64)
-			contextText += fmt.Sprintf("[%d] (Score: %.4f) %s\n", i+1, score, doc.Content)
+			return map[string]any{"format_docs": "未找到相关知识内容。"}, nil
 		}
 
-		logrus.WithFields(logrus.Fields{
-			"doc_count":      len(docs),
-			"context_length": len(contextText),
-		}).Info("Formatted documents for LLM context")
+		uniqueTriples := make(map[string]bool)
+		var graphLines []string
+
+		// 1. 提取并去重知识图谱三元组
+		for _, doc := range docs {
+			if triples, ok := doc.MetaData["recalled_triples"].([]lightrag.Relationship); ok {
+				for _, t := range triples {
+					key := fmt.Sprintf("%s-%s-%s", t.Source, t.Relation, t.Target)
+					if !uniqueTriples[key] {
+						uniqueTriples[key] = true
+						graphLines = append(graphLines, fmt.Sprintf("%s -[%s]-> %s", t.Source, t.Relation, t.Target))
+					}
+				}
+			}
+		}
+
+		var contextText string
+		if len(graphLines) > 0 {
+			// 如果召回了图谱，优先使用图谱作为上下文 (遵循用户要求：使用知识图谱而不是文章本身)
+			contextText += "### 知识图谱召回信息 (Knowledge Graph):\n"
+			for i, line := range graphLines {
+				contextText += fmt.Sprintf("[%d] %s\n", i+1, line)
+			}
+			logrus.WithField("triple_count", len(graphLines)).Info("Using Knowledge Graph as primary context")
+		} else {
+			// 如果没有召回图谱，退回到使用文档内容
+			contextText += "### 相关参考文档 (Reference Documents):\n"
+			for i, doc := range docs {
+				score, _ := doc.MetaData["score"].(float64)
+				contextText += fmt.Sprintf("[%d] (Score: %.4f) %s\n", i+1, score, doc.Content)
+			}
+			logrus.Warn("No graph data found, falling back to document content")
+		}
 
 		return map[string]any{"format_docs": contextText}, nil
 	}
@@ -253,13 +277,19 @@ func (r *LightRAGRetriever) Retrieve(ctx context.Context, query string, opts ...
 		TopK: Ptr(5),
 	}, opts...)
 
+	mode, _ := ctx.Value("rag_mode").(lightrag.QueryMode)
+	if mode == "" {
+		mode = lightrag.ModeGlobal
+	}
+
 	logrus.WithFields(logrus.Fields{
 		"query": query,
 		"top_k": *options.TopK,
+		"mode":  mode,
 	}).Info("Retrieving documents from LightRAG")
 
 	param := lightrag.QueryParam{
-		Mode:  lightrag.ModeGlobal,
+		Mode:  mode,
 		Limit: *options.TopK,
 	}
 
@@ -283,12 +313,16 @@ func (r *LightRAGRetriever) Retrieve(ctx context.Context, query string, opts ...
 				}
 				return res.Content
 			}(),
+			"recalled_triples_count": len(res.RecalledTriples),
 		}).Info("LightRAG Recalled Document")
 
 		if res.Metadata == nil {
 			res.Metadata = make(map[string]any)
 		}
 		res.Metadata["score"] = res.Score
+		if len(res.RecalledTriples) > 0 {
+			res.Metadata["recalled_triples"] = res.RecalledTriples
+		}
 
 		docs = append(docs, &schema.Document{
 			ID:       res.ID,
@@ -391,7 +425,7 @@ func handleChat(c *gin.Context) {
 		"mode":    mode,
 	}).Info("Starting chat query via Eino Graph (streaming)")
 
-	sr, err := ragGraph.Stream(ctx, req.Message)
+	sr, err := ragGraph.Stream(context.WithValue(ctx, "rag_mode", mode), req.Message)
 	if err != nil {
 		logrus.WithError(err).Error("Chat query failed")
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to query via Eino: %v", err)})
