@@ -26,8 +26,19 @@ type Collection interface {
 	Insert(ctx context.Context, doc map[string]any) (Document, error)
 	// FindByID 根据ID查找文档
 	FindByID(ctx context.Context, id string) (Document, error)
+	// Find 根据选项查找文档
+	Find(ctx context.Context, opts FindOptions) ([]Document, error)
+	// Delete 根据ID删除文档
+	Delete(ctx context.Context, id string) error
 	// BulkUpsert 批量插入或更新文档
 	BulkUpsert(ctx context.Context, docs []map[string]any) ([]Document, error)
+}
+
+// FindOptions 查找选项
+type FindOptions struct {
+	Limit    int
+	Offset   int
+	Selector map[string]any
 }
 
 // Document 定义文档接口

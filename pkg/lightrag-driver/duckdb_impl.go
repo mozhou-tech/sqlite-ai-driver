@@ -165,6 +165,10 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 	// 更新tokens列
 	if content != "" {
 		tokens := duckdb_driver.TokenizeWithSego(content)
+		logrus.WithFields(logrus.Fields{
+			"id":     id,
+			"tokens": tokens,
+		}).Debug("Updating content_tokens for document")
 		updateSQL := fmt.Sprintf(`UPDATE %s SET content_tokens = ? WHERE id = ?`, c.tableName)
 		_, err = c.db.ExecContext(ctx, updateSQL, tokens, id)
 		if err != nil {
@@ -254,6 +258,83 @@ func (c *duckdbCollection) FindByID(ctx context.Context, id string) (Document, e
 		data:    doc,
 		content: content,
 	}, nil
+}
+
+func (c *duckdbCollection) Find(ctx context.Context, opts FindOptions) ([]Document, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	offset := opts.Offset
+
+	selectSQL := fmt.Sprintf(`
+		SELECT id, content, metadata
+		FROM %s
+	`, c.tableName)
+
+	// TODO: 实现 Selector 过滤
+
+	selectSQL += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
+
+	rows, err := c.db.QueryContext(ctx, selectSQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find documents: %w", err)
+	}
+	defer rows.Close()
+
+	var results []Document
+	for rows.Next() {
+		var docID, content string
+		var metadataVal any
+		if err := rows.Scan(&docID, &content, &metadataVal); err != nil {
+			continue
+		}
+
+		doc := map[string]any{
+			"id":      docID,
+			"content": content,
+		}
+
+		if metadataVal != nil {
+			switch v := metadataVal.(type) {
+			case string:
+				var metadata map[string]any
+				if err := json.Unmarshal([]byte(v), &metadata); err == nil {
+					for k, val := range metadata {
+						doc[k] = val
+					}
+				}
+			case []byte:
+				var metadata map[string]any
+				if err := json.Unmarshal(v, &metadata); err == nil {
+					for k, val := range metadata {
+						doc[k] = val
+					}
+				}
+			case map[string]any:
+				for k, val := range v {
+					doc[k] = val
+				}
+			}
+		}
+
+		results = append(results, &duckdbDocument{
+			id:      docID,
+			data:    doc,
+			content: content,
+		})
+	}
+
+	return results, nil
+}
+
+func (c *duckdbCollection) Delete(ctx context.Context, id string) error {
+	deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE id = ?", c.tableName)
+	_, err := c.db.ExecContext(ctx, deleteSQL, id)
+	if err != nil {
+		return fmt.Errorf("failed to delete document: %w", err)
+	}
+	return nil
 }
 
 func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any) ([]Document, error) {

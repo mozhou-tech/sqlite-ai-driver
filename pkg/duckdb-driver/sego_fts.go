@@ -227,22 +227,23 @@ func SearchWithSego(ctx context.Context, db *sql.DB, tableName, query, contentCo
 	}
 
 	if count > 0 && queryTokens != "" {
-		// 使用分词结果搜索 tokensColumn 字段
+		// 使用 match_bm25 函数搜索
+		// DuckDB FTS 索引创建后会生成 fts_main_tableName.match_bm25(idColumn, query)
 		searchSQL = fmt.Sprintf(`
 			SELECT %s
 			FROM %s
-			WHERE %s MATCH ?
+			WHERE fts_main_%s.match_bm25(%s, ?) IS NOT NULL
 			LIMIT ?
-		`, idColumn, tableName, tokensColumn)
+		`, idColumn, tableName, tableName, idColumn)
 		searchText = queryTokens
 	} else {
 		// 回退到原始 content 字段搜索
 		searchSQL = fmt.Sprintf(`
 			SELECT %s
 			FROM %s
-			WHERE %s MATCH ?
+			WHERE fts_main_%s.match_bm25(%s, ?) IS NOT NULL
 			LIMIT ?
-		`, idColumn, tableName, contentColumn)
+		`, idColumn, tableName, tableName, idColumn)
 		searchText = query
 	}
 

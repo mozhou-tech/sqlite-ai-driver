@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -61,7 +62,7 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 	// 创建数据库
 	db, err := lightrag_driver.CreateDatabase(ctx, lightrag_driver.DatabaseOptions{
 		Name: "lightrag",
-		Path: r.workingDir,
+		Path: filepath.Join(r.workingDir, "lightrag.db"),
 		GraphOptions: &lightrag_driver.GraphOptions{
 			Enabled: true,
 			Backend: "cayley",
@@ -150,6 +151,37 @@ func (r *LightRAG) Insert(ctx context.Context, text string) error {
 	}
 
 	return nil
+}
+
+// ListDocuments 获取文档列表
+func (r *LightRAG) ListDocuments(ctx context.Context, limit, offset int) ([]map[string]any, error) {
+	if !r.initialized {
+		return nil, fmt.Errorf("storages not initialized")
+	}
+
+	docs, err := r.docs.Find(ctx, lightrag_driver.FindOptions{
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]map[string]any, 0, len(docs))
+	for _, doc := range docs {
+		results = append(results, doc.Data())
+	}
+
+	return results, nil
+}
+
+// DeleteDocument 删除文档
+func (r *LightRAG) DeleteDocument(ctx context.Context, id string) error {
+	if !r.initialized {
+		return fmt.Errorf("storages not initialized")
+	}
+
+	return r.docs.Delete(ctx, id)
 }
 
 func (r *LightRAG) extractQueryEntities(ctx context.Context, query string) ([]string, error) {
@@ -323,8 +355,10 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			Selector: param.Filters,
 		})
 		if err != nil {
+			logrus.WithError(err).Warn("Vector search failed")
 			return nil, err
 		}
+		logrus.WithField("count", len(vecResults)).Debug("Vector search returned results")
 		for _, v := range vecResults {
 			rawResults = append(rawResults, lightrag_driver.FulltextSearchResult{
 				Document: v.Document,
@@ -337,8 +371,10 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			Selector: param.Filters,
 		})
 		if err != nil {
+			logrus.WithError(err).Warn("Fulltext search failed")
 			return nil, err
 		}
+		logrus.WithField("count", len(rawResults)).Debug("Fulltext search returned results")
 	case ModeLocal, ModeGraph:
 		if r.graph == nil {
 			return nil, fmt.Errorf("graph search not available")
@@ -391,23 +427,25 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			logrus.WithError(err).Error("Fulltext search failed in hybrid mode")
 			ftResults = []lightrag_driver.FulltextSearchResult{} // 确保不是 nil
 		}
-		if ftResults == nil {
-			ftResults = []lightrag_driver.FulltextSearchResult{} // 确保不是 nil
-		}
+		logrus.WithField("count", len(ftResults)).Debug("Hybrid mode: Fulltext results")
 
 		var vecResults []lightrag_driver.VectorSearchResult
 		if r.vector != nil && r.embedder != nil {
 			emb, err := r.embedder.Embed(ctx, query)
 			if err == nil {
-				vecResults, _ = r.vector.Search(ctx, emb, lightrag_driver.VectorSearchOptions{
+				vecResults, err = r.vector.Search(ctx, emb, lightrag_driver.VectorSearchOptions{
 					Limit:    param.Limit * 2,
 					Selector: param.Filters,
 				})
+				if err != nil {
+					logrus.WithError(err).Error("Vector search failed in hybrid mode")
+				}
 			}
 		}
 		if vecResults == nil {
 			vecResults = []lightrag_driver.VectorSearchResult{} // 确保不是 nil
 		}
+		logrus.WithField("count", len(vecResults)).Debug("Hybrid mode: Vector results")
 
 		// 使用简单的 RRF 融合或加权融合
 		docScores := make(map[string]float64)
