@@ -124,7 +124,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	// Build SQL query for vector search using DuckDB
 	// Use list_cosine_similarity for cosine similarity search
 	// Distance = 1 - similarity, so we order by similarity DESC
-	// DuckDB can accept []float64 directly as a parameter for FLOAT[] type
+	// DuckDB can accept FLOAT[] which can be passed as string representation
 	sqlQuery := fmt.Sprintf(`
 		SELECT 
 			id,
@@ -136,18 +136,29 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 		WHERE vector_content IS NOT NULL
 	`, r.config.TableName)
 
-	args := []interface{}{queryVector}
+	// Convert []float64 to string format that DuckDB can parse
+	// Format: [1.0, 2.0, 3.0]
+	vectorStr := "["
+	for i, v := range queryVector {
+		if i > 0 {
+			vectorStr += ", "
+		}
+		vectorStr += fmt.Sprintf("%g", v)
+	}
+	vectorStr += "]"
+
+	args := []interface{}{vectorStr}
 
 	if co.ScoreThreshold != nil {
 		// For cosine similarity: similarity = 1 - distance
 		// So distance threshold = 1 - scoreThreshold
 		distanceThreshold := 1.0 - *co.ScoreThreshold
 		sqlQuery += " AND (1 - list_cosine_similarity(vector_content, ?::FLOAT[])) <= ?"
-		args = append(args, queryVector, distanceThreshold)
+		args = append(args, vectorStr, distanceThreshold)
 	}
 
 	sqlQuery += " ORDER BY list_cosine_similarity(vector_content, ?::FLOAT[]) DESC LIMIT ?"
-	args = append(args, queryVector, *co.TopK)
+	args = append(args, vectorStr, *co.TopK)
 
 	// Execute query
 	rows, err := r.config.DB.QueryContext(ctx, sqlQuery, args...)
@@ -158,17 +169,34 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 
 	for rows.Next() {
 		var id, content string
-		var vectorContent []float64
-		var metadataJSON sql.NullString
+		var vectorContentRaw interface{}
+		var metadataRaw interface{}
 		var distance float64
 
-		err := rows.Scan(&id, &content, &vectorContent, &metadataJSON, &distance)
+		err := rows.Scan(&id, &content, &vectorContentRaw, &metadataRaw, &distance)
 		if err != nil {
 			return nil, fmt.Errorf("[duckdb retriever] failed to scan row: %w", err)
 		}
 
-		// Create a mock row for DocumentConverter
-		// We'll pass the data directly instead of using sql.Row
+		// Convert vector content from interface{} ([]interface{} for DuckDB FLOAT[])
+		var vectorContent []float64
+		// ... existing vector conversion code ...
+		if vectorContentRaw != nil {
+			if slice, ok := vectorContentRaw.([]interface{}); ok {
+				vectorContent = make([]float64, len(slice))
+				for i, v := range slice {
+					if f, ok := v.(float64); ok {
+						vectorContent[i] = f
+					} else if f32, ok := v.(float32); ok {
+						vectorContent[i] = float64(f32)
+					}
+				}
+			} else if slice, ok := vectorContentRaw.([]float64); ok {
+				vectorContent = slice
+			}
+		}
+
+		// Create document
 		doc := &schema.Document{
 			ID:       id,
 			Content:  content,
@@ -180,12 +208,26 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 			doc.WithDenseVector(vectorContent)
 		}
 
-		// Parse metadata JSON if available
-		if metadataJSON.Valid {
-			var metadata map[string]any
-			if err := json.Unmarshal([]byte(metadataJSON.String), &metadata); err == nil {
-				for k, v := range metadata {
-					doc.MetaData[k] = v
+		// Parse metadata if available
+		if metadataRaw != nil {
+			switch v := metadataRaw.(type) {
+			case map[string]interface{}:
+				for k, val := range v {
+					doc.MetaData[k] = val
+				}
+			case string:
+				var metadata map[string]any
+				if err := json.Unmarshal([]byte(v), &metadata); err == nil {
+					for k, val := range metadata {
+						doc.MetaData[k] = val
+					}
+				}
+			case []byte:
+				var metadata map[string]any
+				if err := json.Unmarshal(v, &metadata); err == nil {
+					for k, val := range metadata {
+						doc.MetaData[k] = val
+					}
 				}
 			}
 		}

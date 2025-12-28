@@ -292,7 +292,7 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	// DuckDB supports INSERT OR REPLACE syntax
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
 		INSERT OR REPLACE INTO %s (id, content, vector_content, metadata)
-		VALUES (?, ?, ?, ?)
+		VALUES (?, ?, ?::FLOAT[], ?)
 	`, i.config.TableName))
 	if err != nil {
 		return fmt.Errorf("[bulkUpsert] failed to prepare statement: %w", err)
@@ -331,11 +331,22 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 		}
 
 		// Convert vector to DuckDB array format
-		// DuckDB expects FLOAT[] which can be passed as []float64
-		// If vectorContent is nil or empty, pass NULL
-		var vectorArg interface{} = vectorContent
+		// DuckDB expects FLOAT[] which can be passed as string representation
+		var vectorArg interface{}
 		if len(vectorContent) == 0 {
 			vectorArg = nil
+		} else {
+			// Convert []float64 to string format that DuckDB can parse
+			// Format: [1.0, 2.0, 3.0]
+			vectorStr := "["
+			for i, v := range vectorContent {
+				if i > 0 {
+					vectorStr += ", "
+				}
+				vectorStr += fmt.Sprintf("%g", v)
+			}
+			vectorStr += "]"
+			vectorArg = vectorStr
 		}
 
 		_, err = stmt.ExecContext(ctx, id, content, vectorArg, string(metadataJSON))

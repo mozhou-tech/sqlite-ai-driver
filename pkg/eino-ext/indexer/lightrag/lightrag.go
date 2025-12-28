@@ -330,16 +330,27 @@ func (r *LightRAG) retrieveVector(ctx context.Context, query string, limit int, 
 		WHERE vector_content IS NOT NULL
 	`, r.tableName)
 
-	args := []interface{}{queryVector}
+	// Convert []float64 to string format that DuckDB can parse
+	// Format: [1.0, 2.0, 3.0]
+	vectorStr := "["
+	for i, v := range queryVector {
+		if i > 0 {
+			vectorStr += ", "
+		}
+		vectorStr += fmt.Sprintf("%g", v)
+	}
+	vectorStr += "]"
+
+	args := []interface{}{vectorStr}
 
 	if threshold > 0 {
 		distanceThreshold := 1.0 - threshold
 		sqlQuery += " AND (1 - list_cosine_similarity(vector_content, ?::FLOAT[])) <= ?"
-		args = append(args, queryVector, distanceThreshold)
+		args = append(args, vectorStr, distanceThreshold)
 	}
 
 	sqlQuery += " ORDER BY list_cosine_similarity(vector_content, ?::FLOAT[]) DESC LIMIT ?"
-	args = append(args, queryVector, limit)
+	args = append(args, vectorStr, limit)
 
 	rows, err := r.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
@@ -350,12 +361,29 @@ func (r *LightRAG) retrieveVector(ctx context.Context, query string, limit int, 
 	var results []QueryResult
 	for rows.Next() {
 		var id, content string
-		var vectorContent []float64
+		var vectorContentRaw interface{}
 		var metadataRaw interface{}
 		var distance float64
 
-		if err := rows.Scan(&id, &content, &vectorContent, &metadataRaw, &distance); err != nil {
+		if err := rows.Scan(&id, &content, &vectorContentRaw, &metadataRaw, &distance); err != nil {
 			return nil, fmt.Errorf("[retrieveVector] scan failed: %w", err)
+		}
+
+		// Convert vector content from interface{} ([]interface{} for DuckDB FLOAT[])
+		var vectorContent []float64
+		if vectorContentRaw != nil {
+			if slice, ok := vectorContentRaw.([]interface{}); ok {
+				vectorContent = make([]float64, len(slice))
+				for i, v := range slice {
+					if f, ok := v.(float64); ok {
+						vectorContent[i] = f
+					} else if f32, ok := v.(float32); ok {
+						vectorContent[i] = float64(f32)
+					}
+				}
+			} else if slice, ok := vectorContentRaw.([]float64); ok {
+				vectorContent = slice
+			}
 		}
 
 		metadata := make(map[string]any)
@@ -390,19 +418,32 @@ func (r *LightRAG) retrieveVector(ctx context.Context, query string, limit int, 
 // retrieveFulltext performs full-text search
 func (r *LightRAG) retrieveFulltext(ctx context.Context, query string, limit int) ([]QueryResult, error) {
 	// Use LIKE query for simple fulltext search
-	// DuckDB's FTS extension would be better but requires additional setup
+	// Split query into words and search for documents containing all words
+	words := strings.Fields(strings.ToLower(query))
+	if len(words) == 0 {
+		return []QueryResult{}, nil
+	}
+
+	whereClauses := make([]string, len(words))
+	args := make([]interface{}, len(words))
+	for i, word := range words {
+		whereClauses[i] = "LOWER(content) LIKE ?"
+		args[i] = "%" + strings.ReplaceAll(word, "%", "\\%") + "%"
+	}
+
 	sqlQuery := fmt.Sprintf(`
 		SELECT 
 			id,
 			content,
 			metadata
 		FROM %s
-		WHERE content LIKE ?
+		WHERE %s
 		LIMIT ?
-	`, r.tableName)
+	`, r.tableName, strings.Join(whereClauses, " AND "))
 
-	searchPattern := "%" + strings.ReplaceAll(query, "%", "\\%") + "%"
-	rows, err := r.db.QueryContext(ctx, sqlQuery, searchPattern, limit)
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("[retrieveFulltext] query failed: %w", err)
 	}
