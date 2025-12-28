@@ -143,7 +143,7 @@ func TestBulkStore(t *testing.T) {
 			}
 
 			convey.So(i.bulkStore(ctx, docs, &indexer.Options{
-				Embedding: &mockEmbedding{err: exp},
+				Embedding: &mockEmbedding{err: exp, sizeForCall: []int{1}}, // Add sizeForCall to avoid unexpected fatal
 			}), convey.ShouldBeError, fmt.Errorf("[bulkStore] embedding failed, %w", exp))
 		})
 
@@ -214,12 +214,12 @@ type mockEmbedding struct {
 }
 
 func (m *mockEmbedding) EmbedStrings(ctx context.Context, texts []string, opts ...embedding.Option) ([][]float64, error) {
-	if m.cnt >= len(m.sizeForCall) {
-		log.Fatal("unexpected")
-	}
-
 	if m.err != nil {
 		return nil, m.err
+	}
+
+	if m.cnt >= len(m.sizeForCall) {
+		log.Fatal("unexpected")
 	}
 
 	slice := make([]float64, m.dims)

@@ -351,17 +351,27 @@ func (r *LightRAG) retrieveVector(ctx context.Context, query string, limit int, 
 	for rows.Next() {
 		var id, content string
 		var vectorContent []float64
-		var metadataJSON sql.NullString
+		var metadataRaw interface{}
 		var distance float64
 
-		if err := rows.Scan(&id, &content, &vectorContent, &metadataJSON, &distance); err != nil {
+		if err := rows.Scan(&id, &content, &vectorContent, &metadataRaw, &distance); err != nil {
 			return nil, fmt.Errorf("[retrieveVector] scan failed: %w", err)
 		}
 
 		metadata := make(map[string]any)
-		if metadataJSON.Valid {
-			if err := json.Unmarshal([]byte(metadataJSON.String), &metadata); err != nil {
-				// Ignore JSON parse errors
+		if metadataRaw != nil {
+			// DuckDB may return JSON as map[string]interface{} or as JSON string
+			switch v := metadataRaw.(type) {
+			case map[string]interface{}:
+				metadata = v
+			case string:
+				if err := json.Unmarshal([]byte(v), &metadata); err != nil {
+					// Ignore JSON parse errors
+				}
+			case []byte:
+				if err := json.Unmarshal(v, &metadata); err != nil {
+					// Ignore JSON parse errors
+				}
 			}
 		}
 
@@ -385,7 +395,6 @@ func (r *LightRAG) retrieveFulltext(ctx context.Context, query string, limit int
 		SELECT 
 			id,
 			content,
-			vector_content,
 			metadata
 		FROM %s
 		WHERE content LIKE ?
@@ -402,17 +411,26 @@ func (r *LightRAG) retrieveFulltext(ctx context.Context, query string, limit int
 	var results []QueryResult
 	for rows.Next() {
 		var id, content string
-		var vectorContent []float64
-		var metadataJSON sql.NullString
+		var metadataRaw interface{}
 
-		if err := rows.Scan(&id, &content, &vectorContent, &metadataJSON); err != nil {
+		if err := rows.Scan(&id, &content, &metadataRaw); err != nil {
 			return nil, fmt.Errorf("[retrieveFulltext] scan failed: %w", err)
 		}
 
 		metadata := make(map[string]any)
-		if metadataJSON.Valid {
-			if err := json.Unmarshal([]byte(metadataJSON.String), &metadata); err != nil {
-				// Ignore JSON parse errors
+		if metadataRaw != nil {
+			// DuckDB may return JSON as map[string]interface{} or as JSON string
+			switch v := metadataRaw.(type) {
+			case map[string]interface{}:
+				metadata = v
+			case string:
+				if err := json.Unmarshal([]byte(v), &metadata); err != nil {
+					// Ignore JSON parse errors
+				}
+			case []byte:
+				if err := json.Unmarshal(v, &metadata); err != nil {
+					// Ignore JSON parse errors
+				}
 			}
 		}
 
@@ -504,7 +522,7 @@ func (r *LightRAG) retrieveGraph(ctx context.Context, query string, limit int) (
 	}
 
 	sqlQuery := fmt.Sprintf(`
-		SELECT id, content, vector_content, metadata
+		SELECT id, content, metadata
 		FROM %s
 		WHERE id IN (%s)
 		LIMIT ?
@@ -520,17 +538,26 @@ func (r *LightRAG) retrieveGraph(ctx context.Context, query string, limit int) (
 	var results []QueryResult
 	for rows.Next() {
 		var id, content string
-		var vectorContent []float64
-		var metadataJSON sql.NullString
+		var metadataRaw interface{}
 
-		if err := rows.Scan(&id, &content, &vectorContent, &metadataJSON); err != nil {
+		if err := rows.Scan(&id, &content, &metadataRaw); err != nil {
 			return nil, fmt.Errorf("[retrieveGraph] scan failed: %w", err)
 		}
 
 		metadata := make(map[string]any)
-		if metadataJSON.Valid {
-			if err := json.Unmarshal([]byte(metadataJSON.String), &metadata); err != nil {
-				// Ignore JSON parse errors
+		if metadataRaw != nil {
+			// DuckDB may return JSON as map[string]interface{} or as JSON string
+			switch v := metadataRaw.(type) {
+			case map[string]interface{}:
+				metadata = v
+			case string:
+				if err := json.Unmarshal([]byte(v), &metadata); err != nil {
+					// Ignore JSON parse errors
+				}
+			case []byte:
+				if err := json.Unmarshal(v, &metadata); err != nil {
+					// Ignore JSON parse errors
+				}
 			}
 		}
 
