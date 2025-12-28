@@ -35,10 +35,10 @@ release: verify-release
 	git tag v0.0.0-$$VERSION; \
 	echo ""; \
 	echo "3. 标签已创建，执行以下命令完成发布:"; \
-	echo "   git push github master"; \
-	echo "   git push github v0.0.0-$$VERSION"; \
-	git push github master; \
-	git push github v0.0.0-$$VERSION
+	echo "   git push origin master"; \
+	echo "   git push origin v0.0.0-$$VERSION"; \
+	git push origin master; \
+	git push origin v0.0.0-$$VERSION
 
 install:
 	go mod tidy
