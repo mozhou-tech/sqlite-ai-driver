@@ -602,8 +602,6 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 	// 1. 扩展实体：如果提取的实体在图中找不到直接关系，尝试通过语义搜索寻找相关实体
 	allEntities := make(map[string]bool)
 	for _, e := range entities {
-		allEntities[e] = true
-
 		// 检查该实体是否在图中有任何“非文档链接”的关系
 		hasRelation := false
 
@@ -627,13 +625,21 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 			}
 		}
 
-		if !hasRelation && r.vector != nil {
+		if hasRelation {
+			allEntities[e] = true
+		} else if r.vector != nil {
 			// 如果没找到直接关联，通过向量搜索寻找最相关的文档，从而发现相关实体
 			emb, err := r.embedder.Embed(ctx, e)
 			if err == nil {
 				vecResults, err := r.vector.Search(ctx, emb, VectorSearchOptions{Limit: 3})
 				if err == nil {
 					for _, res := range vecResults {
+						// 增加相似度阈值检查，防止召回无关内容
+						// 这里的分数通常是余弦相似度，0.35 是一个保守的阈值
+						if res.Score < 0.35 {
+							continue
+						}
+
 						docID := res.Document.ID()
 						// 查找链接到该文档的所有实体 (Subject --[APPEARS_IN]--> docID)
 						linkedEntities, _ := r.graph.GetInNeighbors(ctx, docID, "APPEARS_IN")
@@ -643,6 +649,7 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 								logrus.WithFields(logrus.Fields{
 									"query_entity": e,
 									"found_entity": le,
+									"score":        res.Score,
 								}).Debug("Expanded entity via vector search")
 							}
 						}
