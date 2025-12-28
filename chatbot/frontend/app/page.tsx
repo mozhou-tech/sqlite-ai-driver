@@ -282,13 +282,71 @@ export default function Home() {
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{
-                        p: ({ children }: any) => <p className="mb-2 last:mb-0">{children}</p>,
+                        p: ({ children }: any) => {
+                          const transformChildren = (node: any): any => {
+                            if (typeof node === "string") {
+                              const parts = node.split(/(\[\d+\])/g);
+                              return parts.map((part, i) => {
+                                const match = part.match(/^\[(\d+)\]$/);
+                                if (match) {
+                                  return (
+                                    <sup
+                                      key={i}
+                                      className="text-primary font-bold px-0.5 select-none cursor-help"
+                                      title={`引用自来源 ${match[1]}`}
+                                    >
+                                      {part}
+                                    </sup>
+                                  );
+                                }
+                                return part;
+                              });
+                            }
+                            if (Array.isArray(node)) {
+                              return node.map(transformChildren);
+                            }
+                            if (node?.props?.children) {
+                              return {
+                                ...node,
+                                props: {
+                                  ...node.props,
+                                  children: transformChildren(node.props.children),
+                                },
+                              };
+                            }
+                            return node;
+                          };
+                          return <p className="mb-2 last:mb-0">{transformChildren(children)}</p>;
+                        },
+                        li: ({ children }: any) => {
+                          // 对列表项也进行同样的转换
+                          const transformChildren = (node: any): any => {
+                            if (typeof node === "string") {
+                              const parts = node.split(/(\[\d+\])/g);
+                              return parts.map((part, i) => {
+                                const match = part.match(/^\[(\d+)\]$/);
+                                if (match) {
+                                  return (
+                                    <sup
+                                      key={i}
+                                      className="text-primary font-bold px-0.5 select-none cursor-help"
+                                      title={`引用自来源 ${match[1]}`}
+                                    >
+                                      {part}
+                                    </sup>
+                                  );
+                                }
+                                return part;
+                              });
+                            }
+                            if (Array.isArray(node)) {
+                              return node.map(transformChildren);
+                            }
+                            return node;
+                          };
+                          return <li className="mb-1">{transformChildren(children)}</li>;
+                        },
                         h1: ({ children }: any) => <h1 className="text-xl font-bold mb-2">{children}</h1>,
-                        h2: ({ children }: any) => <h2 className="text-lg font-bold mb-2">{children}</h2>,
-                        h3: ({ children }: any) => <h3 className="text-md font-bold mb-1">{children}</h3>,
-                        ul: ({ children }: any) => <ul className="list-disc ml-4 mb-2">{children}</ul>,
-                        ol: ({ children }: any) => <ol className="list-decimal ml-4 mb-2">{children}</ol>,
-                        li: ({ children }: any) => <li className="mb-1">{children}</li>,
                         code: ({ children }: any) => (
                           <code className="bg-background/50 rounded px-1 py-0.5 font-mono text-sm">
                             {children}

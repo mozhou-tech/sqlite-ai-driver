@@ -179,7 +179,12 @@ func initLightRAG() error {
 	// 构建 RAG Graph
 	chatTemplate := prompt.FromMessages(
 		schema.FString,
-		schema.SystemMessage("你是一个专业的助手。请根据以下背景信息回答问题：\n\n背景信息：\n{format_docs}"),
+		schema.SystemMessage("你是一个专业的知识库助手。请根据提供的背景信息回答问题。\n\n"+
+			"要求：\n"+
+			"1. 回答内容必须严格基于背景信息。\n"+
+			"2. 在引用背景信息的内容处，必须在行内使用 [n] 格式标注引用来源（例如 [1], [2]）。\n"+
+			"3. 如果背景信息中没有相关内容，请说明你不知道。\n\n"+
+			"背景信息：\n{format_docs}"),
 		schema.UserMessage("{input}"),
 	)
 
@@ -190,7 +195,8 @@ func initLightRAG() error {
 		}
 		var contextText string
 		for i, doc := range docs {
-			contextText += fmt.Sprintf("[%d] %s\n", i+1, doc.Content)
+			score, _ := doc.MetaData["score"].(float64)
+			contextText += fmt.Sprintf("[%d] (Score: %.4f) %s\n", i+1, score, doc.Content)
 		}
 
 		logrus.WithFields(logrus.Fields{
@@ -269,13 +275,19 @@ func (r *LightRAGRetriever) Retrieve(ctx context.Context, query string, opts ...
 		logrus.WithFields(logrus.Fields{
 			"index": i + 1,
 			"id":    res.ID,
+			"score": res.Score,
 			"content_preview": func() string {
 				if len(res.Content) > 200 {
 					return res.Content[:200] + "..."
 				}
 				return res.Content
 			}(),
-		}).Debug("LightRAG Recalled Document Content")
+		}).Info("LightRAG Recalled Document")
+
+		if res.Metadata == nil {
+			res.Metadata = make(map[string]any)
+		}
+		res.Metadata["score"] = res.Score
 
 		docs = append(docs, &schema.Document{
 			ID:       res.ID,

@@ -10,24 +10,23 @@ import (
 	"sync"
 	"time"
 
-	lightrag_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag-driver"
 	"github.com/sirupsen/logrus"
 )
 
 // LightRAG 基于新的driver实现的 LightRAG
 type LightRAG struct {
-	db         lightrag_driver.Database
+	db         Database
 	workingDir string
 	embedder   Embedder
 	llm        LLM
 
 	// 集合
-	docs lightrag_driver.Collection
+	docs Collection
 
 	// 搜索组件
-	fulltext lightrag_driver.FulltextSearch
-	vector   lightrag_driver.VectorSearch
-	graph    lightrag_driver.GraphDatabase
+	fulltext FulltextSearch
+	vector   VectorSearch
+	graph    GraphDatabase
 
 	initialized bool
 	wg          sync.WaitGroup
@@ -60,10 +59,10 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 	}
 
 	// 创建数据库
-	db, err := lightrag_driver.CreateDatabase(ctx, lightrag_driver.DatabaseOptions{
+	db, err := CreateDatabase(ctx, DatabaseOptions{
 		Name: "lightrag",
 		Path: filepath.Join(r.workingDir, "lightrag.db"),
-		GraphOptions: &lightrag_driver.GraphOptions{
+		GraphOptions: &GraphOptions{
 			Enabled: true,
 			Backend: "cayley",
 		},
@@ -75,7 +74,7 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 	r.graph = db.Graph()
 
 	// 初始化文档集合
-	docSchema := lightrag_driver.Schema{
+	docSchema := Schema{
 		PrimaryKey: "id",
 		RevField:   "_rev",
 	}
@@ -86,7 +85,7 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 	r.docs = docs
 
 	// 初始化全文搜索
-	fulltext, err := lightrag_driver.AddFulltextSearch(docs, lightrag_driver.FulltextSearchConfig{
+	fulltext, err := AddFulltextSearch(docs, FulltextSearchConfig{
 		Identifier: "docs_fulltext",
 		DocToString: func(doc map[string]any) string {
 			content, _ := doc["content"].(string)
@@ -100,7 +99,7 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 
 	// 初始化向量搜索
 	if r.embedder != nil {
-		vector, err := lightrag_driver.AddVectorSearch(docs, lightrag_driver.VectorSearchConfig{
+		vector, err := AddVectorSearch(docs, VectorSearchConfig{
 			Identifier: "docs_vector",
 			DocToEmbedding: func(doc map[string]any) ([]float64, error) {
 				content, _ := doc["content"].(string)
@@ -159,7 +158,7 @@ func (r *LightRAG) ListDocuments(ctx context.Context, limit, offset int) ([]map[
 		return nil, fmt.Errorf("storages not initialized")
 	}
 
-	docs, err := r.docs.Find(ctx, lightrag_driver.FindOptions{
+	docs, err := r.docs.Find(ctx, FindOptions{
 		Limit:  limit,
 		Offset: offset,
 	})
@@ -355,7 +354,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		param.Limit = 5
 	}
 
-	var rawResults []lightrag_driver.FulltextSearchResult
+	var rawResults []FulltextSearchResult
 	var err error
 
 	switch param.Mode {
@@ -367,7 +366,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		if err != nil {
 			return nil, err
 		}
-		vecResults, err := r.vector.Search(ctx, emb, lightrag_driver.VectorSearchOptions{
+		vecResults, err := r.vector.Search(ctx, emb, VectorSearchOptions{
 			Limit:    param.Limit,
 			Selector: param.Filters,
 		})
@@ -377,13 +376,13 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		}
 		logrus.WithField("count", len(vecResults)).Debug("Vector search returned results")
 		for _, v := range vecResults {
-			rawResults = append(rawResults, lightrag_driver.FulltextSearchResult{
+			rawResults = append(rawResults, FulltextSearchResult{
 				Document: v.Document,
 				Score:    v.Score,
 			})
 		}
 	case ModeFulltext:
-		rawResults, err = r.fulltext.FindWithScores(ctx, query, lightrag_driver.FulltextSearchOptions{
+		rawResults, err = r.fulltext.FindWithScores(ctx, query, FulltextSearchOptions{
 			Limit:    param.Limit,
 			Selector: param.Filters,
 		})
@@ -444,7 +443,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		for id := range docIDMap {
 			doc, _ := r.docs.FindByID(ctx, id)
 			if doc != nil {
-				rawResults = append(rawResults, lightrag_driver.FulltextSearchResult{
+				rawResults = append(rawResults, FulltextSearchResult{
 					Document: doc,
 					Score:    1.0, // 图检索的基础分，后续可以改进
 				})
@@ -459,21 +458,21 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		return r.Retrieve(ctx, query, QueryParam{Mode: ModeHybrid, Limit: param.Limit})
 	case ModeHybrid:
 		// 实现真正的混合搜索（向量 + 全文 + 可能的图）
-		ftResults, err := r.fulltext.FindWithScores(ctx, query, lightrag_driver.FulltextSearchOptions{
+		ftResults, err := r.fulltext.FindWithScores(ctx, query, FulltextSearchOptions{
 			Limit:    param.Limit * 2,
 			Selector: param.Filters,
 		})
 		if err != nil {
 			logrus.WithError(err).Error("Fulltext search failed in hybrid mode")
-			ftResults = []lightrag_driver.FulltextSearchResult{} // 确保不是 nil
+			ftResults = []FulltextSearchResult{} // 确保不是 nil
 		}
 		logrus.WithField("count", len(ftResults)).Debug("Hybrid mode: Fulltext results")
 
-		var vecResults []lightrag_driver.VectorSearchResult
+		var vecResults []VectorSearchResult
 		if r.vector != nil && r.embedder != nil {
 			emb, err := r.embedder.Embed(ctx, query)
 			if err == nil {
-				vecResults, err = r.vector.Search(ctx, emb, lightrag_driver.VectorSearchOptions{
+				vecResults, err = r.vector.Search(ctx, emb, VectorSearchOptions{
 					Limit:    param.Limit * 2,
 					Selector: param.Filters,
 				})
@@ -483,13 +482,13 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			}
 		}
 		if vecResults == nil {
-			vecResults = []lightrag_driver.VectorSearchResult{} // 确保不是 nil
+			vecResults = []VectorSearchResult{} // 确保不是 nil
 		}
 		logrus.WithField("count", len(vecResults)).Debug("Hybrid mode: Vector results")
 
 		// 使用简单的 RRF 融合或加权融合
 		docScores := make(map[string]float64)
-		docMap := make(map[string]lightrag_driver.Document)
+		docMap := make(map[string]Document)
 
 		for i, res := range ftResults {
 			score := 1.0 / float64(i+60) // RRF
@@ -506,7 +505,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		// 如果两种搜索都没有结果，回退到纯全文搜索
 		if len(docScores) == 0 {
 			// 回退到纯全文搜索，使用更大的 limit
-			fallbackResults, err := r.fulltext.FindWithScores(ctx, query, lightrag_driver.FulltextSearchOptions{
+			fallbackResults, err := r.fulltext.FindWithScores(ctx, query, FulltextSearchOptions{
 				Limit:    param.Limit,
 				Selector: param.Filters,
 			})
@@ -518,7 +517,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		} else {
 			// 排序并取 Top N
 			for id, score := range docScores {
-				rawResults = append(rawResults, lightrag_driver.FulltextSearchResult{
+				rawResults = append(rawResults, FulltextSearchResult{
 					Document: docMap[id],
 					Score:    score,
 				})
@@ -531,9 +530,19 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			if len(rawResults) > param.Limit {
 				rawResults = rawResults[:param.Limit]
 			}
+
+			// 归一化处理：使最高分为 1.0
+			if len(rawResults) > 0 {
+				maxScore := rawResults[0].Score
+				if maxScore > 0 {
+					for i := range rawResults {
+						rawResults[i].Score = rawResults[i].Score / maxScore
+					}
+				}
+			}
 		}
 	default:
-		rawResults, err = r.fulltext.FindWithScores(ctx, query, lightrag_driver.FulltextSearchOptions{Limit: param.Limit})
+		rawResults, err = r.fulltext.FindWithScores(ctx, query, FulltextSearchOptions{Limit: param.Limit})
 		if err != nil {
 			return nil, err
 		}
@@ -548,6 +557,16 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			Score:    res.Score,
 			Metadata: res.Document.Data(),
 		})
+	}
+
+	// 打印召回文档的评分
+	for i, res := range results {
+		logrus.WithFields(logrus.Fields{
+			"index": i + 1,
+			"id":    res.ID,
+			"score": res.Score,
+			"mode":  param.Mode,
+		}).Info("LightRAG recalled document")
 	}
 
 	return results, nil
