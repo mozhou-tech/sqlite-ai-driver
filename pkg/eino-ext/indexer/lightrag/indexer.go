@@ -22,6 +22,7 @@ import (
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components"
+	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
 )
@@ -32,6 +33,8 @@ type IndexerConfig struct {
 	LightRAG *LightRAG
 	// DocumentToMap optionally overrides the default conversion from eino document to map.
 	DocumentToMap func(ctx context.Context, doc *schema.Document) (map[string]any, error)
+	// Transformer optionally transforms documents before indexing (e.g. splitting).
+	Transformer document.Transformer
 }
 
 // Indexer implements the Eino indexer.Indexer interface for LightRAG.
@@ -63,6 +66,13 @@ func (i *Indexer) Store(ctx context.Context, docs []*schema.Document, opts ...in
 			callbacks.OnError(ctx, err)
 		}
 	}()
+
+	if i.config.Transformer != nil {
+		docs, err = i.config.Transformer.Transform(ctx, docs)
+		if err != nil {
+			return nil, fmt.Errorf("[Store] failed to transform documents: %w", err)
+		}
+	}
 
 	toStore := make([]map[string]any, 0, len(docs))
 	for _, doc := range docs {

@@ -22,6 +22,7 @@ import (
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components"
+	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/lightrag"
@@ -35,6 +36,8 @@ type RetrieverConfig struct {
 	TopK int
 	// Mode is the retrieval mode, default ModeHybrid.
 	Mode lightrag.QueryMode
+	// Transformer optionally transforms documents after retrieval (e.g. splitting).
+	Transformer document.Transformer
 }
 
 // Retriever implements the Eino retriever.Retriever interface for LightRAG.
@@ -106,6 +109,13 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 		// Add score to metadata
 		doc.MetaData["score"] = res.Score
 		docs = append(docs, doc)
+	}
+
+	if r.config.Transformer != nil {
+		docs, err = r.config.Transformer.Transform(ctx, docs)
+		if err != nil {
+			return nil, fmt.Errorf("[Retrieve] failed to transform documents: %w", err)
+		}
 	}
 
 	callbacks.OnEnd(ctx, &retriever.CallbackOutput{Docs: docs})
