@@ -50,6 +50,7 @@ func main() {
 		api.POST("/upload", handleUploadDocument)
 		api.GET("/documents", handleListDocuments)
 		api.DELETE("/documents/:id", handleDeleteDocument)
+		api.GET("/graph/full", handleGetFullGraph)
 	}
 
 	// 启动服务器
@@ -527,4 +528,16 @@ func handleDeleteDocument(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"message": "Document deleted successfully"})
+}
+
+func handleGetFullGraph(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	graph, err := lightRAGInstance.ExportFullGraph(ctx)
+	if err != nil {
+		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to export full graph: %v", err)})
+		return
+	}
+
+	c.JSON(200, graph)
 }

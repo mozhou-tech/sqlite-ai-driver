@@ -43,6 +43,9 @@ type Graph interface {
 	// predicate: 边的类型，如果为空则允许所有类型的边
 	FindPath(ctx context.Context, from, to string, maxDepth int, predicate string) ([][]string, error)
 
+	// AllTriples 获取图中所有的三元组
+	AllTriples(ctx context.Context) ([]Triple, error)
+
 	// Close 关闭图数据库连接
 	Close() error
 }
@@ -290,6 +293,26 @@ func (g *cayleyGraph) GetInNeighbors(ctx context.Context, node, predicate string
 	}
 
 	return neighbors, rows.Err()
+}
+
+// AllTriples 获取图中所有的三元组
+func (g *cayleyGraph) AllTriples(ctx context.Context) ([]Triple, error) {
+	query := `SELECT subject, predicate, object FROM quads`
+	rows, err := g.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var triples []Triple
+	for rows.Next() {
+		var t Triple
+		if err := rows.Scan(&t.Subject, &t.Predicate, &t.Object); err != nil {
+			return nil, err
+		}
+		triples = append(triples, t)
+	}
+	return triples, rows.Err()
 }
 
 // Query 返回查询构建器

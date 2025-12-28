@@ -110,6 +110,8 @@ type GraphDatabase interface {
 	GetNeighbors(ctx context.Context, node, predicate string) ([]string, error)
 	// GetInNeighbors 获取指向 node 的邻居节点 (In-neighbors)
 	GetInNeighbors(ctx context.Context, node, predicate string) ([]string, error)
+	// AllTriples 获取所有三元组
+	AllTriples(ctx context.Context) ([]GraphQueryResult, error)
 	// Query 返回查询构建器
 	Query() GraphQuery
 }
@@ -913,6 +915,22 @@ func (g *duckdbGraphDatabase) GetNeighbors(ctx context.Context, node, predicate 
 
 func (g *duckdbGraphDatabase) GetInNeighbors(ctx context.Context, node, predicate string) ([]string, error) {
 	return g.graph.GetInNeighbors(ctx, node, predicate)
+}
+
+func (g *duckdbGraphDatabase) AllTriples(ctx context.Context) ([]GraphQueryResult, error) {
+	triples, err := g.graph.AllTriples(ctx)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]GraphQueryResult, 0, len(triples))
+	for _, t := range triples {
+		results = append(results, GraphQueryResult{
+			Subject:   t.Subject,
+			Predicate: t.Predicate,
+			Object:    t.Object,
+		})
+	}
+	return results, nil
 }
 
 func (g *duckdbGraphDatabase) Query() GraphQuery {

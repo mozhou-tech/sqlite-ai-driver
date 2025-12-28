@@ -659,6 +659,52 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 	return results, nil
 }
 
+// ExportFullGraph 导出完整的知识图谱
+func (r *LightRAG) ExportFullGraph(ctx context.Context) (*GraphData, error) {
+	if !r.initialized {
+		return nil, fmt.Errorf("storages not initialized")
+	}
+	if r.graph == nil {
+		return nil, fmt.Errorf("graph database not available")
+	}
+
+	triples, err := r.graph.AllTriples(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all triples: %w", err)
+	}
+
+	result := &GraphData{
+		Entities:      make([]Entity, 0),
+		Relationships: make([]Relationship, 0),
+	}
+
+	entityMap := make(map[string]bool)
+
+	for _, t := range triples {
+		// 忽略 APPEARS_IN 关系，因为这通常是指向文档 ID 的
+		if t.Predicate == "APPEARS_IN" {
+			continue
+		}
+
+		result.Relationships = append(result.Relationships, Relationship{
+			Source:   t.Subject,
+			Target:   t.Object,
+			Relation: t.Predicate,
+		})
+
+		if !entityMap[t.Subject] {
+			result.Entities = append(result.Entities, Entity{Name: t.Subject})
+			entityMap[t.Subject] = true
+		}
+		if !entityMap[t.Object] {
+			result.Entities = append(result.Entities, Entity{Name: t.Object})
+			entityMap[t.Object] = true
+		}
+	}
+
+	return result, nil
+}
+
 // SearchGraph 仅从图谱检索实体和关系
 func (r *LightRAG) SearchGraph(ctx context.Context, query string) (*GraphData, error) {
 	return r.SearchGraphWithDepth(ctx, query, 1)

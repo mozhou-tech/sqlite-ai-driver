@@ -4,7 +4,8 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Send, Loader2, Upload, FileText, Trash2, X } from "lucide-react";
+import { Send, Loader2, Upload, FileText, Trash2, X, Share2 } from "lucide-react";
+import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -223,6 +224,12 @@ export default function Home() {
             <option value="local">Local Mode</option>
             <option value="naive">Naive Mode</option>
           </select>
+          <Link href="/graph">
+            <Button variant="outline">
+              <Share2 className="h-4 w-4 mr-2" />
+              知识图谱
+            </Button>
+          </Link>
           <Button variant="outline" onClick={() => setShowDocs(!showDocs)}>
             <FileText className="h-4 w-4 mr-2" />
             知识库 ({documents.length})
