@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
@@ -147,6 +148,7 @@ func main() {
 		data TEXT,
 		embedding TEXT,
 		content TEXT,
+		content_tokens TEXT,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
@@ -275,7 +277,8 @@ func ensureDuckDBExtensions(db *sql.DB) error {
 func createDuckDBFTSIndex(db *sql.DB) error {
 	// DuckDB 的 FTS 扩展使用 PRAGMA create_fts_index 创建索引
 	// 语法：PRAGMA create_fts_index('table_name', 'id_column', 'text_column1', 'text_column2', ...)
-	createFTSSQL := `PRAGMA create_fts_index('documents', 'id', 'content');`
+	// 同时索引 content 和 content_tokens（sego 分词结果）字段
+	createFTSSQL := `PRAGMA create_fts_index('documents', 'id', 'content', 'content_tokens');`
 	_, err := db.Exec(createFTSSQL)
 	if err != nil {
 		// 如果索引已存在，忽略错误
@@ -286,8 +289,38 @@ func createDuckDBFTSIndex(db *sql.DB) error {
 		return fmt.Errorf("failed to create FTS index: %w", err)
 	}
 
-	logrus.Info("DuckDB FTS index created successfully")
+	logrus.Info("DuckDB FTS index created successfully with sego tokenization support")
 	return nil
+}
+
+// tokenizeWithSego 使用 sego 对文本进行分词，返回用空格分隔的词
+func tokenizeWithSego(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	segmenter, err := sego.GetSegmenter()
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to get sego segmenter, returning original text")
+		return text
+	}
+
+	segments := segmenter.Segment([]byte(text))
+	var tokens []string
+	for _, seg := range segments {
+		token := seg.Token().Text()
+		// 过滤掉空白字符和标点符号
+		token = strings.TrimSpace(token)
+		if token != "" && len(token) > 0 {
+			tokens = append(tokens, token)
+		}
+	}
+
+	if len(tokens) == 0 {
+		return text // 如果分词结果为空，返回原文
+	}
+
+	return strings.Join(tokens, " ")
 }
 
 // createDuckDBVectorIndex 创建 DuckDB 向量索引
@@ -585,6 +618,8 @@ func createDocument(c *gin.Context) {
 
 	// 提取文本内容用于全文搜索
 	content := extractTextFromData(string(dataJSON))
+	// 使用 sego 对内容进行分词
+	contentTokens := tokenizeWithSego(content)
 
 	// 提取 embedding（如果存在）
 	embeddingStr := ""
@@ -609,17 +644,36 @@ func createDocument(c *gin.Context) {
 		hasContent = true // 默认假设存在，保持向后兼容
 	}
 
-	// 插入文档 - 根据 embedding 和 content 列是否存在动态构建
+	// 检查 content_tokens 列是否存在
+	hasContentTokens, err := columnExists(sqlDB, "documents", "content_tokens")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check content_tokens column, assuming it exists")
+		hasContentTokens = true // 默认假设存在，保持向后兼容
+	}
+
+	// 插入文档 - 根据 embedding、content 和 content_tokens 列是否存在动态构建
 	var insertQuery string
-	if hasEmbedding && hasContent {
+	if hasEmbedding && hasContent && hasContentTokens {
+		insertQuery = `INSERT INTO documents (id, collection_name, data, embedding, content, content_tokens, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), embeddingStr, content, contentTokens)
+	} else if hasEmbedding && hasContent && !hasContentTokens {
 		insertQuery = `INSERT INTO documents (id, collection_name, data, embedding, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
 		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), embeddingStr, content)
-	} else if hasEmbedding && !hasContent {
+	} else if hasEmbedding && !hasContent && hasContentTokens {
+		insertQuery = `INSERT INTO documents (id, collection_name, data, embedding, content_tokens, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), embeddingStr, contentTokens)
+	} else if hasEmbedding && !hasContent && !hasContentTokens {
 		insertQuery = `INSERT INTO documents (id, collection_name, data, embedding, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
 		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), embeddingStr)
-	} else if !hasEmbedding && hasContent {
+	} else if !hasEmbedding && hasContent && hasContentTokens {
+		insertQuery = `INSERT INTO documents (id, collection_name, data, content, content_tokens, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), content, contentTokens)
+	} else if !hasEmbedding && hasContent && !hasContentTokens {
 		insertQuery = `INSERT INTO documents (id, collection_name, data, content, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
 		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), content)
+	} else if !hasEmbedding && !hasContent && hasContentTokens {
+		insertQuery = `INSERT INTO documents (id, collection_name, data, content_tokens, created_at, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
+		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON), contentTokens)
 	} else {
 		insertQuery = `INSERT INTO documents (id, collection_name, data, created_at, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`
 		_, err = sqlDB.Exec(insertQuery, id, name, string(dataJSON))
@@ -716,6 +770,8 @@ func updateDocument(c *gin.Context) {
 
 	// 提取文本内容用于全文搜索
 	content := extractTextFromData(string(dataJSON))
+	// 使用 sego 对内容进行分词
+	contentTokens := tokenizeWithSego(content)
 
 	// 提取 embedding（如果存在）
 	embeddingStr := ""
@@ -726,17 +782,36 @@ func updateDocument(c *gin.Context) {
 		}
 	}
 
-	// 更新文档 - 根据 embedding 和 content 列是否存在动态构建
+	// 检查 content_tokens 列是否存在
+	hasContentTokens, err := columnExists(sqlDB, "documents", "content_tokens")
+	if err != nil {
+		logrus.WithError(err).Warn("Failed to check content_tokens column, assuming it exists")
+		hasContentTokens = true // 默认假设存在，保持向后兼容
+	}
+
+	// 更新文档 - 根据 embedding、content 和 content_tokens 列是否存在动态构建
 	var updateQuery string
-	if hasEmbedding && hasContent {
+	if hasEmbedding && hasContent && hasContentTokens {
+		updateQuery = `UPDATE documents SET data = ?, embedding = ?, content = ?, content_tokens = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
+		_, err = sqlDB.Exec(updateQuery, string(dataJSON), embeddingStr, content, contentTokens, name, id)
+	} else if hasEmbedding && hasContent && !hasContentTokens {
 		updateQuery = `UPDATE documents SET data = ?, embedding = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
 		_, err = sqlDB.Exec(updateQuery, string(dataJSON), embeddingStr, content, name, id)
-	} else if hasEmbedding && !hasContent {
+	} else if hasEmbedding && !hasContent && hasContentTokens {
+		updateQuery = `UPDATE documents SET data = ?, embedding = ?, content_tokens = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
+		_, err = sqlDB.Exec(updateQuery, string(dataJSON), embeddingStr, contentTokens, name, id)
+	} else if hasEmbedding && !hasContent && !hasContentTokens {
 		updateQuery = `UPDATE documents SET data = ?, embedding = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
 		_, err = sqlDB.Exec(updateQuery, string(dataJSON), embeddingStr, name, id)
-	} else if !hasEmbedding && hasContent {
+	} else if !hasEmbedding && hasContent && hasContentTokens {
+		updateQuery = `UPDATE documents SET data = ?, content = ?, content_tokens = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
+		_, err = sqlDB.Exec(updateQuery, string(dataJSON), content, contentTokens, name, id)
+	} else if !hasEmbedding && hasContent && !hasContentTokens {
 		updateQuery = `UPDATE documents SET data = ?, content = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
 		_, err = sqlDB.Exec(updateQuery, string(dataJSON), content, name, id)
+	} else if !hasEmbedding && !hasContent && hasContentTokens {
+		updateQuery = `UPDATE documents SET data = ?, content_tokens = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
+		_, err = sqlDB.Exec(updateQuery, string(dataJSON), contentTokens, name, id)
 	} else {
 		updateQuery = `UPDATE documents SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE collection_name = ? AND id = ?`
 		_, err = sqlDB.Exec(updateQuery, string(dataJSON), name, id)
@@ -871,29 +946,68 @@ func fulltextSearch(c *gin.Context) {
 		}
 	}
 
-	// 使用 DuckDB FTS 进行全文搜索
-	// DuckDB 的 FTS 使用 MATCH 操作符，直接在表上搜索
-	query := `
-	SELECT id, collection_name, data, CAST(1.0 AS DOUBLE) as score
-	FROM documents
-	WHERE collection_name = ? 
-	  AND content MATCH ?
-	LIMIT ?
-	`
+	// 使用 sego 对查询进行分词
+	queryTokens := tokenizeWithSego(req.Query)
 
-	rows, err := sqlDB.Query(query, name, req.Query, req.Limit)
+	// 检查 content_tokens 列是否存在
+	hasContentTokens, err := columnExists(sqlDB, "documents", "content_tokens")
 	if err != nil {
-		// 如果 FTS 查询失败，使用 LIKE 查询作为回退
-		logrus.WithError(err).Warn("FTS query failed, using LIKE query as fallback")
+		logrus.WithError(err).Warn("Failed to check content_tokens column, assuming it exists")
+		hasContentTokens = true // 默认假设存在，保持向后兼容
+	}
+
+	// 使用 DuckDB FTS 进行全文搜索
+	// 优先使用 content_tokens 字段进行搜索（sego 分词结果），如果不存在则使用 content 字段
+	var query string
+	var searchText string
+	if hasContentTokens && queryTokens != "" {
+		// 使用分词结果搜索 content_tokens 字段
 		query = `
 		SELECT id, collection_name, data, CAST(1.0 AS DOUBLE) as score
 		FROM documents
 		WHERE collection_name = ? 
-		  AND content LIKE ?
+		  AND content_tokens MATCH ?
 		LIMIT ?
 		`
-		searchPattern := "%" + req.Query + "%"
-		rows, err = sqlDB.Query(query, name, searchPattern, req.Limit)
+		searchText = queryTokens
+	} else {
+		// 回退到原始 content 字段搜索
+		query = `
+		SELECT id, collection_name, data, CAST(1.0 AS DOUBLE) as score
+		FROM documents
+		WHERE collection_name = ? 
+		  AND content MATCH ?
+		LIMIT ?
+		`
+		searchText = req.Query
+	}
+
+	rows, err := sqlDB.Query(query, name, searchText, req.Limit)
+	if err != nil {
+		// 如果 FTS 查询失败，使用 LIKE 查询作为回退
+		logrus.WithError(err).Warn("FTS query failed, using LIKE query as fallback")
+		// 如果 content_tokens 存在，优先在 content_tokens 中搜索
+		if hasContentTokens && queryTokens != "" {
+			query = `
+			SELECT id, collection_name, data, CAST(1.0 AS DOUBLE) as score
+			FROM documents
+			WHERE collection_name = ? 
+			  AND content_tokens LIKE ?
+			LIMIT ?
+			`
+			searchPattern := "%" + queryTokens + "%"
+			rows, err = sqlDB.Query(query, name, searchPattern, req.Limit)
+		} else {
+			query = `
+			SELECT id, collection_name, data, CAST(1.0 AS DOUBLE) as score
+			FROM documents
+			WHERE collection_name = ? 
+			  AND content LIKE ?
+			LIMIT ?
+			`
+			searchPattern := "%" + req.Query + "%"
+			rows, err = sqlDB.Query(query, name, searchPattern, req.Limit)
+		}
 		if err != nil {
 			logrus.WithError(err).Error("Fulltext search failed")
 			c.JSON(http.StatusInternalServerError, ErrorResponse{Error: err.Error()})

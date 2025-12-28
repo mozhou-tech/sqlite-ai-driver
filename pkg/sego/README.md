@@ -1,0 +1,1 @@
+将txt二进制封装后的sego字典放在pkg/sego/dictionary

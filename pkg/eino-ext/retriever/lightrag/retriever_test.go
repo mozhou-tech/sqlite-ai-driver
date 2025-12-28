@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/components/embedding"
-	"github.com/mozhou-tech/sqlite-ai-driver/eino-ext/indexer/lightrag"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/lightrag"
 )
 
 type simpleEmbedder struct {
@@ -119,4 +119,3 @@ func TestRetriever(t *testing.T) {
 		t.Errorf("expected to find document with id 2, got results: %v", results)
 	}
 }
-

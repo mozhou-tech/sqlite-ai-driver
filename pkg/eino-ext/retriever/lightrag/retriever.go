@@ -24,7 +24,7 @@ import (
 	"github.com/cloudwego/eino/components"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/sqlite-ai-driver/eino-ext/indexer/lightrag"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/lightrag"
 )
 
 // RetrieverConfig defines the configuration for the LightRAG retriever.
