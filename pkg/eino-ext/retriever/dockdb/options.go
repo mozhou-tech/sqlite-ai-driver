@@ -21,11 +21,11 @@ import (
 )
 
 type implOptions struct {
-	// FilterQuery currently not supported by RxDB vector search
+	// FilterQuery currently not supported by vector search
 	FilterQuery string
 }
 
-// WithFilterQuery rxdb filter query (currently noop).
+// WithFilterQuery filter query (currently noop).
 func WithFilterQuery(filter string) retriever.Option {
 	return retriever.WrapImplSpecificOptFn(func(o *implOptions) {
 		o.FilterQuery = filter

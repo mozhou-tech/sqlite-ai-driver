@@ -18,18 +18,18 @@ type SimpleLLM struct {
 func (l *SimpleLLM) Complete(ctx context.Context, prompt string) (string, error) {
 	// 处理查询实体提取
 	if strings.Contains(prompt, "Extract only the main entities") {
-		if strings.Contains(prompt, "rxdb") || strings.Contains(prompt, "RxDB") {
-			return `["RxDB"]`, nil
+		if strings.Contains(prompt, "sqliteai") || strings.Contains(prompt, "SQLiteAI") {
+			return `["SQLiteAI"]`, nil
 		}
 		return `["MockEntity"]`, nil
 	}
 
 	// 处理实体提取提示词
 	if strings.Contains(prompt, "-Goal-") && strings.Contains(prompt, "entities") {
-		if strings.Contains(prompt, "RxDB") {
+		if strings.Contains(prompt, "SQLiteAI") {
 			return `{
-				"entities": [{"name": "RxDB", "type": "Database", "description": "Reactive database"}],
-				"relationships": [{"source": "RxDB", "target": "JavaScript", "relation": "BUILT_FOR", "description": "Used in JS"}]
+				"entities": [{"name": "SQLiteAI", "type": "Database", "description": "SQLite AI driver"}],
+				"relationships": [{"source": "SQLiteAI", "target": "Golang", "relation": "BUILT_FOR", "description": "Used in Go"}]
 			}`, nil
 		}
 		return `{

@@ -378,7 +378,7 @@ func TestLightRAG_MetadataFiltering(t *testing.T) {
 	docs := []map[string]any{
 		{"id": "1", "content": "Paris is the capital of France.", "category": "geography"},
 		{"id": "2", "content": "Berlin is the capital of Germany.", "category": "geography"},
-		{"id": "3", "content": "RxDB is a database.", "category": "tech"},
+		{"id": "3", "content": "SQLiteAI is a database.", "category": "tech"},
 	}
 
 	for _, doc := range docs {
@@ -404,7 +404,7 @@ func TestLightRAG_MetadataFiltering(t *testing.T) {
 	if !strings.Contains(resp, "Paris") || !strings.Contains(resp, "Berlin") {
 		t.Errorf("expected geography docs, got: %s", resp)
 	}
-	if strings.Contains(resp, "RxDB") {
+	if strings.Contains(resp, "SQLiteAI") {
 		t.Errorf("did not expect tech doc, got: %s", resp)
 	}
 
@@ -419,7 +419,7 @@ func TestLightRAG_MetadataFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("filtered query failed: %v", err)
 	}
-	if !strings.Contains(resp, "RxDB") {
+	if !strings.Contains(resp, "SQLiteAI") {
 		t.Errorf("expected tech doc, got: %s", resp)
 	}
 	if strings.Contains(resp, "Paris") {
@@ -511,8 +511,8 @@ func TestLightRAG_GraphSearchAndSubgraph(t *testing.T) {
 	}
 	defer rag.FinalizeStorages(ctx)
 
-	// SimpleLLM extracts "RxDB" and links it to "JavaScript"
-	err := rag.Insert(ctx, "RxDB is awesome")
+	// SimpleLLM extracts "SQLiteAI" and links it to "Golang"
+	err := rag.Insert(ctx, "SQLiteAI is awesome")
 	if err != nil {
 		t.Fatalf("insert failed: %v", err)
 	}
@@ -520,37 +520,37 @@ func TestLightRAG_GraphSearchAndSubgraph(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	// Test SearchGraph
-	graphData, err := rag.SearchGraph(ctx, "Tell me about RxDB")
+	graphData, err := rag.SearchGraph(ctx, "Tell me about SQLiteAI")
 	if err != nil {
 		t.Fatalf("SearchGraph failed: %v", err)
 	}
 
-	foundRxDB := false
+	foundSQLiteAI := false
 	for _, e := range graphData.Entities {
-		if e.Name == "RxDB" {
-			foundRxDB = true
+		if e.Name == "SQLiteAI" {
+			foundSQLiteAI = true
 			break
 		}
 	}
-	if !foundRxDB {
-		t.Error("RxDB entity not found in SearchGraph results")
+	if !foundSQLiteAI {
+		t.Error("SQLiteAI entity not found in SearchGraph results")
 	}
 
 	// Test GetSubgraph
-	subgraph, err := rag.GetSubgraph(ctx, "RxDB", 1)
+	subgraph, err := rag.GetSubgraph(ctx, "SQLiteAI", 1)
 	if err != nil {
 		t.Fatalf("GetSubgraph failed: %v", err)
 	}
 
 	foundRel := false
 	for _, r := range subgraph.Relationships {
-		if r.Source == "RxDB" && r.Target == "JavaScript" && r.Relation == "BUILT_FOR" {
+		if r.Source == "SQLiteAI" && r.Target == "Golang" && r.Relation == "BUILT_FOR" {
 			foundRel = true
 			break
 		}
 	}
 	if !foundRel {
-		t.Error("Relationship RxDB -[BUILT_FOR]-> JavaScript not found in subgraph")
+		t.Error("Relationship SQLiteAI -[BUILT_FOR]-> Golang not found in subgraph")
 	}
 }
 
@@ -665,7 +665,7 @@ func TestLightRAG_ExtractAndStore_LinkError(t *testing.T) {
 
 	// This should log errors but not return them if it's the background go-routine version
 	// but we call the internal extractAndStore directly here.
-	err := rag.extractAndStore(ctx, "RxDB is a database", "doc1")
+	err := rag.extractAndStore(ctx, "SQLiteAI is a database", "doc1")
 	// Link will error because db is closed
 	if err != nil {
 		// It might return error from Complete if we are unlucky,

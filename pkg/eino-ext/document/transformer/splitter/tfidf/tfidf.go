@@ -231,7 +231,7 @@ func (s *tfidfSplitter) initSego() error {
 func (s *tfidfSplitter) segoTokenize(sentences []string) ([]string, [][]string, error) {
 	// sego package is not available, fallback to regular tokenizer
 	// Return error to trigger fallback in splitText
-	return nil, nil, fmt.Errorf("sego tokenizer is not available: package github.com/mozhou-tech/rxdb-go/pkg/sego not found")
+	return nil, nil, fmt.Errorf("sego tokenizer is not available: package github.com/mozhou-tech/sqlite-ai-driver/pkg/sego not found")
 }
 
 func splitIntoSentences(text string) []string {

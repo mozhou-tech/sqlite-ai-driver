@@ -44,7 +44,7 @@ func TestEvaluateModes(t *testing.T) {
 		"Paris is the capital and most populous city of France.",
 		"The Eiffel Tower is a wrought-iron lattice tower on the Champ de Mars in Paris.",
 		"JavaScript is a high-level, often just-in-time compiled language that conforms to the ECMAScript specification.",
-		"RxDB is a NoSQL-database for JavaScript Applications.",
+		"SQLiteAI is a NoSQL-database for Golang Applications.",
 	}
 
 	for _, d := range docs {
@@ -76,15 +76,15 @@ func TestEvaluateModes(t *testing.T) {
 		},
 		{
 			name:     "局部搜索评估 (Local)",
-			query:    "What is RxDB?",
+			query:    "What is SQLiteAI?",
 			mode:     ModeLocal,
-			expected: []string{"RxDB", "JavaScript"}, // Local 应该通过实体关联找到相关文档
+			expected: []string{"SQLiteAI", "Golang"}, // Local 应该通过实体关联找到相关文档
 		},
 		{
 			name:     "混合搜索评估 (Hybrid)",
-			query:    "JavaScript database",
+			query:    "Golang database",
 			mode:     ModeHybrid,
-			expected: []string{"RxDB", "JavaScript"},
+			expected: []string{"SQLiteAI", "Golang"},
 		},
 		{
 			name:     "朴素搜索评估 (Naive)",
@@ -131,14 +131,14 @@ func TestEvaluateAdvancedModes(t *testing.T) {
 	ctx := context.Background()
 
 	// 插入具有关联性的文档
-	// SimpleLLM 会提取 "RxDB" 并建立与 "JavaScript" 的关系
-	rag.Insert(ctx, "RxDB is a database built for JavaScript.")
+	// SimpleLLM 会提取 "SQLiteAI" 并建立与 "Golang" 的关系
+	rag.Insert(ctx, "SQLiteAI is a database built for Golang.")
 	// 等待提取
 	time.Sleep(1 * time.Second)
 
 	// ModeGraph 应该找到实体和关系
 	t.Run("图搜索评估 (Graph Mode)", func(t *testing.T) {
-		results, err := rag.Retrieve(ctx, "Tell me about RxDB architecture", QueryParam{Mode: ModeGraph, Limit: 2})
+		results, err := rag.Retrieve(ctx, "Tell me about SQLiteAI architecture", QueryParam{Mode: ModeGraph, Limit: 2})
 		if err != nil {
 			t.Fatalf("Graph mode failed: %v", err)
 		}
@@ -147,10 +147,10 @@ func TestEvaluateAdvancedModes(t *testing.T) {
 			t.Error("Graph mode returned no results")
 		}
 
-		hasRxDB := false
+		hasSQLiteAI := false
 		for _, res := range results {
-			if strings.Contains(res.Content, "RxDB") {
-				hasRxDB = true
+			if strings.Contains(res.Content, "SQLiteAI") {
+				hasSQLiteAI = true
 			}
 			// 检查是否召回了三元组
 			if len(res.RecalledTriples) > 0 {
@@ -160,8 +160,8 @@ func TestEvaluateAdvancedModes(t *testing.T) {
 				}
 			}
 		}
-		if !hasRxDB {
-			t.Error("Graph mode failed to recall doc containing RxDB")
+		if !hasSQLiteAI {
+			t.Error("Graph mode failed to recall doc containing SQLiteAI")
 		}
 	})
 

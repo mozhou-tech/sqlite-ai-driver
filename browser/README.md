@@ -1,6 +1,6 @@
-# RxDB-Go 数据浏览器
+# SQLite-AI 数据浏览器
 
-一个用于浏览和管理 RxDB-Go 数据库的 Web 应用程序。
+一个用于浏览和管理 SQLite-AI 数据库的 Web 应用程序。
 
 ## 技术栈
 

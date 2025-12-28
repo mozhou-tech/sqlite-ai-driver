@@ -20,7 +20,7 @@ export default function Layout({ children }: LayoutProps) {
       <header className="border-b">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold">RxDB-Go 数据浏览器</h1>
+            <h1 className="text-2xl font-bold">SQLite-AI 数据浏览器</h1>
             <nav className="flex gap-4">
               {navItems.map((item) => (
                 <Link

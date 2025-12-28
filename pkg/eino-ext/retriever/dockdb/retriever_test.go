@@ -131,8 +131,6 @@ func TestRetrieve(t *testing.T) {
 		})
 
 		// Redis-specific tests are removed as they are no longer relevant.
-		// Tests for RxDB vector search would go here.
-
 	})
 }
 

@@ -1,5 +1,5 @@
 {
-  "name": "rxdb-go-browser",
+  "name": "sqlite-ai-browser",
   "version": "1.0.0",
   "type": "module",
   "packageManager": "pnpm@10.0.0",

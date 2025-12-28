@@ -91,7 +91,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 		TopK:      &r.config.TopK,
 		Embedding: r.config.Embedding,
 	}, opts...)
-	// io := retriever.GetImplSpecificOptions(&implOptions{}, opts...) // RxDB doesn't support filter query in VectorSearch yet
+	// io := retriever.GetImplSpecificOptions(&implOptions{}, opts...)
 
 	ctx = callbacks.EnsureRunInfo(ctx, r.GetType(), components.ComponentOfRetriever)
 	ctx = callbacks.OnStart(ctx, &retriever.CallbackInput{
