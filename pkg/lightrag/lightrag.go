@@ -291,6 +291,14 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 		if err != nil {
 			logrus.WithError(err).Errorf("Failed to link entity %s to doc %s", entity.Name, docID)
 		}
+
+		// 存储实体类型和描述
+		if entity.Type != "" {
+			_ = r.graph.Link(ctx, entity.Name, "TYPE", entity.Type)
+		}
+		if entity.Description != "" {
+			_ = r.graph.Link(ctx, entity.Name, "DESCRIPTION", entity.Description)
+		}
 	}
 
 	// 存储关系
@@ -678,28 +686,49 @@ func (r *LightRAG) ExportFullGraph(ctx context.Context) (*GraphData, error) {
 		Relationships: make([]Relationship, 0),
 	}
 
-	entityMap := make(map[string]bool)
+	entityMap := make(map[string]*Entity)
 
+	// 第一遍：识别所有实体并处理特殊谓词
 	for _, t := range triples {
-		// 忽略 APPEARS_IN 关系，因为这通常是指向文档 ID 的
+		// 忽略指向文档的链接
 		if t.Predicate == "APPEARS_IN" {
 			continue
 		}
 
+		// 收集实体信息
+		if t.Predicate == "TYPE" || t.Predicate == "DESCRIPTION" {
+			e, ok := entityMap[t.Subject]
+			if !ok {
+				e = &Entity{Name: t.Subject}
+				entityMap[t.Subject] = e
+			}
+			if t.Predicate == "TYPE" {
+				e.Type = t.Object
+			} else {
+				e.Description = t.Object
+			}
+			continue
+		}
+
+		// 记录普通关系
 		result.Relationships = append(result.Relationships, Relationship{
 			Source:   t.Subject,
 			Target:   t.Object,
 			Relation: t.Predicate,
 		})
 
-		if !entityMap[t.Subject] {
-			result.Entities = append(result.Entities, Entity{Name: t.Subject})
-			entityMap[t.Subject] = true
+		// 确保实体存在于 map 中
+		if _, ok := entityMap[t.Subject]; !ok {
+			entityMap[t.Subject] = &Entity{Name: t.Subject}
 		}
-		if !entityMap[t.Object] {
-			result.Entities = append(result.Entities, Entity{Name: t.Object})
-			entityMap[t.Object] = true
+		if _, ok := entityMap[t.Object]; !ok {
+			entityMap[t.Object] = &Entity{Name: t.Object}
 		}
+	}
+
+	// 转换 map 到 slice
+	for _, e := range entityMap {
+		result.Entities = append(result.Entities, *e)
 	}
 
 	return result, nil
