@@ -97,6 +97,8 @@ github.com/cloudwego/eino v0.7.14 h1:Ff62Z3dhdaGMFKG0cAVjcWfY7lb6mTkkBv4WFfdDU2k
 github.com/cloudwego/eino v0.7.14/go.mod h1:nA8Vacmuqv3pqKBQbTWENBLQ8MmGmPt/WqiyLeB8ohQ=
 github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251226123311-1d93d527c144 h1:zpSrJhUvfAVKnk7dr8ADw1CJV5tZ8eHF9GlerKcHGeo=
 github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251226123311-1d93d527c144/go.mod h1:SajSFFRIXJXIbxadAAlSUIS5KTY8R/jzJg9RNSOXCCI=
+github.com/cloudwego/eino-ext/components/model/openai v0.1.2 h1:VHu8skczvlxwx1+7zCeAxcx4INocPn3j9ARMSDMnIuw=
+github.com/cloudwego/eino-ext/components/model/openai v0.1.2/go.mod h1:oFQClBoiMbh96tQy9d/9RR1f43uHnxCuo9rLxq2SGyQ=
 github.com/cloudwego/eino-ext/libs/acl/openai v0.1.2 h1:r9Id2wzJ05PoHl+Km7jQgNMgciaZI93TVnUYso89esM=
 github.com/cloudwego/eino-ext/libs/acl/openai v0.1.2/go.mod h1:S4OkvglPY9hsm9tXeShODrf/WN1Cgu4bqu4nn/CnIic=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
