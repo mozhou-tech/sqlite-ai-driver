@@ -107,7 +107,7 @@ func main() {
 	embedder, err := lightrag.NewOpenAIEmbedder(ctx, &openaiembedding.EmbeddingConfig{
 		APIKey:  apiKey,
 		BaseURL: baseURL,
-		Model:   "text-embedding-3-small",
+		Model:   "text-embedding-v4",
 	})
 	if err != nil {
 		log.Fatalf("创建 embedder 失败: %v", err)
@@ -187,12 +187,47 @@ func main() {
 	chain, err := compose.NewChain[string, string]().
 		// 1. 检索并准备上下文
 		AppendLambda(compose.InvokableLambda(func(ctx context.Context, input string) (map[string]any, error) {
+			// 1.1 检索文档
 			docs, err := ret.Retrieve(ctx, input)
 			if err != nil {
 				return nil, err
 			}
 
+			// 1.2 检索并处理 Graph 结构
+			var graphContext string
+			graphData, err := ret.rag.SearchGraph(ctx, input)
+			if err == nil && graphData != nil {
+				// 打印用于调试
+				fmt.Println("\n--- 召回的 Graph 结构 ---")
+				fmt.Printf("实体 (%d): ", len(graphData.Entities))
+				for i, entity := range graphData.Entities {
+					fmt.Print(entity.Name)
+					if i < len(graphData.Entities)-1 {
+						fmt.Print(", ")
+					}
+				}
+				fmt.Printf("\n关系 (%d): \n", len(graphData.Relationships))
+				for _, rel := range graphData.Relationships {
+					fmt.Printf("  %s --[%s]--> %s\n", rel.Source, rel.Relation, rel.Target)
+				}
+				fmt.Println("--------------------------")
+
+				// 格式化为注入 LLM 的上下文
+				if len(graphData.Relationships) > 0 {
+					graphContext = "核心知识关联（三元组）：\n"
+					for _, rel := range graphData.Relationships {
+						graphContext += fmt.Sprintf("- %s --(%s)--> %s\n", rel.Source, rel.Relation, rel.Target)
+					}
+					graphContext += "\n"
+				}
+			}
+
 			var contextText string
+			// 优先注入结构化的图谱信息
+			if graphContext != "" {
+				contextText += graphContext + "详细参考文本：\n"
+			}
+
 			for i, doc := range docs {
 				contextText += fmt.Sprintf("[%d] %s\n", i+1, doc.Content)
 			}
