@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 )
 
 // LightRAG 基于新的driver实现的 LightRAG
@@ -30,21 +31,27 @@ type LightRAG struct {
 
 	initialized bool
 	wg          sync.WaitGroup
+	llmSem      chan struct{} // 用于限制 LLM 并发
 }
 
 // Options LightRAG 配置选项
 type Options struct {
-	WorkingDir string
-	Embedder   Embedder
-	LLM        LLM
+	WorkingDir       string
+	Embedder         Embedder
+	LLM              LLM
+	MaxConcurrentLLM int // 最大并发 LLM 请求数，默认为 10
 }
 
 // New 创建 LightRAG 实例
 func New(opts Options) *LightRAG {
+	if opts.MaxConcurrentLLM <= 0 {
+		opts.MaxConcurrentLLM = 10
+	}
 	return &LightRAG{
 		workingDir: opts.WorkingDir,
 		embedder:   opts.Embedder,
 		llm:        opts.LLM,
+		llmSem:     make(chan struct{}, opts.MaxConcurrentLLM),
 	}
 }
 
@@ -84,33 +91,46 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 	}
 	r.docs = docs
 
+	// 使用 errgroup 并行初始化搜索索引
+	g, gCtx := errgroup.WithContext(ctx)
+
 	// 初始化全文搜索
-	fulltext, err := AddFulltextSearch(docs, FulltextSearchConfig{
-		Identifier: "docs_fulltext",
-		DocToString: func(doc map[string]any) string {
-			content, _ := doc["content"].(string)
-			return content
-		},
+	g.Go(func() error {
+		fulltext, err := AddFulltextSearch(docs, FulltextSearchConfig{
+			Identifier: "docs_fulltext",
+			DocToString: func(doc map[string]any) string {
+				content, _ := doc["content"].(string)
+				return content
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to add fulltext search: %w", err)
+		}
+		r.fulltext = fulltext
+		return nil
 	})
-	if err != nil {
-		return fmt.Errorf("failed to add fulltext search: %w", err)
-	}
-	r.fulltext = fulltext
 
 	// 初始化向量搜索
 	if r.embedder != nil {
-		vector, err := AddVectorSearch(docs, VectorSearchConfig{
-			Identifier: "docs_vector",
-			DocToEmbedding: func(doc map[string]any) ([]float64, error) {
-				content, _ := doc["content"].(string)
-				return r.embedder.Embed(ctx, content)
-			},
-			Dimensions: r.embedder.Dimensions(),
+		g.Go(func() error {
+			vector, err := AddVectorSearch(docs, VectorSearchConfig{
+				Identifier: "docs_vector",
+				DocToEmbedding: func(doc map[string]any) ([]float64, error) {
+					content, _ := doc["content"].(string)
+					return r.embedder.Embed(gCtx, content)
+				},
+				Dimensions: r.embedder.Dimensions(),
+			})
+			if err != nil {
+				return fmt.Errorf("failed to add vector search: %w", err)
+			}
+			r.vector = vector
+			return nil
 		})
-		if err != nil {
-			return fmt.Errorf("failed to add vector search: %w", err)
-		}
-		r.vector = vector
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
 	}
 
 	r.initialized = true
@@ -141,6 +161,15 @@ func (r *LightRAG) Insert(ctx context.Context, text string) error {
 		r.wg.Add(1)
 		go func() {
 			defer r.wg.Done()
+
+			// 获取信号量
+			select {
+			case r.llmSem <- struct{}{}:
+				defer func() { <-r.llmSem }()
+			case <-ctx.Done():
+				return
+			}
+
 			// 在后台执行提取，避免阻塞主流程
 			err := r.extractAndStore(context.Background(), text, docID)
 			if err != nil {
@@ -226,12 +255,17 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 		return err
 	}
 
-	// 尝试解析 JSON
+	// 尝试解析 JSON，增强健壮性
 	jsonStr := response
 	idxStart := strings.Index(jsonStr, "{")
 	idxEnd := strings.LastIndex(jsonStr, "}")
 	if idxStart == -1 || idxEnd == -1 || idxEnd < idxStart {
-		return fmt.Errorf("no JSON object found in response: %s", response)
+		// 尝试检查是否是纯数组（有些 LLM 可能只返回数组）
+		idxStart = strings.Index(jsonStr, "[")
+		idxEnd = strings.LastIndex(jsonStr, "]")
+		if idxStart == -1 || idxEnd == -1 || idxEnd < idxStart {
+			return fmt.Errorf("no JSON object or array found in response: %s", response)
+		}
 	}
 	jsonStr = jsonStr[idxStart : idxEnd+1]
 
@@ -246,12 +280,12 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 		"relationships_count": len(result.Relationships),
 	}).Info("Extracted graph data from document")
 
-	// 存储实体并将其实体链接到文档
+	// 批量存储实体链接和关系（如果 driver 支持批量操作，这里可以进一步优化）
+	// 目前 driver 接口是单条操作
 	for _, entity := range result.Entities {
-		logrus.WithFields(logrus.Fields{
-			"entity": entity.Name,
-			"doc_id": docID,
-		}).Debug("Linking entity to document")
+		if entity.Name == "" {
+			continue
+		}
 		// 链接实体到文档
 		err := r.graph.Link(ctx, entity.Name, "APPEARS_IN", docID)
 		if err != nil {
@@ -261,11 +295,9 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 
 	// 存储关系
 	for _, rel := range result.Relationships {
-		logrus.WithFields(logrus.Fields{
-			"source":   rel.Source,
-			"relation": rel.Relation,
-			"target":   rel.Target,
-		}).Debug("Storing relationship in graph")
+		if rel.Source == "" || rel.Target == "" {
+			continue
+		}
 		err := r.graph.Link(ctx, rel.Source, rel.Relation, rel.Target)
 		if err != nil {
 			logrus.WithError(err).Errorf("Failed to link nodes: %s -[%s]-> %s", rel.Source, rel.Relation, rel.Target)
@@ -301,13 +333,22 @@ func (r *LightRAG) InsertBatch(ctx context.Context, documents []map[string]any) 
 	ids := make([]string, 0, len(res))
 	for _, doc := range res {
 		ids = append(ids, doc.ID())
-		// 批量插入时也进行图谱提取
+		// 批量插入时也进行图谱提取，使用信号量控制并发
 		if r.llm != nil && r.graph != nil {
 			content, _ := doc.Data()["content"].(string)
 			docID := doc.ID()
 			r.wg.Add(1)
 			go func(c string, id string) {
 				defer r.wg.Done()
+
+				// 获取信号量
+				select {
+				case r.llmSem <- struct{}{}:
+					defer func() { <-r.llmSem }()
+				case <-ctx.Done():
+					return
+				}
+
 				r.extractAndStore(context.Background(), c, id)
 			}(content, docID)
 		}
@@ -407,47 +448,77 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		}).Info("Extracted entities for graph search")
 
 		docIDMap := make(map[string]bool)
+		var mu sync.Mutex
+		g, gCtx := errgroup.WithContext(ctx)
+
 		for _, entity := range entities {
-			neighbors, _ := r.graph.GetNeighbors(ctx, entity, "APPEARS_IN")
-			if len(neighbors) > 0 {
-				logrus.WithFields(logrus.Fields{
-					"entity":    entity,
-					"doc_count": len(neighbors),
-				}).Debug("Found documents directly linked to entity")
-			}
-			for _, id := range neighbors {
-				docIDMap[id] = true
-			}
-			// 也考虑一度邻居关联的文档
-			related, _ := r.graph.GetNeighbors(ctx, entity, "")
-			for _, relNode := range related {
-				if relNode == entity {
-					continue
+			e := entity
+			g.Go(func() error {
+				neighbors, _ := r.graph.GetNeighbors(gCtx, e, "APPEARS_IN")
+				if len(neighbors) > 0 {
+					mu.Lock()
+					for _, id := range neighbors {
+						docIDMap[id] = true
+					}
+					mu.Unlock()
 				}
-				docNeighbors, _ := r.graph.GetNeighbors(ctx, relNode, "APPEARS_IN")
-				if len(docNeighbors) > 0 {
-					logrus.WithFields(logrus.Fields{
-						"original_entity": entity,
-						"related_node":    relNode,
-						"doc_count":       len(docNeighbors),
-					}).Debug("Found documents linked via related graph node")
+				// 也考虑一度邻居关联的文档
+				related, _ := r.graph.GetNeighbors(gCtx, e, "")
+				for _, relNode := range related {
+					if relNode == e {
+						continue
+					}
+					docNeighbors, _ := r.graph.GetNeighbors(gCtx, relNode, "APPEARS_IN")
+					if len(docNeighbors) > 0 {
+						mu.Lock()
+						for _, id := range docNeighbors {
+							docIDMap[id] = true
+						}
+						mu.Unlock()
+					}
 				}
-				for _, id := range docNeighbors {
-					docIDMap[id] = true
-				}
-			}
+				return nil
+			})
 		}
+		_ = g.Wait()
 
 		logrus.WithField("total_unique_docs", len(docIDMap)).Info("Graph traversal completed")
 
+		// 并行获取文档内容
+		type scoredDoc struct {
+			doc   Document
+			score float64
+		}
+		scoredDocs := make(chan scoredDoc, len(docIDMap))
+		g, gCtx = errgroup.WithContext(ctx)
+
+		limit := param.Limit
+		count := 0
 		for id := range docIDMap {
-			doc, _ := r.docs.FindByID(ctx, id)
-			if doc != nil {
-				rawResults = append(rawResults, FulltextSearchResult{
-					Document: doc,
-					Score:    1.0, // 图检索的基础分，后续可以改进
-				})
+			if count >= limit*2 { // 限制获取数量，避免过多
+				break
 			}
+			docID := id
+			g.Go(func() error {
+				doc, err := r.docs.FindByID(gCtx, docID)
+				if err == nil && doc != nil {
+					scoredDocs <- scoredDoc{doc: doc, score: 1.0}
+				}
+				return nil
+			})
+			count++
+		}
+
+		go func() {
+			g.Wait()
+			close(scoredDocs)
+		}()
+
+		for sd := range scoredDocs {
+			rawResults = append(rawResults, FulltextSearchResult{
+				Document: sd.doc,
+				Score:    sd.score,
+			})
 			if len(rawResults) >= param.Limit {
 				break
 			}
@@ -458,32 +529,48 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		return r.Retrieve(ctx, query, QueryParam{Mode: ModeHybrid, Limit: param.Limit})
 	case ModeHybrid:
 		// 实现真正的混合搜索（向量 + 全文 + 可能的图）
-		ftResults, err := r.fulltext.FindWithScores(ctx, query, FulltextSearchOptions{
-			Limit:    param.Limit * 2,
-			Selector: param.Filters,
-		})
-		if err != nil {
-			logrus.WithError(err).Error("Fulltext search failed in hybrid mode")
-			ftResults = []FulltextSearchResult{} // 确保不是 nil
-		}
-		logrus.WithField("count", len(ftResults)).Debug("Hybrid mode: Fulltext results")
-
+		var ftResults []FulltextSearchResult
 		var vecResults []VectorSearchResult
+
+		g, gCtx := errgroup.WithContext(ctx)
+
+		// 全文搜索
+		g.Go(func() error {
+			var err error
+			ftResults, err = r.fulltext.FindWithScores(gCtx, query, FulltextSearchOptions{
+				Limit:    param.Limit * 2,
+				Selector: param.Filters,
+			})
+			if err != nil {
+				logrus.WithError(err).Error("Fulltext search failed in hybrid mode")
+				ftResults = []FulltextSearchResult{}
+			}
+			return nil
+		})
+
+		// 向量搜索
 		if r.vector != nil && r.embedder != nil {
-			emb, err := r.embedder.Embed(ctx, query)
-			if err == nil {
-				vecResults, err = r.vector.Search(ctx, emb, VectorSearchOptions{
+			g.Go(func() error {
+				emb, err := r.embedder.Embed(gCtx, query)
+				if err != nil {
+					logrus.WithError(err).Error("Embedding failed in hybrid mode")
+					return nil
+				}
+				vecResults, err = r.vector.Search(gCtx, emb, VectorSearchOptions{
 					Limit:    param.Limit * 2,
 					Selector: param.Filters,
 				})
 				if err != nil {
 					logrus.WithError(err).Error("Vector search failed in hybrid mode")
+					vecResults = []VectorSearchResult{}
 				}
-			}
+				return nil
+			})
 		}
-		if vecResults == nil {
-			vecResults = []VectorSearchResult{} // 确保不是 nil
-		}
+
+		_ = g.Wait()
+
+		logrus.WithField("count", len(ftResults)).Debug("Hybrid mode: Fulltext results")
 		logrus.WithField("count", len(vecResults)).Debug("Hybrid mode: Vector results")
 
 		// 使用简单的 RRF 融合或加权融合
@@ -601,77 +688,108 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 
 	// 1. 扩展实体：如果提取的实体在图中找不到直接关系，尝试通过语义搜索寻找相关实体
 	allEntities := make(map[string]bool)
+	var mu sync.Mutex
+	g, gCtx := errgroup.WithContext(ctx)
+
 	for _, e := range entities {
-		// 检查该实体是否在图中有任何“非文档链接”的关系
-		hasRelation := false
+		entityName := e
+		g.Go(func() error {
+			// 检查该实体是否在图中有任何“非文档链接”的关系
+			hasRelation := false
 
-		// 检查出边
-		res, _ := r.graph.Query().V(e).Out("").All(ctx)
-		for _, r := range res {
-			if r.Predicate != "APPEARS_IN" {
-				hasRelation = true
-				break
-			}
-		}
-
-		// 检查入边
-		if !hasRelation {
-			res, _ := r.graph.Query().V(e).In("").All(ctx)
-			for _, r := range res {
-				if r.Predicate != "APPEARS_IN" {
+			// 检查出边
+			res, _ := r.graph.Query().V(entityName).Out("").All(gCtx)
+			for _, qr := range res {
+				if qr.Predicate != "APPEARS_IN" {
 					hasRelation = true
 					break
 				}
 			}
-		}
 
-		if hasRelation {
-			allEntities[e] = true
-		} else if r.vector != nil {
-			// 如果没找到直接关联，通过向量搜索寻找最相关的文档，从而发现相关实体
-			emb, err := r.embedder.Embed(ctx, e)
-			if err == nil {
-				vecResults, err := r.vector.Search(ctx, emb, VectorSearchOptions{Limit: 3})
+			// 检查入边
+			if !hasRelation {
+				res, _ := r.graph.Query().V(entityName).In("").All(gCtx)
+				for _, qr := range res {
+					if qr.Predicate != "APPEARS_IN" {
+						hasRelation = true
+						break
+					}
+				}
+			}
+
+			if hasRelation {
+				mu.Lock()
+				allEntities[entityName] = true
+				mu.Unlock()
+			} else if r.vector != nil {
+				// 如果没找到直接关联，通过向量搜索寻找最相关的文档，从而发现相关实体
+				emb, err := r.embedder.Embed(gCtx, entityName)
 				if err == nil {
-					for _, res := range vecResults {
-						// 增加相似度阈值检查，防止召回无关内容
-						// 这里的分数通常是余弦相似度，0.75 是一个保守的阈值
-						if res.Score < 0.75 {
-							continue
-						}
-
-						docID := res.Document.ID()
-						// 查找链接到该文档的所有实体 (Subject --[APPEARS_IN]--> docID)
-						linkedEntities, _ := r.graph.GetInNeighbors(ctx, docID, "APPEARS_IN")
-						for _, le := range linkedEntities {
-							if !allEntities[le] {
-								allEntities[le] = true
-								logrus.WithFields(logrus.Fields{
-									"query_entity": e,
-									"found_entity": le,
-									"score":        res.Score,
-								}).Debug("Expanded entity via vector search")
+					vecResults, err := r.vector.Search(gCtx, emb, VectorSearchOptions{Limit: 3})
+					if err == nil {
+						for _, res := range vecResults {
+							if res.Score < 0.75 {
+								continue
 							}
+
+							docID := res.Document.ID()
+							// 查找链接到该文档的所有实体 (Subject --[APPEARS_IN]--> docID)
+							linkedEntities, _ := r.graph.GetInNeighbors(gCtx, docID, "APPEARS_IN")
+							mu.Lock()
+							for _, le := range linkedEntities {
+								if !allEntities[le] {
+									allEntities[le] = true
+									logrus.WithFields(logrus.Fields{
+										"query_entity": entityName,
+										"found_entity": le,
+										"score":        res.Score,
+									}).Debug("Expanded entity via vector search")
+								}
+							}
+							mu.Unlock()
 						}
 					}
 				}
 			}
-		}
+			return nil
+		})
 	}
+	_ = g.Wait()
 
 	// 2. 对所有实体进行深度优先遍历
+	// 这里也可以并行化子图获取
+	g, gCtx = errgroup.WithContext(ctx)
+	type subgraphResult struct {
+		data *GraphData
+		err  error
+	}
+	subgraphResults := make(chan subgraphResult, len(allEntities))
+
 	for entityName := range allEntities {
-		subgraph, err := r.GetSubgraph(ctx, entityName, depth)
-		if err != nil {
+		en := entityName
+		g.Go(func() error {
+			subgraph, err := r.GetSubgraph(gCtx, en, depth)
+			subgraphResults <- subgraphResult{data: subgraph, err: err}
+			return nil
+		})
+	}
+
+	go func() {
+		_ = g.Wait()
+		close(subgraphResults)
+	}()
+
+	for res := range subgraphResults {
+		if res.err != nil || res.data == nil {
 			continue
 		}
-		for _, e := range subgraph.Entities {
+		for _, e := range res.data.Entities {
 			if !entityMap[e.Name] {
 				result.Entities = append(result.Entities, e)
 				entityMap[e.Name] = true
 			}
 		}
-		for _, rel := range subgraph.Relationships {
+		for _, rel := range res.data.Relationships {
 			relKey := fmt.Sprintf("%s-%s-%s", rel.Source, rel.Relation, rel.Target)
 			if !relMap[relKey] {
 				result.Relationships = append(result.Relationships, rel)
@@ -703,50 +821,73 @@ func (r *LightRAG) GetSubgraph(ctx context.Context, nodeID string, depth int) (*
 
 	entityMap := make(map[string]bool)
 	relMap := make(map[string]bool)
+	var mu sync.Mutex
 
-	var traverse func(node string, currentDepth int)
-	traverse = func(node string, currentDepth int) {
-		if currentDepth > depth {
-			return
+	currentLevelNodes := []string{nodeID}
+	entityMap[nodeID] = true
+	result.Entities = append(result.Entities, Entity{Name: nodeID})
+
+	for d := 1; d <= depth; d++ {
+		nextLevelNodes := make(map[string]bool)
+		g, gCtx := errgroup.WithContext(ctx)
+
+		for _, node := range currentLevelNodes {
+			n := node
+			g.Go(func() error {
+				// 获取所有关系
+				query := r.graph.Query().V(n)
+				res, err := query.Both().All(gCtx)
+				if err != nil {
+					return nil
+				}
+
+				mu.Lock()
+				defer mu.Unlock()
+
+				for _, qr := range res {
+					if qr.Predicate == "APPEARS_IN" {
+						continue
+					}
+
+					target := qr.Object
+					if target == n {
+						target = qr.Subject
+					}
+
+					relKey := fmt.Sprintf("%s-%s-%s", qr.Subject, qr.Predicate, qr.Object)
+					if !relMap[relKey] {
+						result.Relationships = append(result.Relationships, Relationship{
+							Source:   qr.Subject,
+							Target:   qr.Object,
+							Relation: qr.Predicate,
+						})
+						relMap[relKey] = true
+					}
+
+					if !entityMap[target] {
+						result.Entities = append(result.Entities, Entity{Name: target})
+						entityMap[target] = true
+						nextLevelNodes[target] = true
+					}
+				}
+				return nil
+			})
 		}
 
-		if !entityMap[node] {
-			result.Entities = append(result.Entities, Entity{Name: node})
-			entityMap[node] = true
+		if err := g.Wait(); err != nil {
+			break
 		}
 
-		// 获取所有关系
-		query := r.graph.Query().V(node)
-		res, err := query.Both().All(ctx)
-		if err == nil {
-			for _, qr := range res {
-				if qr.Predicate == "APPEARS_IN" {
-					continue
-				}
+		if len(nextLevelNodes) == 0 {
+			break
+		}
 
-				target := qr.Object
-				if target == node {
-					target = qr.Subject
-				}
-
-				relKey := fmt.Sprintf("%s-%s-%s", qr.Subject, qr.Predicate, qr.Object)
-				if !relMap[relKey] {
-					result.Relationships = append(result.Relationships, Relationship{
-						Source:   qr.Subject,
-						Target:   qr.Object,
-						Relation: qr.Predicate,
-					})
-					relMap[relKey] = true
-				}
-
-				if currentDepth < depth {
-					traverse(target, currentDepth+1)
-				}
-			}
+		currentLevelNodes = make([]string, 0, len(nextLevelNodes))
+		for n := range nextLevelNodes {
+			currentLevelNodes = append(currentLevelNodes, n)
 		}
 	}
 
-	traverse(nodeID, 1)
 	return result, nil
 }
 
