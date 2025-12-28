@@ -467,6 +467,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 					mu.Lock()
 					for _, id := range neighbors {
 						docIDMap[id] = true
+						logrus.Infof("Graph Recalled: Entity %s is in Document %s", e, id)
 					}
 					mu.Unlock()
 				}
@@ -476,11 +477,20 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 					if relNode == e {
 						continue
 					}
+					// 查找关系
+					res, _ := r.graph.Query().V(e).Both().All(gCtx)
+					for _, qr := range res {
+						if qr.Predicate != "APPEARS_IN" && (qr.Subject == relNode || qr.Object == relNode) {
+							logrus.Infof("Graph Recalled: %s -[%s]-> %s", qr.Subject, qr.Predicate, qr.Object)
+						}
+					}
+
 					docNeighbors, _ := r.graph.GetNeighbors(gCtx, relNode, "APPEARS_IN")
 					if len(docNeighbors) > 0 {
 						mu.Lock()
 						for _, id := range docNeighbors {
 							docIDMap[id] = true
+							logrus.Infof("Graph Recalled: Entity %s is related to %s which is in Document %s", e, relNode, id)
 						}
 						mu.Unlock()
 					}
@@ -870,6 +880,18 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 				result.Relationships = append(result.Relationships, rel)
 				relMap[relKey] = true
 			}
+		}
+	}
+
+	// 打印召回的知识图谱
+	if len(result.Entities) > 0 {
+		logrus.WithFields(logrus.Fields{
+			"query":           query,
+			"entities_count":  len(result.Entities),
+			"relations_count": len(result.Relationships),
+		}).Info("Graph search recalled knowledge graph")
+		for _, rel := range result.Relationships {
+			logrus.Infof("  Graph Recalled: %s -[%s]-> %s", rel.Source, rel.Relation, rel.Target)
 		}
 	}
 
