@@ -58,6 +58,9 @@ type GraphQuery interface {
 	// In 沿着指定的边类型向内遍历
 	In(predicate string) GraphQuery
 
+	// Both 沿着所有边类型双向遍历（出边和入边）
+	Both() GraphQuery
+
 	// All 执行查询并返回所有结果
 	All(ctx context.Context) ([]Triple, error)
 
@@ -403,6 +406,18 @@ func (q *graphQuery) In(predicate string) GraphQuery {
 	}
 }
 
+// Both 沿着所有边类型双向遍历（出边和入边）
+func (q *graphQuery) Both() GraphQuery {
+	return &graphQuery{
+		graph:     q.graph,
+		startNode: q.startNode,
+		steps: append(q.steps, queryStep{
+			direction: "both",
+			predicate: "",
+		}),
+	}
+}
+
 // All 执行查询并返回所有结果
 func (q *graphQuery) All(ctx context.Context) ([]Triple, error) {
 	if q.startNode == "" {
@@ -449,6 +464,66 @@ func (q *graphQuery) All(ctx context.Context) ([]Triple, error) {
 					})
 					nextNodes = append(nextNodes, neighbor)
 				}
+			} else if step.direction == "both" {
+				// 获取所有出边和入边（predicate为空时返回所有类型的边）
+				// 查询所有以node为subject的三元组（出边）
+				outQuery := `SELECT predicate, object FROM quads WHERE subject = ?`
+				if step.predicate != "" {
+					outQuery = `SELECT predicate, object FROM quads WHERE subject = ? AND predicate = ?`
+				}
+				var outRows *sql.Rows
+				var err error
+				if step.predicate != "" {
+					outRows, err = q.graph.db.QueryContext(ctx, outQuery, node, step.predicate)
+				} else {
+					outRows, err = q.graph.db.QueryContext(ctx, outQuery, node)
+				}
+				if err != nil {
+					return nil, err
+				}
+				for outRows.Next() {
+					var pred, obj string
+					if err := outRows.Scan(&pred, &obj); err != nil {
+						outRows.Close()
+						return nil, err
+					}
+					triples = append(triples, Triple{
+						Subject:   node,
+						Predicate: pred,
+						Object:    obj,
+					})
+					nextNodes = append(nextNodes, obj)
+				}
+				outRows.Close()
+
+				// 查询所有以node为object的三元组（入边）
+				inQuery := `SELECT subject, predicate FROM quads WHERE object = ?`
+				if step.predicate != "" {
+					inQuery = `SELECT subject, predicate FROM quads WHERE object = ? AND predicate = ?`
+				}
+				var inRows *sql.Rows
+				if step.predicate != "" {
+					inRows, err = q.graph.db.QueryContext(ctx, inQuery, node, step.predicate)
+				} else {
+					inRows, err = q.graph.db.QueryContext(ctx, inQuery, node)
+				}
+				if err != nil {
+					return nil, err
+				}
+				for inRows.Next() {
+					var subj, pred string
+					if err := inRows.Scan(&subj, &pred); err != nil {
+						inRows.Close()
+						return nil, err
+					}
+					triples = append(triples, Triple{
+						Subject:   subj,
+						Predicate: pred,
+						Object:    node,
+					})
+					nextNodes = append(nextNodes, subj)
+				}
+				inRows.Close()
 			}
 		}
 
@@ -487,6 +562,18 @@ func (q *graphQuery) Values(ctx context.Context) ([]string, error) {
 					return nil, err
 				}
 				nextNodes = append(nextNodes, neighbors...)
+			} else if step.direction == "both" {
+				// 获取出边和入边的所有邻居
+				outNeighbors, err := q.graph.GetNeighbors(ctx, node, step.predicate)
+				if err != nil {
+					return nil, err
+				}
+				nextNodes = append(nextNodes, outNeighbors...)
+				inNeighbors, err := q.graph.GetInNeighbors(ctx, node, step.predicate)
+				if err != nil {
+					return nil, err
+				}
+				nextNodes = append(nextNodes, inNeighbors...)
 			}
 		}
 

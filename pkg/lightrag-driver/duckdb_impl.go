@@ -363,6 +363,28 @@ func AddFulltextSearch(collection Collection, config FulltextSearchConfig) (Full
 		}
 	}
 
+	// 更新所有已存在文档的 content_tokens（如果它们还没有被填充）
+	// 这确保 FTS 索引能够正确索引所有文档
+	// 获取所有需要更新的文档
+	selectSQL := fmt.Sprintf(`
+		SELECT id, content 
+		FROM %s 
+		WHERE content IS NOT NULL AND (content_tokens IS NULL OR content_tokens = '')
+	`, duckdbColl.tableName)
+
+	rows, err := duckdbColl.db.QueryContext(context.Background(), selectSQL)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, content string
+			if err := rows.Scan(&id, &content); err == nil && content != "" {
+				tokens := duckdb_driver.TokenizeWithSego(content)
+				updateSQL := fmt.Sprintf(`UPDATE %s SET content_tokens = ? WHERE id = ?`, duckdbColl.tableName)
+				_, _ = duckdbColl.db.ExecContext(context.Background(), updateSQL, tokens, id)
+			}
+		}
+	}
+
 	return &duckdbFulltextSearch{
 		db:        duckdbColl.db,
 		tableName: duckdbColl.tableName,
@@ -631,28 +653,20 @@ func (q *duckdbGraphQuery) All(ctx context.Context) ([]GraphQueryResult, error) 
 
 		for _, node := range currentNodes {
 			if step.direction == "both" {
-				// 获取出边和入边
-				outNeighbors, _ := q.graph.GetNeighbors(ctx, node, step.predicate)
-				inNeighbors, _ := q.graph.GetInNeighbors(ctx, node, step.predicate)
-
-				// 处理出边
-				for _, neighbor := range outNeighbors {
-					triples = append(triples, cayley_driver.Triple{
-						Subject:   node,
-						Predicate: step.predicate,
-						Object:    neighbor,
-					})
-					nextNodes = append(nextNodes, neighbor)
-				}
-
-				// 处理入边
-				for _, neighbor := range inNeighbors {
-					triples = append(triples, cayley_driver.Triple{
-						Subject:   neighbor,
-						Predicate: step.predicate,
-						Object:    node,
-					})
-					nextNodes = append(nextNodes, neighbor)
+				// 使用 cayley_driver.GraphQuery 的 Both() 方法来获取所有关系（包括predicate）
+				cayleyQuery := q.graph.Query().V(node)
+				// 使用 Both() 方法获取所有双向关系
+				allTriples, err := cayleyQuery.Both().All(ctx)
+				if err == nil {
+					triples = append(triples, allTriples...)
+					for _, t := range allTriples {
+						// 确定目标节点
+						target := t.Object
+						if target == node {
+							target = t.Subject
+						}
+						nextNodes = append(nextNodes, target)
+					}
 				}
 			} else if step.direction == "out" {
 				neighbors, _ := q.graph.GetNeighbors(ctx, node, step.predicate)

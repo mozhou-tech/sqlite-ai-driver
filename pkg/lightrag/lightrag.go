@@ -381,6 +381,10 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		})
 		if err != nil {
 			logrus.WithError(err).Error("Fulltext search failed in hybrid mode")
+			ftResults = []lightrag_driver.FulltextSearchResult{} // 确保不是 nil
+		}
+		if ftResults == nil {
+			ftResults = []lightrag_driver.FulltextSearchResult{} // 确保不是 nil
 		}
 
 		var vecResults []lightrag_driver.VectorSearchResult
@@ -392,6 +396,9 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 					Selector: param.Filters,
 				})
 			}
+		}
+		if vecResults == nil {
+			vecResults = []lightrag_driver.VectorSearchResult{} // 确保不是 nil
 		}
 
 		// 使用简单的 RRF 融合或加权融合
@@ -410,20 +417,34 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			docMap[res.Document.ID()] = res.Document
 		}
 
-		// 排序并取 Top N
-		for id, score := range docScores {
-			rawResults = append(rawResults, lightrag_driver.FulltextSearchResult{
-				Document: docMap[id],
-				Score:    score,
+		// 如果两种搜索都没有结果，回退到纯全文搜索
+		if len(docScores) == 0 {
+			// 回退到纯全文搜索，使用更大的 limit
+			fallbackResults, err := r.fulltext.FindWithScores(ctx, query, lightrag_driver.FulltextSearchOptions{
+				Limit:    param.Limit,
+				Selector: param.Filters,
 			})
-		}
-		// 按分数降序排序
-		sort.Slice(rawResults, func(i, j int) bool {
-			return rawResults[i].Score > rawResults[j].Score
-		})
+			if err == nil && len(fallbackResults) > 0 {
+				for _, res := range fallbackResults {
+					rawResults = append(rawResults, res)
+				}
+			}
+		} else {
+			// 排序并取 Top N
+			for id, score := range docScores {
+				rawResults = append(rawResults, lightrag_driver.FulltextSearchResult{
+					Document: docMap[id],
+					Score:    score,
+				})
+			}
+			// 按分数降序排序
+			sort.Slice(rawResults, func(i, j int) bool {
+				return rawResults[i].Score > rawResults[j].Score
+			})
 
-		if len(rawResults) > param.Limit {
-			rawResults = rawResults[:param.Limit]
+			if len(rawResults) > param.Limit {
+				rawResults = rawResults[:param.Limit]
+			}
 		}
 	default:
 		rawResults, err = r.fulltext.FindWithScores(ctx, query, lightrag_driver.FulltextSearchOptions{Limit: param.Limit})
