@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
@@ -52,9 +56,39 @@ func main() {
 		port = "8080"
 	}
 	log.Printf("Server starting on port %s", port)
-	if err := r.Run(":" + port); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+
+	// 优雅关闭
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
 	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %s\n", err)
+		}
+	}()
+
+	// 等待中断信号
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal("Server forced to shutdown:", err)
+	}
+
+	if lightRAGInstance != nil {
+		if err := lightRAGInstance.FinalizeStorages(ctx); err != nil {
+			log.Printf("Failed to finalize storages: %v", err)
+		}
+	}
+
+	log.Println("Server exiting")
 }
 
 func initLightRAG() error {
@@ -136,7 +170,7 @@ func initLightRAG() error {
 		schema.UserMessage("{input}"),
 	)
 
-	formatDocs := compose.InvokableLambda(func(ctx context.Context, docs []*schema.Document) (map[string]any, error) {
+	formatDocs := func(ctx context.Context, docs []*schema.Document) (map[string]any, error) {
 		if len(docs) == 0 {
 			return map[string]any{"format_docs": "未找到相关文档。"}, nil
 		}
@@ -145,18 +179,33 @@ func initLightRAG() error {
 			contextText += fmt.Sprintf("[%d] %s\n", i+1, doc.Content)
 		}
 		return map[string]any{"format_docs": contextText}, nil
-	})
+	}
 
-	msgToString := compose.InvokableLambda(func(ctx context.Context, msg *schema.Message) (string, error) {
+	msgToString := func(ctx context.Context, msg *schema.Message) (string, error) {
 		return msg.Content, nil
-	})
+	}
 
 	chain, err := compose.NewChain[string, string]().
-		AppendRetriever(retrieverInstance).
-		AppendLambda(formatDocs).
+		AppendLambda(compose.InvokableLambda(func(ctx context.Context, input string) (map[string]any, error) {
+			// 1. 检索文档
+			docs, err := retrieverInstance.Retrieve(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+
+			// 2. 格式化文档
+			formatted, err := formatDocs(ctx, docs)
+			if err != nil {
+				return nil, err
+			}
+
+			// 3. 将原始输入放入 map
+			formatted["input"] = input
+			return formatted, nil
+		})).
 		AppendChatTemplate(chatTemplate).
 		AppendChatModel(cm).
-		AppendLambda(msgToString).
+		AppendLambda(compose.InvokableLambda(msgToString)).
 		Compile(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to compile eino graph: %w", err)
@@ -283,6 +332,7 @@ func handleChat(c *gin.Context) {
 	// 使用 Eino Graph 进行查询
 	answer, err := ragGraph.Invoke(ctx, req.Message)
 	if err != nil {
+		log.Printf("Chat query failed: %v", err)
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to query via Eino: %v", err)})
 		return
 	}
