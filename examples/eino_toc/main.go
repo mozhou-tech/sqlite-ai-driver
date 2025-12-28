@@ -100,7 +100,7 @@ func main() {
 		log.Printf("警告：sego 初始化失败: %v", err)
 	}
 
-	workingDir := "./agent_storage"
+	workingDir := "./testdata/toc_storage"
 	_ = os.MkdirAll(workingDir, 0755)
 
 	// 2. 初始化 LightRAG 组件
@@ -152,7 +152,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("索引文档失败: %v", err)
 	}
-	fmt.Printf("成功索引素材: %s\n", txtPath)
+	fmt.Printf("成功索引素材: %s，正在等待图谱提取完成...\n", txtPath)
+	rag.Wait()
+	fmt.Println("图谱提取完成。")
 
 	// 4. 设置 Eino Agent/Chain 用于文章生成
 	topic := "如何写一篇好文章"
@@ -193,9 +195,9 @@ func main() {
 				return nil, err
 			}
 
-			// 1.2 检索并处理 Graph 结构
+			// 1.2 检索并处理 Graph 结构 (三层深度)
 			var graphContext string
-			graphData, err := ret.rag.SearchGraph(ctx, input)
+			graphData, err := ret.rag.SearchGraphWithDepth(ctx, input, 3)
 			if err == nil && graphData != nil {
 				// 打印用于调试
 				fmt.Println("\n--- 召回的 Graph 结构 ---")

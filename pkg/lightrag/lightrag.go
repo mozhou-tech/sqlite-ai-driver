@@ -632,6 +632,51 @@ func (r *LightRAG) SearchGraph(ctx context.Context, query string) (*GraphData, e
 	return result, nil
 }
 
+// SearchGraphWithDepth 从图谱检索实体和关系，支持指定搜索深度
+func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth int) (*GraphData, error) {
+	if !r.initialized {
+		return nil, fmt.Errorf("storages not initialized")
+	}
+	if r.graph == nil {
+		return nil, fmt.Errorf("graph database not available")
+	}
+
+	entities, err := r.extractQueryEntities(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to extract entities from query: %w", err)
+	}
+
+	result := &GraphData{
+		Entities:      make([]Entity, 0),
+		Relationships: make([]Relationship, 0),
+	}
+
+	entityMap := make(map[string]bool)
+	relMap := make(map[string]bool)
+
+	for _, entityName := range entities {
+		subgraph, err := r.GetSubgraph(ctx, entityName, depth)
+		if err != nil {
+			continue
+		}
+		for _, e := range subgraph.Entities {
+			if !entityMap[e.Name] {
+				result.Entities = append(result.Entities, e)
+				entityMap[e.Name] = true
+			}
+		}
+		for _, rel := range subgraph.Relationships {
+			relKey := fmt.Sprintf("%s-%s-%s", rel.Source, rel.Relation, rel.Target)
+			if !relMap[relKey] {
+				result.Relationships = append(result.Relationships, rel)
+				relMap[relKey] = true
+			}
+		}
+	}
+
+	return result, nil
+}
+
 // GetSubgraph 获取子图
 func (r *LightRAG) GetSubgraph(ctx context.Context, nodeID string, depth int) (*GraphData, error) {
 	if !r.initialized {
@@ -697,6 +742,11 @@ func (r *LightRAG) GetSubgraph(ctx context.Context, nodeID string, depth int) (*
 
 	traverse(nodeID, 1)
 	return result, nil
+}
+
+// Wait 等待所有后台任务完成
+func (r *LightRAG) Wait() {
+	r.wg.Wait()
 }
 
 // FinalizeStorages 关闭存储资源
