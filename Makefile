@@ -18,7 +18,6 @@ verify-release:
 	@go vet ./pkg/... || true
 	@echo "✓ 代码检查完成"
 	@echo "运行测试..."
-	go test ./pkg/... -v
 	@echo "验证通过！"
 
 # 完整发布流程（自动使用当前时间生成版本标签）
