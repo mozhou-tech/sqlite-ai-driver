@@ -835,7 +835,7 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 		LIMIT ?
 	`, vectorColumn, v.tableName, vectorColumn, vectorColumn)
 
-	rows, err := v.db.QueryContext(ctx, sqlQuery, vectorArg, vectorArg, limit)
+	rows, err := v.db.QueryContext(ctx, sqlQuery, vectorArg, vectorArg, limit*2) // 获取更多结果以便过滤
 	if err != nil {
 		return nil, fmt.Errorf("failed to search vectors: %w", err)
 	}
@@ -880,6 +880,21 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 			}
 		}
 
+		// 应用 Selector 过滤器
+		if opts.Selector != nil && len(opts.Selector) > 0 {
+			matched := true
+			for key, expectedValue := range opts.Selector {
+				actualValue, exists := doc[key]
+				if !exists || actualValue != expectedValue {
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
+
 		// 将distance转换为similarity score
 		score := 1.0 - distance
 
@@ -891,6 +906,10 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 			},
 			Score: score,
 		})
+
+		if len(results) >= limit {
+			break
+		}
 	}
 
 	return results, nil

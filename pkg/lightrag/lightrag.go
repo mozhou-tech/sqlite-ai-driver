@@ -378,6 +378,27 @@ func (r *LightRAG) Query(ctx context.Context, query string, param QueryParam) (s
 
 	// 简单的上下文拼接
 	contextText := ""
+
+	// 首先添加知识图谱信息（如果存在）
+	uniqueTriples := make(map[string]bool)
+	var graphLines []string
+	for _, res := range results {
+		for _, triple := range res.RecalledTriples {
+			key := fmt.Sprintf("%s-%s-%s", triple.Source, triple.Relation, triple.Target)
+			if !uniqueTriples[key] {
+				uniqueTriples[key] = true
+				graphLines = append(graphLines, fmt.Sprintf("- %s -[%s]-> %s", triple.Source, triple.Relation, triple.Target))
+			}
+		}
+	}
+
+	if len(graphLines) > 0 {
+		contextText += "Knowledge Graph recalled:\n"
+		contextText += strings.Join(graphLines, "\n")
+		contextText += "\n\n"
+	}
+
+	contextText += "Relevant Documents:\n"
 	for i, res := range results {
 		contextText += fmt.Sprintf("[%d] %s\n", i+1, res.Content)
 	}
@@ -404,6 +425,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 	}
 
 	var rawResults []FulltextSearchResult
+	var recalledTriples []Relationship
 	var err error
 
 	switch param.Mode {
@@ -479,11 +501,18 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 					}
 					// 查找关系
 					res, _ := r.graph.Query().V(e).Both().All(gCtx)
+					mu.Lock()
 					for _, qr := range res {
 						if qr.Predicate != "APPEARS_IN" && (qr.Subject == relNode || qr.Object == relNode) {
 							logrus.Infof("Graph Recalled: %s -[%s]-> %s", qr.Subject, qr.Predicate, qr.Object)
+							recalledTriples = append(recalledTriples, Relationship{
+								Source:   qr.Subject,
+								Target:   qr.Object,
+								Relation: qr.Predicate,
+							})
 						}
 					}
+					mu.Unlock()
 
 					docNeighbors, _ := r.graph.GetNeighbors(gCtx, relNode, "APPEARS_IN")
 					if len(docNeighbors) > 0 {
@@ -520,7 +549,10 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			g.Go(func() error {
 				doc, err := r.docs.FindByID(gCtx, docID)
 				if err == nil && doc != nil {
-					scoredDocs <- scoredDoc{doc: doc, score: 1.0}
+					// 应用过滤器
+					if matchesFilters(doc.Data(), param.Filters) {
+						scoredDocs <- scoredDoc{doc: doc, score: 1.0}
+					}
 				}
 				return nil
 			})
@@ -657,10 +689,11 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 	for _, res := range rawResults {
 		content, _ := res.Document.Data()["content"].(string)
 		results = append(results, SearchResult{
-			ID:       res.Document.ID(),
-			Content:  content,
-			Score:    res.Score,
-			Metadata: res.Document.Data(),
+			ID:              res.Document.ID(),
+			Content:         content,
+			Score:           res.Score,
+			Metadata:        res.Document.Data(),
+			RecalledTriples: recalledTriples,
 		})
 	}
 
@@ -679,6 +712,11 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 
 // ExportFullGraph 导出完整的知识图谱
 func (r *LightRAG) ExportFullGraph(ctx context.Context) (*GraphData, error) {
+	return r.ExportGraph(ctx, "")
+}
+
+// ExportGraph 导出知识图谱，可选指定文档 ID 过滤
+func (r *LightRAG) ExportGraph(ctx context.Context, docID string) (*GraphData, error) {
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
 	}
@@ -689,6 +727,16 @@ func (r *LightRAG) ExportFullGraph(ctx context.Context) (*GraphData, error) {
 	triples, err := r.graph.AllTriples(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get all triples: %w", err)
+	}
+
+	// 如果指定了文档过滤，先找到该文档包含的所有实体
+	allowedEntities := make(map[string]bool)
+	if docID != "" {
+		for _, t := range triples {
+			if t.Predicate == "APPEARS_IN" && t.Object == docID {
+				allowedEntities[t.Subject] = true
+			}
+		}
 	}
 
 	result := &GraphData{
@@ -702,6 +750,10 @@ func (r *LightRAG) ExportFullGraph(ctx context.Context) (*GraphData, error) {
 	for _, t := range triples {
 		// 忽略指向文档的链接
 		if t.Predicate == "APPEARS_IN" {
+			continue
+		}
+
+		if docID != "" && !allowedEntities[t.Subject] {
 			continue
 		}
 
@@ -721,6 +773,11 @@ func (r *LightRAG) ExportFullGraph(ctx context.Context) (*GraphData, error) {
 		}
 
 		// 记录普通关系
+		// 如果指定了文档过滤，只有当源和目标实体都在该文档中时才记录（或者至少源在）
+		if docID != "" && (!allowedEntities[t.Subject] || !allowedEntities[t.Object]) {
+			continue
+		}
+
 		result.Relationships = append(result.Relationships, Relationship{
 			Source:   t.Subject,
 			Target:   t.Object,
@@ -1008,4 +1065,17 @@ func (r *LightRAG) FinalizeStorages(ctx context.Context) error {
 		return r.db.Close(ctx)
 	}
 	return nil
+}
+
+func matchesFilters(docData map[string]any, filters map[string]any) bool {
+	if filters == nil || len(filters) == 0 {
+		return true
+	}
+	for k, v := range filters {
+		actual, ok := docData[k]
+		if !ok || actual != v {
+			return false
+		}
+	}
+	return true
 }

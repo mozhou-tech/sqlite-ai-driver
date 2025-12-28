@@ -532,10 +532,11 @@ func handleDeleteDocument(c *gin.Context) {
 
 func handleGetFullGraph(c *gin.Context) {
 	ctx := c.Request.Context()
+	docID := c.Query("doc_id")
 
-	graph, err := lightRAGInstance.ExportFullGraph(ctx)
+	graph, err := lightRAGInstance.ExportGraph(ctx, docID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to export full graph: %v", err)})
+		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to export graph: %v", err)})
 		return
 	}
 

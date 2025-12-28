@@ -26,11 +26,12 @@ type QueryParam struct {
 
 // SearchResult 搜索结果
 type SearchResult struct {
-	ID       string                 `json:"id"`
-	Content  string                 `json:"content"`
-	Score    float64                `json:"score"`
-	Source   string                 `json:"source"`
-	Metadata map[string]interface{} `json:"metadata"`
+	ID              string                 `json:"id"`
+	Content         string                 `json:"content"`
+	Score           float64                `json:"score"`
+	Source          string                 `json:"source"`
+	Metadata        map[string]interface{} `json:"metadata"`
+	RecalledTriples []Relationship         `json:"recalled_triples,omitempty"` // 召回的知识图谱三元组
 }
 
 // Entity 实体

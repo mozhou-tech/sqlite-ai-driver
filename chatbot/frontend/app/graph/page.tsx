@@ -35,16 +35,38 @@ export default function GraphPage() {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [documents, setDocuments] = useState<any[]>([]);
+  const [selectedDocId, setSelectedDocId] = useState<string>("");
+
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
 
   useEffect(() => {
     fetchGraph();
-  }, []);
+  }, [selectedDocId]);
+
+  const fetchDocuments = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/documents`);
+      if (response.ok) {
+        const data = await response.json();
+        setDocuments(data.documents || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch documents:", error);
+    }
+  };
 
   const fetchGraph = async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}/graph/full`);
+      const url = new URL(`${API_BASE_URL}/graph/full`);
+      if (selectedDocId) {
+        url.searchParams.append("doc_id", selectedDocId);
+      }
+      const response = await fetch(url.toString());
       if (!response.ok) {
         throw new Error('Failed to fetch graph data');
       }
@@ -257,12 +279,25 @@ export default function GraphPage() {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          <select
+            value={selectedDocId}
+            onChange={(e) => setSelectedDocId(e.target.value)}
+            className="bg-background border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary max-w-[200px]"
+            disabled={loading}
+          >
+            <option value="">全部文档图谱</option>
+            {documents.map((doc) => (
+              <option key={doc.id} value={doc.id}>
+                {doc.content.substring(0, 30)}...
+              </option>
+            ))}
+          </select>
           <div className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
             {graphData?.entities.length || 0} 实体 | {graphData?.relationships.length || 0} 关系
           </div>
           <Button variant="outline" onClick={fetchGraph} disabled={loading} size="sm">
             {loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-            刷新数据
+            刷新
           </Button>
         </div>
       </header>
