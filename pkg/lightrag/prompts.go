@@ -28,10 +28,16 @@ Identify entities and relationships from the given text.
 
 	QueryEntityExtractionPromptTemplate = `
 -Goal-
-Extract only the main entities mentioned in the following query.
+Extract both high-level and low-level keywords from the user's query.
+High-level keywords: themes, topics, or abstract concepts.
+Low-level keywords: specific entities, people, organizations, or precise technical terms.
 
 -Output Format-
-JSON array of entity names: ["Entity1", "Entity2", ...]
+JSON object with two arrays:
+{{
+  "low_level": ["Entity1", "Entity2", ...],
+  "high_level": ["Theme1", "Theme2", ...]
+}}
 
 -Query-
 {query}
@@ -65,11 +71,6 @@ func init() {
 	ragAnswerTemplate = prompt.FromMessages(schema.FString,
 		schema.UserMessage(RAGAnswerPromptTemplate),
 	)
-}
-
-type ExtractionResult struct {
-	Entities      []Entity       `json:"entities"`
-	Relationships []Relationship `json:"relationships"`
 }
 
 func GetExtractionPrompt(ctx context.Context, text string) (string, error) {

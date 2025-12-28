@@ -16,7 +16,49 @@ type SimpleLLM struct {
 }
 
 func (l *SimpleLLM) Complete(ctx context.Context, prompt string) (string, error) {
-	// 处理查询实体提取
+	// 处理查询关键字提取 (LightRAG 论文定义)
+	if strings.Contains(prompt, "high-level and low-level keywords") {
+		lowLevel := `[]`
+		highLevel := `[]`
+
+		if strings.Contains(strings.ToLower(prompt), "sqliteai") {
+			lowLevel = `["SQLiteAI"]`
+		}
+		if strings.Contains(strings.ToLower(prompt), "golang") {
+			lowLevel = `["Golang"]`
+		}
+		if strings.Contains(strings.ToLower(prompt), "database") {
+			highLevel = `["Database"]`
+		}
+		if strings.Contains(strings.ToLower(prompt), "javascript") {
+			lowLevel = `["JavaScript"]`
+		}
+		if strings.Contains(strings.ToLower(prompt), "apple") {
+			lowLevel = `["Apple"]`
+		}
+		if strings.Contains(strings.ToLower(prompt), "fruit") {
+			highLevel = `["Fruit"]`
+		}
+		if strings.Contains(strings.ToLower(prompt), "ecosystem") {
+			highLevel = `["Ecosystem"]`
+		}
+		if strings.Contains(strings.ToLower(prompt), "capital") {
+			highLevel = `["Capital"]`
+		}
+		if strings.Contains(strings.ToLower(prompt), "mockentity") {
+			lowLevel = `["MockEntity"]`
+		}
+		if strings.Contains(strings.ToLower(prompt), "fox") {
+			lowLevel = `["Fox"]`
+		}
+
+		return fmt.Sprintf(`{
+			"low_level": %s,
+			"high_level": %s
+		}`, lowLevel, highLevel), nil
+	}
+
+	// 处理旧的查询实体提取（保持兼容性，虽然可能不再使用）
 	if strings.Contains(prompt, "Extract only the main entities") {
 		if strings.Contains(prompt, "sqliteai") || strings.Contains(prompt, "SQLiteAI") {
 			return `["SQLiteAI"]`, nil

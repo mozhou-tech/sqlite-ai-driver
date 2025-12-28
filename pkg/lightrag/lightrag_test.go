@@ -622,12 +622,12 @@ func TestLightRAG_Extract_JSON_Errors(t *testing.T) {
 	}
 	defer rag.FinalizeStorages(ctx)
 
-	// Test extractQueryEntities error path in Retrieve
-	// ModeLocal calls extractQueryEntities
+	// Test extractQueryKeywords error path in Retrieve
+	// ModeLocal calls extractQueryKeywords
 	_, err := rag.Retrieve(ctx, "query", QueryParam{Mode: ModeLocal})
-	// It should fallback to fulltext if extractQueryEntities fails
+	// It should fallback to hybrid if extractQueryKeywords fails (according to new implementation)
 	if err != nil {
-		t.Errorf("ModeLocal should fallback to fulltext on entity extraction error, but got err: %v", err)
+		t.Errorf("ModeLocal should fallback to hybrid on keyword extraction error, but got err: %v", err)
 	}
 
 	// Test extractAndStore error path
@@ -637,13 +637,13 @@ func TestLightRAG_Extract_JSON_Errors(t *testing.T) {
 		t.Errorf("expected error for invalid JSON in extractAndStore, got: %v", err)
 	}
 
-	// Test invalid JSON array in extractQueryEntities
+	// Test invalid JSON in extractQueryKeywords
 	mockLLM.ResponseFunc = func(prompt string) (string, error) {
-		return "[ 'not', 'valid', 'json' ]", nil // single quotes are invalid in JSON
+		return "{ 'not': 'valid', 'json' }", nil // single quotes are invalid in JSON
 	}
-	_, err = rag.extractQueryEntities(ctx, "query")
-	if err == nil || !strings.Contains(err.Error(), "failed to parse query entities") {
-		t.Errorf("expected error for invalid JSON array, got: %v", err)
+	_, err = rag.extractQueryKeywords(ctx, "query")
+	if err == nil || !strings.Contains(err.Error(), "failed to parse query keywords") {
+		t.Errorf("expected error for invalid JSON, got: %v", err)
 	}
 }
 

@@ -8,13 +8,13 @@ import (
 type QueryMode string
 
 const (
-	ModeHybrid   QueryMode = "hybrid"   // 混合搜索（向量 + 全文）
+	ModeHybrid   QueryMode = "hybrid"   // 混合搜索 (Local + Global)
 	ModeVector   QueryMode = "vector"   // 向量搜索
 	ModeFulltext QueryMode = "fulltext" // 全文搜索
 	ModeGraph    QueryMode = "graph"    // 图搜索
-	ModeLocal    QueryMode = "local"    // 局部搜索（基于实体）
-	ModeGlobal   QueryMode = "global"   // 全局搜索（基于关系/社区）
-	ModeNaive    QueryMode = "naive"    // 朴素 RAG（仅向量搜索，不使用图谱）
+	ModeLocal    QueryMode = "local"    // 局部搜索 (Low-level keywords)
+	ModeGlobal   QueryMode = "global"   // 全局搜索 (High-level keywords)
+	ModeNaive    QueryMode = "naive"    // 朴素 RAG (仅向量搜索)
 )
 
 // QueryParam 查询参数
@@ -54,6 +54,16 @@ type Relationship struct {
 type GraphData struct {
 	Entities      []Entity       `json:"entities"`
 	Relationships []Relationship `json:"relationships"`
+}
+
+type ExtractionResult struct {
+	Entities      []Entity       `json:"entities"`
+	Relationships []Relationship `json:"relationships"`
+}
+
+type QueryKeywords struct {
+	LowLevel  []string `json:"low_level"`
+	HighLevel []string `json:"high_level"`
 }
 
 // Embedder 向量嵌入生成器接口（复用或参考 cognee.Embedder）

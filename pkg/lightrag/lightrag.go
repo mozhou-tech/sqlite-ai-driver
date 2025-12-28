@@ -212,9 +212,9 @@ func (r *LightRAG) DeleteDocument(ctx context.Context, id string) error {
 	return r.docs.Delete(ctx, id)
 }
 
-func (r *LightRAG) extractQueryEntities(ctx context.Context, query string) ([]string, error) {
+func (r *LightRAG) extractQueryKeywords(ctx context.Context, query string) (*QueryKeywords, error) {
 	if r.llm == nil {
-		return nil, nil
+		return &QueryKeywords{}, nil
 	}
 
 	promptStr, err := GetQueryEntityPrompt(ctx, query)
@@ -226,23 +226,23 @@ func (r *LightRAG) extractQueryEntities(ctx context.Context, query string) ([]st
 		return nil, err
 	}
 
-	logrus.WithField("raw_response", response).Debug("LLM response for query entities")
+	logrus.WithField("raw_response", response).Debug("LLM response for query keywords")
 
 	jsonStr := response
-	idxStart := strings.Index(jsonStr, "[")
-	idxEnd := strings.LastIndex(jsonStr, "]")
+	idxStart := strings.Index(jsonStr, "{")
+	idxEnd := strings.LastIndex(jsonStr, "}")
 	if idxStart == -1 || idxEnd == -1 || idxEnd < idxStart {
-		return nil, fmt.Errorf("no JSON array found in response: %s", response)
+		return nil, fmt.Errorf("no JSON object found in response: %s", response)
 	}
 	jsonStr = jsonStr[idxStart : idxEnd+1]
 
-	var entities []string
-	if err := json.Unmarshal([]byte(jsonStr), &entities); err != nil {
-		logrus.WithField("jsonStr", jsonStr).Error("Failed to parse query entities")
-		return nil, fmt.Errorf("failed to parse query entities: %w", err)
+	var keywords QueryKeywords
+	if err := json.Unmarshal([]byte(jsonStr), &keywords); err != nil {
+		logrus.WithField("jsonStr", jsonStr).Error("Failed to parse query keywords")
+		return nil, fmt.Errorf("failed to parse query keywords: %w", err)
 	}
 
-	return entities, nil
+	return &keywords, nil
 }
 
 func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID string) error {
@@ -466,113 +466,18 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		if r.graph == nil {
 			return nil, fmt.Errorf("graph search not available")
 		}
-		entities, err := r.extractQueryEntities(ctx, query)
+		keywords, err := r.extractQueryKeywords(ctx, query)
 		if err != nil {
-			logrus.WithError(err).Warn("Failed to extract query entities, falling back to fulltext")
-			return r.Retrieve(ctx, query, QueryParam{Mode: ModeFulltext, Limit: param.Limit})
+			logrus.WithError(err).Warn("Failed to extract query keywords, falling back to hybrid")
+			return r.Retrieve(ctx, query, QueryParam{Mode: ModeHybrid, Limit: param.Limit})
 		}
 
 		logrus.WithFields(logrus.Fields{
-			"query":    query,
-			"entities": entities,
-		}).Info("Extracted entities for local search")
+			"query":     query,
+			"low_level": keywords.LowLevel,
+		}).Info("Performing local search")
 
-		docIDMap := make(map[string]bool)
-		var mu sync.Mutex
-		g, gCtx := errgroup.WithContext(ctx)
-
-		for _, entity := range entities {
-			e := entity
-			g.Go(func() error {
-				neighbors, _ := r.graph.GetNeighbors(gCtx, e, "APPEARS_IN")
-				if len(neighbors) > 0 {
-					mu.Lock()
-					for _, id := range neighbors {
-						docIDMap[id] = true
-						logrus.Infof("Local Recalled: Entity %s is in Document %s", e, id)
-					}
-					mu.Unlock()
-				}
-				// 也考虑一度邻居关联的文档
-				related, _ := r.graph.GetNeighbors(gCtx, e, "")
-				for _, relNode := range related {
-					if relNode == e {
-						continue
-					}
-					// 查找关系
-					res, _ := r.graph.Query().V(e).Both().All(gCtx)
-					mu.Lock()
-					for _, qr := range res {
-						if qr.Predicate != "APPEARS_IN" && (qr.Subject == relNode || qr.Object == relNode) {
-							logrus.Infof("Local Recalled: %s -[%s]-> %s", qr.Subject, qr.Predicate, qr.Object)
-							recalledTriples = append(recalledTriples, Relationship{
-								Source:   qr.Subject,
-								Target:   qr.Object,
-								Relation: qr.Predicate,
-							})
-						}
-					}
-					mu.Unlock()
-
-					docNeighbors, _ := r.graph.GetNeighbors(gCtx, relNode, "APPEARS_IN")
-					if len(docNeighbors) > 0 {
-						mu.Lock()
-						for _, id := range docNeighbors {
-							docIDMap[id] = true
-							logrus.Infof("Local Recalled: Entity %s is related to %s which is in Document %s", e, relNode, id)
-						}
-						mu.Unlock()
-					}
-				}
-				return nil
-			})
-		}
-		_ = g.Wait()
-
-		logrus.WithField("total_unique_docs", len(docIDMap)).Info("Graph traversal completed")
-
-		// 并行获取文档内容
-		type scoredDoc struct {
-			doc   Document
-			score float64
-		}
-		scoredDocs := make(chan scoredDoc, len(docIDMap))
-		g, gCtx = errgroup.WithContext(ctx)
-
-		limit := param.Limit
-		count := 0
-		for id := range docIDMap {
-			if count >= limit*2 { // 限制获取数量，避免过多
-				break
-			}
-			docID := id
-			g.Go(func() error {
-				doc, err := r.docs.FindByID(gCtx, docID)
-				if err == nil && doc != nil {
-					// 应用过滤器
-					if matchesFilters(doc.Data(), param.Filters) {
-						scoredDocs <- scoredDoc{doc: doc, score: 1.0}
-					}
-				}
-				return nil
-			})
-			count++
-		}
-
-		go func() {
-			g.Wait()
-			close(scoredDocs)
-		}()
-
-		for sd := range scoredDocs {
-			rawResults = append(rawResults, FulltextSearchResult{
-				Document: sd.doc,
-				Score:    sd.score,
-			})
-			if len(rawResults) >= param.Limit {
-				break
-			}
-		}
+		return r.retrieveByKeywords(ctx, keywords.LowLevel, param)
 
 	case ModeGraph:
 		if r.graph == nil {
@@ -580,17 +485,45 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		}
 
 		// Graph 模式：纯知识图谱查询，不使用向量或全文搜索
-		// 1. 获取图谱数据
-		// 确保 context 中带有 ModeGraph，以便 SearchGraphWithDepth 知道要跳过向量扩展
-		gCtx := context.WithValue(ctx, "rag_mode", ModeGraph)
-		graphData, err := r.SearchGraphWithDepth(gCtx, query, 2) // 使用深度 2 召回更多关联
+		// 1. 获取关键词
+		keywords, err := r.extractQueryKeywords(ctx, query)
 		if err != nil {
-			return nil, fmt.Errorf("graph search failed: %w", err)
+			return nil, fmt.Errorf("failed to extract keywords: %w", err)
+		}
+
+		// 2. 获取图谱数据
+		// 结合 low_level 和 high_level 进行图谱搜索
+		allKeywords := append(keywords.LowLevel, keywords.HighLevel...)
+		graphData := &GraphData{
+			Entities:      make([]Entity, 0),
+			Relationships: make([]Relationship, 0),
+		}
+
+		entityMap := make(map[string]bool)
+		relMap := make(map[string]bool)
+
+		for _, k := range allKeywords {
+			subgraph, _ := r.GetSubgraph(ctx, k, 2)
+			if subgraph != nil {
+				for _, e := range subgraph.Entities {
+					if !entityMap[e.Name] {
+						graphData.Entities = append(graphData.Entities, e)
+						entityMap[e.Name] = true
+					}
+				}
+				for _, rel := range subgraph.Relationships {
+					relKey := fmt.Sprintf("%s-%s-%s", rel.Source, rel.Relation, rel.Target)
+					if !relMap[relKey] {
+						graphData.Relationships = append(graphData.Relationships, rel)
+						relMap[relKey] = true
+					}
+				}
+			}
 		}
 
 		recalledTriples = graphData.Relationships
 
-		// 2. 根据召回的实体找到关联的文档
+		// 3. 根据召回的实体找到关联的文档
 		docIDMap := make(map[string]bool)
 		for _, entity := range graphData.Entities {
 			neighbors, _ := r.graph.GetNeighbors(ctx, entity.Name, "APPEARS_IN")
@@ -599,7 +532,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			}
 		}
 
-		// 3. 获取文档内容
+		// 4. 获取文档内容
 		g, gCtx := errgroup.WithContext(ctx)
 		type scoredDoc struct {
 			doc   Document
@@ -640,139 +573,41 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			}
 		}
 	case ModeGlobal:
-		// 全局搜索：结合图谱搜索和混合搜索
-		graphData, _ := r.SearchGraph(ctx, query)
-		if graphData != nil {
-			recalledTriples = graphData.Relationships
+		if r.graph == nil {
+			return nil, fmt.Errorf("graph search not available")
 		}
-		// 获取混合搜索结果
-		hybridResults, err := r.Retrieve(ctx, query, QueryParam{Mode: ModeHybrid, Limit: param.Limit})
-		if err == nil {
-			// 将图谱三元组注入到每个结果中，以便上层获取
-			for i := range hybridResults {
-				hybridResults[i].RecalledTriples = recalledTriples
-			}
-			return hybridResults, nil
+		keywords, err := r.extractQueryKeywords(ctx, query)
+		if err != nil {
+			logrus.WithError(err).Warn("Failed to extract query keywords, falling back to hybrid")
+			return r.Retrieve(ctx, query, QueryParam{Mode: ModeHybrid, Limit: param.Limit})
 		}
-		return nil, err
-	case ModeHybrid:
-		// 实现真正的混合搜索（向量 + 全文 + 知识图谱）
-		var ftResults []FulltextSearchResult
-		var vecResults []VectorSearchResult
-		var mu sync.Mutex
-
-		g, gCtx := errgroup.WithContext(ctx)
-
-		// 1. 全文搜索
-		g.Go(func() error {
-			var err error
-			ftResults, err = r.fulltext.FindWithScores(gCtx, query, FulltextSearchOptions{
-				Limit:    param.Limit * 2,
-				Selector: param.Filters,
-			})
-			if err != nil {
-				logrus.WithError(err).Error("Fulltext search failed in hybrid mode")
-				ftResults = []FulltextSearchResult{}
-			}
-			return nil
-		})
-
-		// 2. 向量搜索
-		if r.vector != nil && r.embedder != nil {
-			g.Go(func() error {
-				emb, err := r.embedder.Embed(gCtx, query)
-				if err != nil {
-					logrus.WithError(err).Error("Embedding failed in hybrid mode")
-					return nil
-				}
-				vecResults, err = r.vector.Search(gCtx, emb, VectorSearchOptions{
-					Limit:    param.Limit * 2,
-					Selector: param.Filters,
-				})
-				if err != nil {
-					logrus.WithError(err).Error("Vector search failed in hybrid mode")
-					vecResults = []VectorSearchResult{}
-				}
-				return nil
-			})
-		}
-
-		// 3. 知识图谱搜索
-		if r.graph != nil {
-			g.Go(func() error {
-				graphData, err := r.SearchGraph(gCtx, query)
-				if err == nil && graphData != nil {
-					mu.Lock()
-					recalledTriples = append(recalledTriples, graphData.Relationships...)
-					mu.Unlock()
-				}
-				return nil
-			})
-		}
-
-		_ = g.Wait()
 
 		logrus.WithFields(logrus.Fields{
-			"ft_count":    len(ftResults),
-			"vec_count":   len(vecResults),
-			"graph_count": len(recalledTriples),
-		}).Debug("Hybrid search recall completed")
+			"query":      query,
+			"high_level": keywords.HighLevel,
+		}).Info("Performing global search")
 
-		// 使用简单的 RRF 融合或加权融合
-		docScores := make(map[string]float64)
-		docMap := make(map[string]Document)
-
-		for i, res := range ftResults {
-			score := 1.0 / float64(i+60) // RRF
-			docScores[res.Document.ID()] += score
-			docMap[res.Document.ID()] = res.Document
+		return r.retrieveByKeywords(ctx, keywords.HighLevel, param)
+	case ModeHybrid:
+		// 论文中的 Hybrid：结合 Local 和 Global
+		keywords, err := r.extractQueryKeywords(ctx, query)
+		if err != nil {
+			// 回退到朴素混合搜索（向量 + 全文）
+			return r.retrieveNaiveHybrid(ctx, query, param)
 		}
 
-		for i, res := range vecResults {
-			score := 1.0 / float64(i+60) // RRF
-			docScores[res.Document.ID()] += score
-			docMap[res.Document.ID()] = res.Document
-		}
+		logrus.WithFields(logrus.Fields{
+			"query":      query,
+			"low_level":  keywords.LowLevel,
+			"high_level": keywords.HighLevel,
+		}).Info("Performing hybrid search (local + global)")
 
-		// 如果两种搜索都没有结果，回退到纯全文搜索
-		if len(docScores) == 0 {
-			// 回退到纯全文搜索，使用更大的 limit
-			fallbackResults, err := r.fulltext.FindWithScores(ctx, query, FulltextSearchOptions{
-				Limit:    param.Limit,
-				Selector: param.Filters,
-			})
-			if err == nil && len(fallbackResults) > 0 {
-				for _, res := range fallbackResults {
-					rawResults = append(rawResults, res)
-				}
-			}
-		} else {
-			// 排序并取 Top N
-			for id, score := range docScores {
-				rawResults = append(rawResults, FulltextSearchResult{
-					Document: docMap[id],
-					Score:    score,
-				})
-			}
-			// 按分数降序排序
-			sort.Slice(rawResults, func(i, j int) bool {
-				return rawResults[i].Score > rawResults[j].Score
-			})
+		// 分别进行 local 和 global 检索并合并结果
+		localResults, _ := r.retrieveByKeywords(ctx, keywords.LowLevel, param)
+		globalResults, _ := r.retrieveByKeywords(ctx, keywords.HighLevel, param)
 
-			if len(rawResults) > param.Limit {
-				rawResults = rawResults[:param.Limit]
-			}
-
-			// 归一化处理：使最高分为 1.0
-			if len(rawResults) > 0 {
-				maxScore := rawResults[0].Score
-				if maxScore > 0 {
-					for i := range rawResults {
-						rawResults[i].Score = rawResults[i].Score / maxScore
-					}
-				}
-			}
-		}
+		// 合并结果
+		return r.mergeSearchResults(localResults, globalResults, param.Limit), nil
 	default:
 		rawResults, err = r.fulltext.FindWithScores(ctx, query, FulltextSearchOptions{Limit: param.Limit})
 		if err != nil {
@@ -910,9 +745,9 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 		return nil, fmt.Errorf("graph database not available")
 	}
 
-	entities, err := r.extractQueryEntities(ctx, query)
+	keywords, err := r.extractQueryKeywords(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("failed to extract entities from query: %w", err)
+		return nil, fmt.Errorf("failed to extract keywords from query: %w", err)
 	}
 
 	result := &GraphData{
@@ -922,6 +757,9 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 
 	entityMap := make(map[string]bool)
 	relMap := make(map[string]bool)
+
+	// 合并 low_level 和 high_level
+	entities := append(keywords.LowLevel, keywords.HighLevel...)
 
 	// 1. 扩展实体：如果提取的实体在图中找不到直接关系，尝试通过语义搜索寻找相关实体
 	allEntities := make(map[string]bool)
@@ -1162,6 +1000,207 @@ func (r *LightRAG) FinalizeStorages(ctx context.Context) error {
 		return r.db.Close(ctx)
 	}
 	return nil
+}
+
+func (r *LightRAG) retrieveByKeywords(ctx context.Context, keywords []string, param QueryParam) ([]SearchResult, error) {
+	if len(keywords) == 0 {
+		return []SearchResult{}, nil
+	}
+
+	docIDMap := make(map[string]float64) // docID -> score
+	var recalledTriples []Relationship
+	var mu sync.Mutex
+	g, gCtx := errgroup.WithContext(ctx)
+
+	for _, kw := range keywords {
+		keyword := kw
+		g.Go(func() error {
+			// 1. 图谱检索：查找实体及其邻居
+			subgraph, _ := r.GetSubgraph(gCtx, keyword, 1)
+			if subgraph != nil {
+				mu.Lock()
+				recalledTriples = append(recalledTriples, subgraph.Relationships...)
+				mu.Unlock()
+
+				// 查找关联文档
+				for _, entity := range subgraph.Entities {
+					neighbors, _ := r.graph.GetNeighbors(gCtx, entity.Name, "APPEARS_IN")
+					mu.Lock()
+					for _, id := range neighbors {
+						docIDMap[id] += 1.0 // 简单的计数评分
+					}
+					mu.Unlock()
+				}
+			}
+
+			// 2. 向量检索：查找相关的文档块
+			if r.vector != nil && r.embedder != nil {
+				emb, err := r.embedder.Embed(gCtx, keyword)
+				if err == nil {
+					vecResults, err := r.vector.Search(gCtx, emb, VectorSearchOptions{
+						Limit:    param.Limit,
+						Selector: param.Filters,
+					})
+					if err == nil {
+						mu.Lock()
+						for _, vr := range vecResults {
+							docIDMap[vr.Document.ID()] += vr.Score
+						}
+						mu.Unlock()
+					}
+				}
+			}
+			return nil
+		})
+	}
+	_ = g.Wait()
+
+	// 排序并获取文档
+	type scoredDoc struct {
+		id    string
+		score float64
+	}
+	var sortedDocs []scoredDoc
+	for id, score := range docIDMap {
+		sortedDocs = append(sortedDocs, scoredDoc{id: id, score: score})
+	}
+	sort.Slice(sortedDocs, func(i, j int) bool {
+		return sortedDocs[i].score > sortedDocs[j].score
+	})
+
+	limit := param.Limit
+	if len(sortedDocs) < limit {
+		limit = len(sortedDocs)
+	}
+	sortedDocs = sortedDocs[:limit]
+
+	results := make([]SearchResult, 0, len(sortedDocs))
+	for _, sd := range sortedDocs {
+		doc, err := r.docs.FindByID(ctx, sd.id)
+		if err == nil && doc != nil {
+			content, _ := doc.Data()["content"].(string)
+			results = append(results, SearchResult{
+				ID:              sd.id,
+				Content:         content,
+				Score:           sd.score,
+				Metadata:        doc.Data(),
+				RecalledTriples: recalledTriples,
+			})
+		}
+	}
+
+	return results, nil
+}
+
+func (r *LightRAG) retrieveNaiveHybrid(ctx context.Context, query string, param QueryParam) ([]SearchResult, error) {
+	// 实现简单的混合搜索（向量 + 全文）
+	var ftResults []FulltextSearchResult
+	var vecResults []VectorSearchResult
+
+	g, gCtx := errgroup.WithContext(ctx)
+
+	// 1. 全文搜索
+	g.Go(func() error {
+		var err error
+		ftResults, err = r.fulltext.FindWithScores(gCtx, query, FulltextSearchOptions{
+			Limit:    param.Limit,
+			Selector: param.Filters,
+		})
+		return err
+	})
+
+	// 2. 向量搜索
+	if r.vector != nil && r.embedder != nil {
+		g.Go(func() error {
+			emb, err := r.embedder.Embed(gCtx, query)
+			if err != nil {
+				return nil
+			}
+			var err2 error
+			vecResults, err2 = r.vector.Search(gCtx, emb, VectorSearchOptions{
+				Limit:    param.Limit,
+				Selector: param.Filters,
+			})
+			return err2
+		})
+	}
+
+	_ = g.Wait()
+
+	// RRF 融合
+	docScores := make(map[string]float64)
+	docMap := make(map[string]Document)
+
+	for i, res := range ftResults {
+		score := 1.0 / float64(i+60)
+		docScores[res.Document.ID()] += score
+		docMap[res.Document.ID()] = res.Document
+	}
+
+	for i, res := range vecResults {
+		score := 1.0 / float64(i+60)
+		docScores[res.Document.ID()] += score
+		docMap[res.Document.ID()] = res.Document
+	}
+
+	var results []SearchResult
+	for id, score := range docScores {
+		doc := docMap[id]
+		content, _ := doc.Data()["content"].(string)
+		results = append(results, SearchResult{
+			ID:       id,
+			Content:  content,
+			Score:    score,
+			Metadata: doc.Data(),
+		})
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if len(results) > param.Limit {
+		results = results[:param.Limit]
+	}
+
+	return results, nil
+}
+
+func (r *LightRAG) mergeSearchResults(r1, r2 []SearchResult, limit int) []SearchResult {
+	seen := make(map[string]bool)
+	var merged []SearchResult
+
+	// 简单的合并去重
+	for _, r := range r1 {
+		if !seen[r.ID] {
+			merged = append(merged, r)
+			seen[r.ID] = true
+		}
+	}
+	for _, r := range r2 {
+		if !seen[r.ID] {
+			merged = append(merged, r)
+			seen[r.ID] = true
+		} else {
+			// 如果已存在，合并三元组
+			for i := range merged {
+				if merged[i].ID == r.ID {
+					merged[i].RecalledTriples = append(merged[i].RecalledTriples, r.RecalledTriples...)
+					// 去重三元组逻辑可以更复杂，这里简单处理
+					break
+				}
+			}
+		}
+	}
+
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].Score > merged[j].Score
+	})
+
+	if len(merged) > limit {
+		merged = merged[:limit]
+	}
+	return merged
 }
 
 func matchesFilters(docData map[string]any, filters map[string]any) bool {
