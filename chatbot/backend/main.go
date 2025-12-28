@@ -179,12 +179,19 @@ func initLightRAG() error {
 
 	formatDocs := func(ctx context.Context, docs []*schema.Document) (map[string]any, error) {
 		if len(docs) == 0 {
+			logrus.Warn("No documents retrieved for context")
 			return map[string]any{"format_docs": "未找到相关文档。"}, nil
 		}
 		var contextText string
 		for i, doc := range docs {
 			contextText += fmt.Sprintf("[%d] %s\n", i+1, doc.Content)
 		}
+
+		logrus.WithFields(logrus.Fields{
+			"doc_count":      len(docs),
+			"context_length": len(contextText),
+		}).Info("Formatted documents for LLM context")
+
 		return map[string]any{"format_docs": contextText}, nil
 	}
 
@@ -239,7 +246,7 @@ func (r *LightRAGRetriever) Retrieve(ctx context.Context, query string, opts ...
 	}).Info("Retrieving documents from LightRAG")
 
 	param := lightrag.QueryParam{
-		Mode:  lightrag.ModeHybrid,
+		Mode:  lightrag.ModeGlobal,
 		Limit: *options.TopK,
 	}
 
@@ -252,7 +259,18 @@ func (r *LightRAGRetriever) Retrieve(ctx context.Context, query string, opts ...
 	logrus.WithField("count", len(results)).Info("Retrieved documents from LightRAG")
 
 	docs := make([]*schema.Document, 0, len(results))
-	for _, res := range results {
+	for i, res := range results {
+		logrus.WithFields(logrus.Fields{
+			"index": i + 1,
+			"id":    res.ID,
+			"content_preview": func() string {
+				if len(res.Content) > 200 {
+					return res.Content[:200] + "..."
+				}
+				return res.Content
+			}(),
+		}).Debug("LightRAG Recalled Document Content")
+
 		docs = append(docs, &schema.Document{
 			ID:       res.ID,
 			Content:  res.Content,
@@ -345,7 +363,7 @@ func handleChat(c *gin.Context) {
 
 	mode := req.Mode
 	if mode == "" {
-		mode = lightrag.ModeHybrid
+		mode = lightrag.ModeGlobal
 	}
 
 	// 使用 Eino Graph 进行查询

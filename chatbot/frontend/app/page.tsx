@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Send, Loader2, Upload, FileText, Trash2, X } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Message {
   role: "user" | "assistant";
@@ -20,6 +22,7 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [documents, setDocuments] = useState<any[]>([]);
   const [showDocs, setShowDocs] = useState(false);
+  const [queryMode, setQueryMode] = useState<"global" | "hybrid" | "local" | "naive">("global");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -118,6 +121,7 @@ export default function Home() {
         body: JSON.stringify({
           message: input,
           history: messages.map((m) => m.content),
+          mode: queryMode,
         }),
       });
 
@@ -208,6 +212,17 @@ export default function Home() {
           <p className="text-sm text-muted-foreground">基于 eino-lightrag 的多轮对话示例</p>
         </div>
         <div className="flex gap-2">
+          <select
+            value={queryMode}
+            onChange={(e) => setQueryMode(e.target.value as any)}
+            className="bg-background border rounded-md px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            disabled={isLoading}
+          >
+            <option value="global">Global Mode</option>
+            <option value="hybrid">Hybrid Mode</option>
+            <option value="local">Local Mode</option>
+            <option value="naive">Naive Mode</option>
+          </select>
           <Button variant="outline" onClick={() => setShowDocs(!showDocs)}>
             <FileText className="h-4 w-4 mr-2" />
             知识库 ({documents.length})
@@ -261,7 +276,61 @@ export default function Home() {
                       : "bg-muted"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{message.content}</p>
+                  {message.role === "user" ? (
+                    <p className="whitespace-pre-wrap">{message.content}</p>
+                  ) : (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        p: ({ children }: any) => <p className="mb-2 last:mb-0">{children}</p>,
+                        h1: ({ children }: any) => <h1 className="text-xl font-bold mb-2">{children}</h1>,
+                        h2: ({ children }: any) => <h2 className="text-lg font-bold mb-2">{children}</h2>,
+                        h3: ({ children }: any) => <h3 className="text-md font-bold mb-1">{children}</h3>,
+                        ul: ({ children }: any) => <ul className="list-disc ml-4 mb-2">{children}</ul>,
+                        ol: ({ children }: any) => <ol className="list-decimal ml-4 mb-2">{children}</ol>,
+                        li: ({ children }: any) => <li className="mb-1">{children}</li>,
+                        code: ({ children }: any) => (
+                          <code className="bg-background/50 rounded px-1 py-0.5 font-mono text-sm">
+                            {children}
+                          </code>
+                        ),
+                        pre: ({ children }: any) => (
+                          <pre className="bg-background/50 rounded p-2 mb-2 overflow-x-auto">
+                            {children}
+                          </pre>
+                        ),
+                        blockquote: ({ children }: any) => (
+                          <blockquote className="border-l-4 border-primary/30 pl-4 italic mb-2">
+                            {children}
+                          </blockquote>
+                        ),
+                        a: ({ children, href }: any) => (
+                          <a href={href} className="text-primary underline" target="_blank" rel="noopener noreferrer">
+                            {children}
+                          </a>
+                        ),
+                        table: ({ children }: any) => (
+                          <div className="overflow-x-auto mb-2">
+                            <table className="border-collapse border border-border w-full text-sm">
+                              {children}
+                            </table>
+                          </div>
+                        ),
+                        th: ({ children }: any) => (
+                          <th className="border border-border p-2 bg-background/50 font-bold">
+                            {children}
+                          </th>
+                        ),
+                        td: ({ children }: any) => (
+                          <td className="border border-border p-2">
+                            {children}
+                          </td>
+                        ),
+                      }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  )}
                 </div>
               </div>
             ))}
