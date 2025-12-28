@@ -12,6 +12,7 @@ import (
 	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	duckdb_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	"github.com/sirupsen/logrus"
 )
 
 // duckdbDatabase 基于DuckDB的数据库实现
@@ -165,7 +166,11 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 	if content != "" {
 		tokens := duckdb_driver.TokenizeWithSego(content)
 		updateSQL := fmt.Sprintf(`UPDATE %s SET content_tokens = ? WHERE id = ?`, c.tableName)
-		_, _ = c.db.ExecContext(ctx, updateSQL, tokens, id)
+		_, err = c.db.ExecContext(ctx, updateSQL, tokens, id)
+		if err != nil {
+			// 记录错误但不中断插入流程
+			logrus.WithError(err).Warnf("Failed to update content_tokens for document %s", id)
+		}
 	}
 
 	// 更新向量列（如果有向量搜索配置）
@@ -184,7 +189,10 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 				vectorStr += "]"
 				vectorColumn := "vector_" + vs.config.Identifier
 				updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
-				_, _ = c.db.ExecContext(ctx, updateSQL, vectorStr, id)
+				_, err = c.db.ExecContext(ctx, updateSQL, vectorStr, id)
+				if err != nil {
+					logrus.WithError(err).Errorf("Failed to update vector column %s for document %s", vectorColumn, id)
+				}
 			}
 		}
 	}
@@ -204,8 +212,8 @@ func (c *duckdbCollection) FindByID(ctx context.Context, id string) (Document, e
 	`, c.tableName)
 
 	var docID, content string
-	var metadataJSON sql.NullString
-	err := c.db.QueryRowContext(ctx, selectSQL, id).Scan(&docID, &content, &metadataJSON)
+	var metadataVal any
+	err := c.db.QueryRowContext(ctx, selectSQL, id).Scan(&docID, &content, &metadataVal)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -218,11 +226,25 @@ func (c *duckdbCollection) FindByID(ctx context.Context, id string) (Document, e
 		"content": content,
 	}
 
-	if metadataJSON.Valid {
-		var metadata map[string]any
-		if err := json.Unmarshal([]byte(metadataJSON.String), &metadata); err == nil {
-			for k, v := range metadata {
-				doc[k] = v
+	if metadataVal != nil {
+		switch v := metadataVal.(type) {
+		case string:
+			var metadata map[string]any
+			if err := json.Unmarshal([]byte(v), &metadata); err == nil {
+				for k, val := range metadata {
+					doc[k] = val
+				}
+			}
+		case []byte:
+			var metadata map[string]any
+			if err := json.Unmarshal(v, &metadata); err == nil {
+				for k, val := range metadata {
+					doc[k] = val
+				}
+			}
+		case map[string]any:
+			for k, val := range v {
+				doc[k] = val
 			}
 		}
 	}
@@ -299,7 +321,10 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 					vectorStr += "]"
 					vectorColumn := "vector_" + vs.config.Identifier
 					updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
-					_, _ = tx.ExecContext(ctx, updateSQL, vectorStr, id)
+					_, err = tx.ExecContext(ctx, updateSQL, vectorStr, id)
+					if err != nil {
+						logrus.WithError(err).Errorf("Failed to update vector column %s for document %s in BulkUpsert", vectorColumn, id)
+					}
 				}
 			}
 		}
@@ -399,7 +424,7 @@ func (f *duckdbFulltextSearch) FindWithScores(ctx context.Context, query string,
 	}
 
 	// 使用sego分词搜索
-	ids, err := duckdb_driver.SearchWithSego(ctx, f.db, f.tableName, query, "content", "content_tokens", limit)
+	ids, err := duckdb_driver.SearchWithSego(ctx, f.db, f.tableName, query, "content", "content_tokens", limit*2) // 获取更多结果以便过滤
 	if err != nil {
 		return nil, fmt.Errorf("failed to search: %w", err)
 	}
@@ -409,8 +434,8 @@ func (f *duckdbFulltextSearch) FindWithScores(ctx context.Context, query string,
 		// 获取文档
 		selectSQL := fmt.Sprintf(`SELECT id, content, metadata FROM %s WHERE id = ?`, f.tableName)
 		var docID, content string
-		var metadataJSON sql.NullString
-		err := f.db.QueryRowContext(ctx, selectSQL, id).Scan(&docID, &content, &metadataJSON)
+		var metadataVal any
+		err := f.db.QueryRowContext(ctx, selectSQL, id).Scan(&docID, &content, &metadataVal)
 		if err != nil {
 			continue
 		}
@@ -420,12 +445,46 @@ func (f *duckdbFulltextSearch) FindWithScores(ctx context.Context, query string,
 			"content": content,
 		}
 
-		if metadataJSON.Valid {
-			var metadata map[string]any
-			if err := json.Unmarshal([]byte(metadataJSON.String), &metadata); err == nil {
-				for k, v := range metadata {
-					doc[k] = v
+		if metadataVal != nil {
+			switch v := metadataVal.(type) {
+			case string:
+				var metadata map[string]any
+				if err := json.Unmarshal([]byte(v), &metadata); err == nil {
+					for k, val := range metadata {
+						doc[k] = val
+					}
 				}
+			case []byte:
+				var metadata map[string]any
+				if err := json.Unmarshal(v, &metadata); err == nil {
+					for k, val := range metadata {
+						doc[k] = val
+					}
+				}
+			case map[string]any:
+				for k, val := range v {
+					doc[k] = val
+				}
+			}
+		}
+
+		// 应用 Selector 过滤器
+		if opts.Selector != nil && len(opts.Selector) > 0 {
+			matched := true
+			for key, expectedValue := range opts.Selector {
+				// 检查 metadata 中的值
+				actualValue, exists := doc[key]
+				if !exists {
+					// 如果 metadata 中没有，检查是否在顶层 doc 中
+					actualValue, exists = doc[key]
+				}
+				if !exists || actualValue != expectedValue {
+					matched = false
+					break
+				}
+			}
+			if !matched {
+				continue
 			}
 		}
 
@@ -440,6 +499,11 @@ func (f *duckdbFulltextSearch) FindWithScores(ctx context.Context, query string,
 			},
 			Score: score,
 		})
+
+		// 如果已经达到限制，停止
+		if len(results) >= limit {
+			break
+		}
 	}
 
 	return results, nil
@@ -544,10 +608,10 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 	var results []VectorSearchResult
 	for rows.Next() {
 		var id, content string
-		var metadataJSON sql.NullString
+		var metadataVal any
 		var distance float64
 
-		err := rows.Scan(&id, &content, &metadataJSON, &distance)
+		err := rows.Scan(&id, &content, &metadataVal, &distance)
 		if err != nil {
 			continue
 		}
@@ -557,11 +621,25 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 			"content": content,
 		}
 
-		if metadataJSON.Valid {
-			var metadata map[string]any
-			if err := json.Unmarshal([]byte(metadataJSON.String), &metadata); err == nil {
-				for k, v := range metadata {
-					doc[k] = v
+		if metadataVal != nil {
+			switch v := metadataVal.(type) {
+			case string:
+				var metadata map[string]any
+				if err := json.Unmarshal([]byte(v), &metadata); err == nil {
+					for k, val := range metadata {
+						doc[k] = val
+					}
+				}
+			case []byte:
+				var metadata map[string]any
+				if err := json.Unmarshal(v, &metadata); err == nil {
+					for k, val := range metadata {
+						doc[k] = val
+					}
+				}
+			case map[string]any:
+				for k, val := range v {
+					doc[k] = val
 				}
 			}
 		}

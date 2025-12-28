@@ -287,17 +287,19 @@ func SearchWithSego(ctx context.Context, db *sql.DB, tableName, query, contentCo
 			searchTerms = []string{query}
 		}
 
-		// 构建 LIKE 查询，匹配任意一个关键词
+		// 构建 LIKE 查询，同时在 content 和 content_tokens 列上搜索
 		var conditions []string
 		var args []interface{}
-		searchColumn := contentColumn
-		if count > 0 && queryTokens != "" {
-			searchColumn = tokensColumn
-		}
 
 		for _, term := range searchTerms {
-			conditions = append(conditions, fmt.Sprintf("%s LIKE ?", searchColumn))
+			// 在 content 列上搜索 (使用 ILIKE 进行不区分大小写的搜索)
+			conditions = append(conditions, fmt.Sprintf("%s ILIKE ?", contentColumn))
 			args = append(args, "%"+term+"%")
+			// 如果 tokensColumn 存在，也在 tokensColumn 上搜索
+			if count > 0 {
+				conditions = append(conditions, fmt.Sprintf("%s ILIKE ?", tokensColumn))
+				args = append(args, "%"+term+"%")
+			}
 		}
 
 		searchSQL = fmt.Sprintf(`

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	lightrag_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag-driver"
@@ -28,6 +29,7 @@ type LightRAG struct {
 	graph    lightrag_driver.GraphDatabase
 
 	initialized bool
+	wg          sync.WaitGroup
 }
 
 // Options LightRAG 配置选项
@@ -136,7 +138,9 @@ func (r *LightRAG) Insert(ctx context.Context, text string) error {
 	// 提取并存储实体与关系
 	if r.llm != nil && r.graph != nil {
 		docID := doc["id"].(string)
+		r.wg.Add(1)
 		go func() {
+			defer r.wg.Done()
 			// 在后台执行提取，避免阻塞主流程
 			err := r.extractAndStore(context.Background(), text, docID)
 			if err != nil {
@@ -253,7 +257,11 @@ func (r *LightRAG) InsertBatch(ctx context.Context, documents []map[string]any) 
 		if r.llm != nil && r.graph != nil {
 			content, _ := doc.Data()["content"].(string)
 			docID := doc.ID()
-			go r.extractAndStore(context.Background(), content, docID)
+			r.wg.Add(1)
+			go func(c string, id string) {
+				defer r.wg.Done()
+				r.extractAndStore(context.Background(), c, id)
+			}(content, docID)
 		}
 	}
 
@@ -596,6 +604,9 @@ func (r *LightRAG) GetSubgraph(ctx context.Context, nodeID string, depth int) (*
 
 // FinalizeStorages 关闭存储资源
 func (r *LightRAG) FinalizeStorages(ctx context.Context) error {
+	// 等待所有后台任务完成
+	r.wg.Wait()
+
 	if r.fulltext != nil {
 		r.fulltext.Close()
 	}

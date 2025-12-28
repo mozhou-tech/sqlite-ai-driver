@@ -17,7 +17,8 @@ import (
 var extensions = []string{
 	"sqlite", // SQLite 扩展，允许读取和写入 SQLite 数据库
 	"vss",    // 向量搜索扩展（Vector Search）
-	"fts",    // 全文搜索扩展（Full-Text Search），如果不存在可尝试 "fts"
+	"fts",    // 全文搜索扩展（Full-Text Search）
+	"json",   // JSON 扩展，支持 JSON 类型和函数
 	"excel",  // Excel 扩展，支持读取和写入 Excel 文件
 }
 
