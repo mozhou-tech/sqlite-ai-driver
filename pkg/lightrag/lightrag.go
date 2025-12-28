@@ -574,62 +574,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 
 // SearchGraph 仅从图谱检索实体和关系
 func (r *LightRAG) SearchGraph(ctx context.Context, query string) (*GraphData, error) {
-	if !r.initialized {
-		return nil, fmt.Errorf("storages not initialized")
-	}
-	if r.graph == nil {
-		return nil, fmt.Errorf("graph database not available")
-	}
-
-	entities, err := r.extractQueryEntities(ctx, query)
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract entities from query: %w", err)
-	}
-
-	result := &GraphData{
-		Entities:      make([]Entity, 0),
-		Relationships: make([]Relationship, 0),
-	}
-
-	entityMap := make(map[string]bool)
-	for _, entityName := range entities {
-		// 添加实体本身（如果存在）
-		if !entityMap[entityName] {
-			result.Entities = append(result.Entities, Entity{Name: entityName})
-			entityMap[entityName] = true
-		}
-
-		// 获取相邻关系
-		neighbors, _ := r.graph.GetNeighbors(ctx, entityName, "")
-		for _, neighbor := range neighbors {
-			if !entityMap[neighbor] {
-				// 获取具体的谓词
-				query := r.graph.Query().V(entityName)
-				res, err := query.Both().All(ctx)
-				if err == nil {
-					for _, qr := range res {
-						if qr.Predicate != "APPEARS_IN" && (qr.Object == neighbor || qr.Subject == neighbor) {
-							result.Relationships = append(result.Relationships, Relationship{
-								Source:   qr.Subject,
-								Target:   qr.Object,
-								Relation: qr.Predicate,
-							})
-							if !entityMap[qr.Object] {
-								result.Entities = append(result.Entities, Entity{Name: qr.Object})
-								entityMap[qr.Object] = true
-							}
-							if !entityMap[qr.Subject] {
-								result.Entities = append(result.Entities, Entity{Name: qr.Subject})
-								entityMap[qr.Subject] = true
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return result, nil
+	return r.SearchGraphWithDepth(ctx, query, 1)
 }
 
 // SearchGraphWithDepth 从图谱检索实体和关系，支持指定搜索深度
@@ -654,7 +599,61 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 	entityMap := make(map[string]bool)
 	relMap := make(map[string]bool)
 
-	for _, entityName := range entities {
+	// 1. 扩展实体：如果提取的实体在图中找不到直接关系，尝试通过语义搜索寻找相关实体
+	allEntities := make(map[string]bool)
+	for _, e := range entities {
+		allEntities[e] = true
+
+		// 检查该实体是否在图中有任何“非文档链接”的关系
+		hasRelation := false
+
+		// 检查出边
+		res, _ := r.graph.Query().V(e).Out("").All(ctx)
+		for _, r := range res {
+			if r.Predicate != "APPEARS_IN" {
+				hasRelation = true
+				break
+			}
+		}
+
+		// 检查入边
+		if !hasRelation {
+			res, _ := r.graph.Query().V(e).In("").All(ctx)
+			for _, r := range res {
+				if r.Predicate != "APPEARS_IN" {
+					hasRelation = true
+					break
+				}
+			}
+		}
+
+		if !hasRelation && r.vector != nil {
+			// 如果没找到直接关联，通过向量搜索寻找最相关的文档，从而发现相关实体
+			emb, err := r.embedder.Embed(ctx, e)
+			if err == nil {
+				vecResults, err := r.vector.Search(ctx, emb, VectorSearchOptions{Limit: 3})
+				if err == nil {
+					for _, res := range vecResults {
+						docID := res.Document.ID()
+						// 查找链接到该文档的所有实体 (Subject --[APPEARS_IN]--> docID)
+						linkedEntities, _ := r.graph.GetInNeighbors(ctx, docID, "APPEARS_IN")
+						for _, le := range linkedEntities {
+							if !allEntities[le] {
+								allEntities[le] = true
+								logrus.WithFields(logrus.Fields{
+									"query_entity": e,
+									"found_entity": le,
+								}).Debug("Expanded entity via vector search")
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. 对所有实体进行深度优先遍历
+	for entityName := range allEntities {
 		subgraph, err := r.GetSubgraph(ctx, entityName, depth)
 		if err != nil {
 			continue

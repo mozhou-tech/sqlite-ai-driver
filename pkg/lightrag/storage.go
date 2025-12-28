@@ -106,8 +106,10 @@ type VectorSearchResult struct {
 type GraphDatabase interface {
 	// Link 创建一条从 subject 到 object 的边，边的类型为 predicate
 	Link(ctx context.Context, subject, predicate, object string) error
-	// GetNeighbors 获取指定节点的邻居节点
+	// GetNeighbors 获取从 node 出发的邻居节点 (Out-neighbors)
 	GetNeighbors(ctx context.Context, node, predicate string) ([]string, error)
+	// GetInNeighbors 获取指向 node 的邻居节点 (In-neighbors)
+	GetInNeighbors(ctx context.Context, node, predicate string) ([]string, error)
 	// Query 返回查询构建器
 	Query() GraphQuery
 }
@@ -118,6 +120,10 @@ type GraphQuery interface {
 	V(node string) GraphQuery
 	// Both 获取双向邻居
 	Both() GraphQuery
+	// In 获取入向邻居
+	In(predicate string) GraphQuery
+	// Out 获取出向邻居
+	Out(predicate string) GraphQuery
 	// All 执行查询并返回所有结果
 	All(ctx context.Context) ([]GraphQueryResult, error)
 }
@@ -905,6 +911,10 @@ func (g *duckdbGraphDatabase) GetNeighbors(ctx context.Context, node, predicate 
 	return g.graph.GetNeighbors(ctx, node, predicate)
 }
 
+func (g *duckdbGraphDatabase) GetInNeighbors(ctx context.Context, node, predicate string) ([]string, error) {
+	return g.graph.GetInNeighbors(ctx, node, predicate)
+}
+
 func (g *duckdbGraphDatabase) Query() GraphQuery {
 	return &duckdbGraphQuery{graph: g.graph}
 }
@@ -930,13 +940,34 @@ func (q *duckdbGraphQuery) V(node string) GraphQuery {
 }
 
 func (q *duckdbGraphQuery) Both() GraphQuery {
-	// 添加both步骤
 	return &duckdbGraphQuery{
 		graph:     q.graph,
 		startNode: q.startNode,
 		steps: append(q.steps, queryStep{
 			direction: "both",
 			predicate: "",
+		}),
+	}
+}
+
+func (q *duckdbGraphQuery) In(predicate string) GraphQuery {
+	return &duckdbGraphQuery{
+		graph:     q.graph,
+		startNode: q.startNode,
+		steps: append(q.steps, queryStep{
+			direction: "in",
+			predicate: predicate,
+		}),
+	}
+}
+
+func (q *duckdbGraphQuery) Out(predicate string) GraphQuery {
+	return &duckdbGraphQuery{
+		graph:     q.graph,
+		startNode: q.startNode,
+		steps: append(q.steps, queryStep{
+			direction: "out",
+			predicate: predicate,
 		}),
 	}
 }
