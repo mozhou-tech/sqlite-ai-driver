@@ -516,7 +516,8 @@ func TestLightRAG_GraphSearchAndSubgraph(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert failed: %v", err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	// 等待后台提取任务完成，增加等待时间以避免数据库锁定问题
+	time.Sleep(2 * time.Second)
 
 	// Test SearchGraph
 	graphData, err := rag.SearchGraph(ctx, "Tell me about RxDB")
@@ -569,7 +570,8 @@ func TestLightRAG_Retrieve_Modes_Extra(t *testing.T) {
 	defer rag.FinalizeStorages(ctx)
 
 	rag.Insert(ctx, "The quick brown fox jumps over the lazy dog.")
-	time.Sleep(500 * time.Millisecond)
+	// 等待后台提取任务完成，增加等待时间以避免数据库锁定问题
+	time.Sleep(2 * time.Second)
 
 	// Test ModeGlobal (currently falls back to Hybrid)
 	_, err := rag.Retrieve(ctx, "fox", QueryParam{Mode: ModeGlobal})

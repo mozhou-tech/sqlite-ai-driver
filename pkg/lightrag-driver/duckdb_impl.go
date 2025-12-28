@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
-	duckdb_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	duckdb_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 )
 
 // duckdbDatabase 基于DuckDB的数据库实现
@@ -128,9 +128,10 @@ func (d *duckdbDatabase) Close(ctx context.Context) error {
 
 // duckdbCollection 基于DuckDB的集合实现
 type duckdbCollection struct {
-	db        *sql.DB
-	tableName string
-	schema    Schema
+	db             *sql.DB
+	tableName      string
+	schema         Schema
+	vectorSearches []*duckdbVectorSearch // 存储所有注册的向量搜索配置
 }
 
 func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Document, error) {
@@ -140,7 +141,7 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 	}
 
 	content, _ := doc["content"].(string)
-	
+
 	// 构建metadata（排除id和content）
 	metadata := make(map[string]any)
 	for k, v := range doc {
@@ -165,6 +166,27 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 		tokens := duckdb_driver.TokenizeWithSego(content)
 		updateSQL := fmt.Sprintf(`UPDATE %s SET content_tokens = ? WHERE id = ?`, c.tableName)
 		_, _ = c.db.ExecContext(ctx, updateSQL, tokens, id)
+	}
+
+	// 更新向量列（如果有向量搜索配置）
+	for _, vs := range c.vectorSearches {
+		if vs.config.DocToEmbedding != nil {
+			embedding, err := vs.config.DocToEmbedding(doc)
+			if err == nil && len(embedding) > 0 {
+				// 转换为字符串格式
+				vectorStr := "["
+				for i, v := range embedding {
+					if i > 0 {
+						vectorStr += ", "
+					}
+					vectorStr += fmt.Sprintf("%g", v)
+				}
+				vectorStr += "]"
+				vectorColumn := "vector_" + vs.config.Identifier
+				updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
+				_, _ = c.db.ExecContext(ctx, updateSQL, vectorStr, id)
+			}
+		}
 	}
 
 	return &duckdbDocument{
@@ -240,7 +262,7 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 		}
 
 		content, _ := doc["content"].(string)
-		
+
 		metadata := make(map[string]any)
 		for k, v := range doc {
 			if k != "id" && k != "content" && k != "_rev" {
@@ -259,6 +281,27 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 			tokens := duckdb_driver.TokenizeWithSego(content)
 			updateSQL := fmt.Sprintf(`UPDATE %s SET content_tokens = ? WHERE id = ?`, c.tableName)
 			_, _ = tx.ExecContext(ctx, updateSQL, tokens, id)
+		}
+
+		// 更新向量列（如果有向量搜索配置）
+		for _, vs := range c.vectorSearches {
+			if vs.config.DocToEmbedding != nil {
+				embedding, err := vs.config.DocToEmbedding(doc)
+				if err == nil && len(embedding) > 0 {
+					// 转换为字符串格式
+					vectorStr := "["
+					for i, v := range embedding {
+						if i > 0 {
+							vectorStr += ", "
+						}
+						vectorStr += fmt.Sprintf("%g", v)
+					}
+					vectorStr += "]"
+					vectorColumn := "vector_" + vs.config.Identifier
+					updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
+					_, _ = tx.ExecContext(ctx, updateSQL, vectorStr, id)
+				}
+			}
 		}
 
 		results = append(results, &duckdbDocument{
@@ -417,11 +460,16 @@ func AddVectorSearch(collection Collection, config VectorSearchConfig) (VectorSe
 		}
 	}
 
-	return &duckdbVectorSearch{
+	vectorSearch := &duckdbVectorSearch{
 		db:        duckdbColl.db,
 		tableName: duckdbColl.tableName,
 		config:    config,
-	}, nil
+	}
+
+	// 注册向量搜索到集合中，以便在插入时自动计算向量
+	duckdbColl.vectorSearches = append(duckdbColl.vectorSearches, vectorSearch)
+
+	return vectorSearch, nil
 }
 
 func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, opts VectorSearchOptions) ([]VectorSearchResult, error) {
@@ -431,6 +479,26 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 	}
 
 	vectorColumn := "vector_" + v.config.Identifier
+
+	// Convert []float64 to string format that DuckDB can parse
+	// DuckDB requires FLOAT[] type, but go-duckdb driver doesn't support []float64 directly
+	// So we convert to string format and use CAST in SQL
+	var vectorArg interface{}
+	if len(embedding) == 0 {
+		return nil, fmt.Errorf("empty embedding vector")
+	} else {
+		// Convert []float64 to string format that DuckDB can parse
+		// Format: [1.0, 2.0, 3.0]
+		vectorStr := "["
+		for i, v := range embedding {
+			if i > 0 {
+				vectorStr += ", "
+			}
+			vectorStr += fmt.Sprintf("%g", v)
+		}
+		vectorStr += "]"
+		vectorArg = vectorStr
+	}
 
 	// 使用DuckDB的list_cosine_similarity进行向量搜索
 	sqlQuery := fmt.Sprintf(`
@@ -445,7 +513,7 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 		LIMIT ?
 	`, vectorColumn, v.tableName, vectorColumn, vectorColumn)
 
-	rows, err := v.db.QueryContext(ctx, sqlQuery, embedding, embedding, limit)
+	rows, err := v.db.QueryContext(ctx, sqlQuery, vectorArg, vectorArg, limit)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search vectors: %w", err)
 	}
@@ -625,4 +693,3 @@ func (q *duckdbGraphQuery) All(ctx context.Context) ([]GraphQueryResult, error) 
 
 	return results, nil
 }
-

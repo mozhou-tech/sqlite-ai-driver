@@ -239,5 +239,10 @@ func SearchWithSego(ctx context.Context, db *sql.DB, tableName, query, contentCo
 		return nil, fmt.Errorf("row iteration error: %w", err)
 	}
 
+	// 如果没有结果，返回空切片而不是 nil
+	if ids == nil {
+		return []string{}, nil
+	}
+
 	return ids, nil
 }

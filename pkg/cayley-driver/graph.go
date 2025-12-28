@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -165,14 +166,66 @@ func (g *cayleyGraph) initSchema(ctx context.Context) error {
 // Link 创建一条边
 func (g *cayleyGraph) Link(ctx context.Context, subject, predicate, object string) error {
 	query := `INSERT OR IGNORE INTO quads (subject, predicate, object) VALUES (?, ?, ?)`
-	_, err := g.db.ExecContext(ctx, query, subject, predicate, object)
+
+	// 重试逻辑：处理 SQLITE_BUSY 错误
+	maxRetries := 5
+	var err error
+	for i := 0; i < maxRetries; i++ {
+		_, err = g.db.ExecContext(ctx, query, subject, predicate, object)
+		if err == nil {
+			return nil
+		}
+
+		// 检查是否是 SQLITE_BUSY 错误
+		errStr := err.Error()
+		if strings.Contains(errStr, "database is locked") || strings.Contains(errStr, "SQLITE_BUSY") {
+			// 指数退避：等待时间逐渐增加
+			waitTime := time.Duration(i+1) * 10 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(waitTime):
+				continue
+			}
+		}
+
+		// 如果不是 SQLITE_BUSY 错误，直接返回
+		return err
+	}
+
 	return err
 }
 
 // Unlink 删除一条边
 func (g *cayleyGraph) Unlink(ctx context.Context, subject, predicate, object string) error {
 	query := `DELETE FROM quads WHERE subject = ? AND predicate = ? AND object = ?`
-	_, err := g.db.ExecContext(ctx, query, subject, predicate, object)
+
+	// 重试逻辑：处理 SQLITE_BUSY 错误
+	maxRetries := 5
+	var err error
+	for i := 0; i < maxRetries; i++ {
+		_, err = g.db.ExecContext(ctx, query, subject, predicate, object)
+		if err == nil {
+			return nil
+		}
+
+		// 检查是否是 SQLITE_BUSY 错误
+		errStr := err.Error()
+		if strings.Contains(errStr, "database is locked") || strings.Contains(errStr, "SQLITE_BUSY") {
+			// 指数退避：等待时间逐渐增加
+			waitTime := time.Duration(i+1) * 10 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(waitTime):
+				continue
+			}
+		}
+
+		// 如果不是 SQLITE_BUSY 错误，直接返回
+		return err
+	}
+
 	return err
 }
 

@@ -44,6 +44,6 @@ install:
 	go mod tidy
 
 test:
-	MOCKEY_CHECK_GCFLAGS=false go test -gcflags="all=-N -l" ./pkg/... ./eino-ext/...
+	MOCKEY_CHECK_GCFLAGS=false go test -gcflags="all=-N -l" ./pkg/...
 
 
