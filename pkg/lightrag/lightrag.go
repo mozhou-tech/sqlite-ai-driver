@@ -635,8 +635,8 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 				if err == nil {
 					for _, res := range vecResults {
 						// 增加相似度阈值检查，防止召回无关内容
-						// 这里的分数通常是余弦相似度，0.35 是一个保守的阈值
-						if res.Score < 0.35 {
+						// 这里的分数通常是余弦相似度，0.75 是一个保守的阈值
+						if res.Score < 0.75 {
 							continue
 						}
 
