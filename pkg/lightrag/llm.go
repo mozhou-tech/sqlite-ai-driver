@@ -1,9 +1,14 @@
 package lightrag
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"time"
 )
 
 // SimpleLLM 简单的 LLM 实现，仅用于演示
@@ -60,4 +65,82 @@ type OpenAIConfig struct {
 	Model   string
 }
 
-// TODO: 实现真正的 OpenAI LLM
+// OpenAILLM OpenAI LLM 实现
+type OpenAILLM struct {
+	config *OpenAIConfig
+	client *http.Client
+}
+
+// NewOpenAILLM 创建新的 OpenAI LLM 实例
+func NewOpenAILLM(config *OpenAIConfig) *OpenAILLM {
+	if config.Model == "" {
+		config.Model = "gpt-4o-mini"
+	}
+	if config.BaseURL == "" {
+		config.BaseURL = "https://api.openai.com/v1"
+	}
+	return &OpenAILLM{
+		config: config,
+		client: &http.Client{
+			Timeout: 60 * time.Second,
+		},
+	}
+}
+
+// Complete 完成提示词并返回响应
+func (l *OpenAILLM) Complete(ctx context.Context, prompt string) (string, error) {
+	url := fmt.Sprintf("%s/chat/completions", l.config.BaseURL)
+
+	reqBody := map[string]interface{}{
+		"model": l.config.Model,
+		"messages": []map[string]string{
+			{
+				"role":    "user",
+				"content": prompt,
+			},
+		},
+		"temperature": 0.7,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", l.config.APIKey))
+
+	resp, err := l.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("openai API error: status %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(result.Choices) == 0 {
+		return "", fmt.Errorf("no choices in response")
+	}
+
+	return result.Choices[0].Message.Content, nil
+}

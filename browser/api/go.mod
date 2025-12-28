@@ -16,8 +16,8 @@ replace github.com/mozhou-tech/sqlite-ai-driver => ../../
 require (
 	github.com/apache/arrow-go/v18 v18.2.0 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
-	github.com/bytedance/sonic v1.14.1 // indirect
-	github.com/bytedance/sonic/loader v0.3.0 // indirect
+	github.com/bytedance/sonic v1.14.2 // indirect
+	github.com/bytedance/sonic/loader v0.4.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/duckdb/duckdb-go-bindings v0.1.9 // indirect
