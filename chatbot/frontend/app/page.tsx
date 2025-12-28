@@ -126,13 +126,61 @@ export default function Home() {
         throw new Error(errorData.error || `Failed to get response: ${response.status}`);
       }
 
-      const data = await response.json();
-      const assistantMessage: Message = {
-        role: "assistant",
-        content: data.response,
-      };
+      if (!response.body) {
+        throw new Error("No response body");
+      }
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      // 添加一个空的助手机持消息占位
+      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantContent = "";
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        
+        // SSE 事件以 \n\n 分隔
+        let parts = buffer.split("\n\n");
+        buffer = parts.pop() || ""; // 最后一个可能是不完整的事件，留到下次处理
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+
+          const lines = part.split("\n");
+          let contentChunk = "";
+          for (const line of lines) {
+            if (line.startsWith("data:")) {
+              let data = line.slice(5);
+              if (data.startsWith(" ")) {
+                data = data.slice(1);
+              }
+              if (contentChunk) {
+                contentChunk += "\n";
+              }
+              contentChunk += data;
+            }
+          }
+
+          if (contentChunk) {
+            assistantContent += contentChunk;
+            setMessages((prev) => {
+              const newMessages = [...prev];
+              if (newMessages.length > 0) {
+                newMessages[newMessages.length - 1] = {
+                  ...newMessages[newMessages.length - 1],
+                  content: assistantContent,
+                };
+              }
+              return [...newMessages];
+            });
+          }
+        }
+      }
     } catch (error) {
       console.error("Error:", error);
       const errorMessage: Message = {

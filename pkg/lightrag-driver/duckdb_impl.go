@@ -154,8 +154,12 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 
 	insertSQL := fmt.Sprintf(`
 		INSERT INTO %s (id, content, metadata, _rev)
-		VALUES (?, ?, ?, 1)
-	`, c.tableName)
+		VALUES (?, ?, ?::JSON, 1)
+		ON CONFLICT (id) DO UPDATE SET
+			content = EXCLUDED.content,
+			metadata = EXCLUDED.metadata,
+			_rev = %s._rev + 1
+	`, c.tableName, c.tableName)
 
 	_, err := c.db.ExecContext(ctx, insertSQL, id, content, string(metadataJSON))
 	if err != nil {
@@ -348,15 +352,6 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
-		INSERT OR REPLACE INTO %s (id, content, metadata, _rev)
-		VALUES (?, ?, ?, COALESCE((SELECT _rev FROM %s WHERE id = ?), 0) + 1)
-	`, c.tableName, c.tableName))
-	if err != nil {
-		return nil, fmt.Errorf("failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
 	var results []Document
 	for _, doc := range docs {
 		id, ok := doc["id"].(string)
@@ -374,7 +369,17 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 		}
 		metadataJSON, _ := json.Marshal(metadata)
 
-		_, err := stmt.ExecContext(ctx, id, content, string(metadataJSON), id)
+		// 不使用 PrepareContext，直接使用 ExecContext
+		insertSQL := fmt.Sprintf(`
+			INSERT INTO %s (id, content, metadata, _rev)
+			VALUES (?, ?, ?::JSON, 1)
+			ON CONFLICT (id) DO UPDATE SET
+				content = EXCLUDED.content,
+				metadata = EXCLUDED.metadata,
+				_rev = %s._rev + 1
+		`, c.tableName, c.tableName)
+
+		_, err := tx.ExecContext(ctx, insertSQL, id, content, string(metadataJSON))
 		if err != nil {
 			return nil, fmt.Errorf("failed to upsert document: %w", err)
 		}

@@ -20,11 +20,12 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag"
+	"github.com/sirupsen/logrus"
 )
 
 var (
 	lightRAGInstance *lightrag.LightRAG
-	ragGraph         compose.Runnable[string, string]
+	ragGraph         compose.Runnable[string, *schema.Message]
 	einoIndexer      indexer.Indexer
 )
 
@@ -93,6 +94,12 @@ func main() {
 
 func initLightRAG() error {
 	ctx := context.Background()
+
+	// 设置日志级别
+	logrus.SetLevel(logrus.DebugLevel)
+	logrus.SetFormatter(&logrus.TextFormatter{
+		FullTimestamp: true,
+	})
 
 	// 获取环境变量
 	openaiAPIKey := os.Getenv("OPENAI_API_KEY")
@@ -181,11 +188,7 @@ func initLightRAG() error {
 		return map[string]any{"format_docs": contextText}, nil
 	}
 
-	msgToString := func(ctx context.Context, msg *schema.Message) (string, error) {
-		return msg.Content, nil
-	}
-
-	chain, err := compose.NewChain[string, string]().
+	chain, err := compose.NewChain[string, *schema.Message]().
 		AppendLambda(compose.InvokableLambda(func(ctx context.Context, input string) (map[string]any, error) {
 			// 1. 检索文档
 			docs, err := retrieverInstance.Retrieve(ctx, input)
@@ -205,7 +208,6 @@ func initLightRAG() error {
 		})).
 		AppendChatTemplate(chatTemplate).
 		AppendChatModel(cm).
-		AppendLambda(compose.InvokableLambda(msgToString)).
 		Compile(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to compile eino graph: %w", err)
@@ -231,6 +233,11 @@ func (r *LightRAGRetriever) Retrieve(ctx context.Context, query string, opts ...
 		TopK: Ptr(5),
 	}, opts...)
 
+	logrus.WithFields(logrus.Fields{
+		"query": query,
+		"top_k": *options.TopK,
+	}).Info("Retrieving documents from LightRAG")
+
 	param := lightrag.QueryParam{
 		Mode:  lightrag.ModeHybrid,
 		Limit: *options.TopK,
@@ -238,8 +245,11 @@ func (r *LightRAGRetriever) Retrieve(ctx context.Context, query string, opts ...
 
 	results, err := r.rag.Retrieve(ctx, query, param)
 	if err != nil {
+		logrus.WithError(err).Error("LightRAG retrieval failed")
 		return nil, err
 	}
+
+	logrus.WithField("count", len(results)).Info("Retrieved documents from LightRAG")
 
 	docs := make([]*schema.Document, 0, len(results))
 	for _, res := range results {
@@ -266,6 +276,8 @@ type LightRAGIndexer struct {
 }
 
 func (i *LightRAGIndexer) Store(ctx context.Context, docs []*schema.Document, opts ...indexer.Option) ([]string, error) {
+	logrus.WithField("count", len(docs)).Info("Indexing documents into LightRAG")
+
 	toStore := make([]map[string]any, 0, len(docs))
 	for _, doc := range docs {
 		m := map[string]any{
@@ -278,7 +290,14 @@ func (i *LightRAGIndexer) Store(ctx context.Context, docs []*schema.Document, op
 		toStore = append(toStore, m)
 	}
 
-	return i.rag.InsertBatch(ctx, toStore)
+	ids, err := i.rag.InsertBatch(ctx, toStore)
+	if err != nil {
+		logrus.WithError(err).Error("LightRAG indexing failed")
+		return nil, err
+	}
+
+	logrus.WithField("count", len(ids)).Info("Indexed documents into LightRAG successfully")
+	return ids, nil
 }
 
 func (i *LightRAGIndexer) GetType() string {
@@ -330,16 +349,42 @@ func handleChat(c *gin.Context) {
 	}
 
 	// 使用 Eino Graph 进行查询
-	answer, err := ragGraph.Invoke(ctx, req.Message)
+	logrus.WithFields(logrus.Fields{
+		"message": req.Message,
+		"mode":    mode,
+	}).Info("Starting chat query via Eino Graph (streaming)")
+
+	sr, err := ragGraph.Stream(ctx, req.Message)
 	if err != nil {
-		log.Printf("Chat query failed: %v", err)
+		logrus.WithError(err).Error("Chat query failed")
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to query via Eino: %v", err)})
 		return
 	}
+	defer sr.Close()
 
-	c.JSON(200, ChatResponse{
-		Response: answer,
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no") // 禁用 Nginx 缓存
+
+	c.Stream(func(w io.Writer) bool {
+		chunk, err := sr.Recv()
+		if err == io.EOF {
+			return false
+		}
+		if err != nil {
+			logrus.WithError(err).Error("Stream receive failed")
+			return false
+		}
+
+		if chunk != nil {
+			c.SSEvent("message", chunk.Content)
+			c.Writer.Flush()
+		}
+		return true
 	})
+
+	logrus.Info("Chat query completed successfully")
 }
 
 type AddDocumentRequest struct {
