@@ -429,7 +429,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 	var err error
 
 	switch param.Mode {
-	case ModeVector:
+	case ModeVector, ModeNaive:
 		if r.vector == nil {
 			return nil, fmt.Errorf("vector search not available")
 		}
@@ -462,7 +462,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			return nil, err
 		}
 		logrus.WithField("count", len(rawResults)).Debug("Fulltext search returned results")
-	case ModeLocal, ModeGraph:
+	case ModeLocal:
 		if r.graph == nil {
 			return nil, fmt.Errorf("graph search not available")
 		}
@@ -475,7 +475,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		logrus.WithFields(logrus.Fields{
 			"query":    query,
 			"entities": entities,
-		}).Info("Extracted entities for graph search")
+		}).Info("Extracted entities for local search")
 
 		docIDMap := make(map[string]bool)
 		var mu sync.Mutex
@@ -489,7 +489,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 					mu.Lock()
 					for _, id := range neighbors {
 						docIDMap[id] = true
-						logrus.Infof("Graph Recalled: Entity %s is in Document %s", e, id)
+						logrus.Infof("Local Recalled: Entity %s is in Document %s", e, id)
 					}
 					mu.Unlock()
 				}
@@ -504,7 +504,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 					mu.Lock()
 					for _, qr := range res {
 						if qr.Predicate != "APPEARS_IN" && (qr.Subject == relNode || qr.Object == relNode) {
-							logrus.Infof("Graph Recalled: %s -[%s]-> %s", qr.Subject, qr.Predicate, qr.Object)
+							logrus.Infof("Local Recalled: %s -[%s]-> %s", qr.Subject, qr.Predicate, qr.Object)
 							recalledTriples = append(recalledTriples, Relationship{
 								Source:   qr.Subject,
 								Target:   qr.Object,
@@ -519,7 +519,7 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 						mu.Lock()
 						for _, id := range docNeighbors {
 							docIDMap[id] = true
-							logrus.Infof("Graph Recalled: Entity %s is related to %s which is in Document %s", e, relNode, id)
+							logrus.Infof("Local Recalled: Entity %s is related to %s which is in Document %s", e, relNode, id)
 						}
 						mu.Unlock()
 					}
@@ -561,6 +561,72 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 
 		go func() {
 			g.Wait()
+			close(scoredDocs)
+		}()
+
+		for sd := range scoredDocs {
+			rawResults = append(rawResults, FulltextSearchResult{
+				Document: sd.doc,
+				Score:    sd.score,
+			})
+			if len(rawResults) >= param.Limit {
+				break
+			}
+		}
+
+	case ModeGraph:
+		if r.graph == nil {
+			return nil, fmt.Errorf("graph search not available")
+		}
+
+		// Graph 模式：纯知识图谱查询，不使用向量或全文搜索
+		// 1. 获取图谱数据
+		// 确保 context 中带有 ModeGraph，以便 SearchGraphWithDepth 知道要跳过向量扩展
+		gCtx := context.WithValue(ctx, "rag_mode", ModeGraph)
+		graphData, err := r.SearchGraphWithDepth(gCtx, query, 2) // 使用深度 2 召回更多关联
+		if err != nil {
+			return nil, fmt.Errorf("graph search failed: %w", err)
+		}
+
+		recalledTriples = graphData.Relationships
+
+		// 2. 根据召回的实体找到关联的文档
+		docIDMap := make(map[string]bool)
+		for _, entity := range graphData.Entities {
+			neighbors, _ := r.graph.GetNeighbors(ctx, entity.Name, "APPEARS_IN")
+			for _, id := range neighbors {
+				docIDMap[id] = true
+			}
+		}
+
+		// 3. 获取文档内容
+		g, gCtx := errgroup.WithContext(ctx)
+		type scoredDoc struct {
+			doc   Document
+			score float64
+		}
+		scoredDocs := make(chan scoredDoc, len(docIDMap))
+
+		count := 0
+		for id := range docIDMap {
+			if count >= param.Limit*2 {
+				break
+			}
+			docID := id
+			g.Go(func() error {
+				doc, err := r.docs.FindByID(gCtx, docID)
+				if err == nil && doc != nil {
+					if matchesFilters(doc.Data(), param.Filters) {
+						scoredDocs <- scoredDoc{doc: doc, score: 1.0}
+					}
+				}
+				return nil
+			})
+			count++
+		}
+
+		go func() {
+			_ = g.Wait()
 			close(scoredDocs)
 		}()
 
@@ -862,6 +928,8 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 	var mu sync.Mutex
 	g, gCtx := errgroup.WithContext(ctx)
 
+	mode, _ := ctx.Value("rag_mode").(QueryMode)
+
 	for _, e := range entities {
 		entityName := e
 		g.Go(func() error {
@@ -892,7 +960,7 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 				mu.Lock()
 				allEntities[entityName] = true
 				mu.Unlock()
-			} else if r.vector != nil {
+			} else if mode != ModeGraph && r.vector != nil {
 				// 如果没找到直接关联，通过向量搜索寻找最相关的文档，从而发现相关实体
 				emb, err := r.embedder.Embed(gCtx, entityName)
 				if err == nil {

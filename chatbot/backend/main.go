@@ -190,8 +190,13 @@ func initLightRAG() error {
 	)
 
 	formatDocs := func(ctx context.Context, docs []*schema.Document) (map[string]any, error) {
+		mode, _ := ctx.Value("rag_mode").(lightrag.QueryMode)
+
 		if len(docs) == 0 {
 			logrus.Warn("No documents retrieved for context")
+			if mode == lightrag.ModeGraph {
+				return map[string]any{"format_docs": "在知识图谱中未找到相关实体或关系。"}, nil
+			}
 			return map[string]any{"format_docs": "未找到相关知识内容。"}, nil
 		}
 
@@ -213,14 +218,26 @@ func initLightRAG() error {
 
 		var contextText string
 		if len(graphLines) > 0 {
-			// 如果召回了图谱，优先使用图谱作为上下文 (遵循用户要求：使用知识图谱而不是文章本身)
+			// 如果召回了图谱，优先使用图谱作为上下文
 			contextText += "### 知识图谱召回信息 (Knowledge Graph):\n"
 			for i, line := range graphLines {
 				contextText += fmt.Sprintf("[%d] %s\n", i+1, line)
 			}
 			logrus.WithField("triple_count", len(graphLines)).Info("Using Knowledge Graph as primary context")
+
+			// 在 graph 模式下，我们也提供关联的文档摘要，但强调是以图谱为主
+			if mode == lightrag.ModeGraph {
+				contextText += "\n### 关联文档参考 (Reference Documents):\n"
+				for i, doc := range docs {
+					contextText += fmt.Sprintf("[%d] %s\n", i+1, doc.Content)
+				}
+			}
 		} else {
-			// 如果没有召回图谱，退回到使用文档内容
+			// 如果没有召回图谱
+			if mode == lightrag.ModeGraph {
+				return map[string]any{"format_docs": "知识图谱中没有找到直接相关的三元组。"}, nil
+			}
+
 			contextText += "### 相关参考文档 (Reference Documents):\n"
 			for i, doc := range docs {
 				score, _ := doc.MetaData["score"].(float64)

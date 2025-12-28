@@ -14,6 +14,7 @@ const (
 	ModeGraph    QueryMode = "graph"    // 图搜索
 	ModeLocal    QueryMode = "local"    // 局部搜索（基于实体）
 	ModeGlobal   QueryMode = "global"   // 全局搜索（基于关系/社区）
+	ModeNaive    QueryMode = "naive"    // 朴素 RAG（仅向量搜索，不使用图谱）
 )
 
 // QueryParam 查询参数

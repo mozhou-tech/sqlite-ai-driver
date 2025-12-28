@@ -633,7 +633,7 @@ func TestLightRAG_Extract_JSON_Errors(t *testing.T) {
 	// Test extractAndStore error path
 	// This is called in background, but we can call it directly to test
 	err = rag.extractAndStore(ctx, "some text", "doc1")
-	if err == nil || !strings.Contains(err.Error(), "no JSON object found") {
+	if err == nil || !strings.Contains(err.Error(), "no JSON object or array found") {
 		t.Errorf("expected error for invalid JSON in extractAndStore, got: %v", err)
 	}
 
