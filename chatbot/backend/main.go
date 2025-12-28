@@ -20,6 +20,7 @@ import (
 	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
 	"github.com/sirupsen/logrus"
 )
 
@@ -95,6 +96,11 @@ func main() {
 func initLightRAG() error {
 	ctx := context.Background()
 
+	// 预加载 sego 词典
+	if err := sego.Init(); err != nil {
+		logrus.WithError(err).Warn("Failed to initialize sego dictionary")
+	}
+
 	// 设置日志级别
 	logrus.SetLevel(logrus.DebugLevel)
 	logrus.SetFormatter(&logrus.TextFormatter{
@@ -130,7 +136,7 @@ func initLightRAG() error {
 	embedderConfig := &openaiembedding.EmbeddingConfig{
 		APIKey:  openaiAPIKey,
 		BaseURL: openaiBaseURL,
-		Model:   "text-embedding-3-small",
+		Model:   "text-embedding-v4",
 	}
 	embedderInstance, err := lightrag.NewOpenAIEmbedder(ctx, embedderConfig)
 	if err != nil {

@@ -198,6 +198,8 @@ func (r *LightRAG) extractQueryEntities(ctx context.Context, query string) ([]st
 		return nil, err
 	}
 
+	logrus.WithField("raw_response", response).Debug("LLM response for query entities")
+
 	jsonStr := response
 	idxStart := strings.Index(jsonStr, "[")
 	idxEnd := strings.LastIndex(jsonStr, "]")
@@ -239,8 +241,18 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 		return fmt.Errorf("failed to parse extraction result: %w, response: %s", err, response)
 	}
 
+	logrus.WithFields(logrus.Fields{
+		"doc_id":              docID,
+		"entities_count":      len(result.Entities),
+		"relationships_count": len(result.Relationships),
+	}).Info("Extracted graph data from document")
+
 	// 存储实体并将其实体链接到文档
 	for _, entity := range result.Entities {
+		logrus.WithFields(logrus.Fields{
+			"entity": entity.Name,
+			"doc_id": docID,
+		}).Debug("Linking entity to document")
 		// 链接实体到文档
 		err := r.graph.Link(ctx, entity.Name, "APPEARS_IN", docID)
 		if err != nil {
@@ -250,6 +262,11 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 
 	// 存储关系
 	for _, rel := range result.Relationships {
+		logrus.WithFields(logrus.Fields{
+			"source":   rel.Source,
+			"relation": rel.Relation,
+			"target":   rel.Target,
+		}).Debug("Storing relationship in graph")
 		err := r.graph.Link(ctx, rel.Source, rel.Relation, rel.Target)
 		if err != nil {
 			logrus.WithError(err).Errorf("Failed to link nodes: %s -[%s]-> %s", rel.Source, rel.Relation, rel.Target)
@@ -385,21 +402,44 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			return r.Retrieve(ctx, query, QueryParam{Mode: ModeFulltext, Limit: param.Limit})
 		}
 
+		logrus.WithFields(logrus.Fields{
+			"query":    query,
+			"entities": entities,
+		}).Info("Extracted entities for graph search")
+
 		docIDMap := make(map[string]bool)
 		for _, entity := range entities {
 			neighbors, _ := r.graph.GetNeighbors(ctx, entity, "APPEARS_IN")
+			if len(neighbors) > 0 {
+				logrus.WithFields(logrus.Fields{
+					"entity":    entity,
+					"doc_count": len(neighbors),
+				}).Debug("Found documents directly linked to entity")
+			}
 			for _, id := range neighbors {
 				docIDMap[id] = true
 			}
 			// 也考虑一度邻居关联的文档
 			related, _ := r.graph.GetNeighbors(ctx, entity, "")
 			for _, relNode := range related {
+				if relNode == entity {
+					continue
+				}
 				docNeighbors, _ := r.graph.GetNeighbors(ctx, relNode, "APPEARS_IN")
+				if len(docNeighbors) > 0 {
+					logrus.WithFields(logrus.Fields{
+						"original_entity": entity,
+						"related_node":    relNode,
+						"doc_count":       len(docNeighbors),
+					}).Debug("Found documents linked via related graph node")
+				}
 				for _, id := range docNeighbors {
 					docIDMap[id] = true
 				}
 			}
 		}
+
+		logrus.WithField("total_unique_docs", len(docIDMap)).Info("Graph traversal completed")
 
 		for id := range docIDMap {
 			doc, _ := r.docs.FindByID(ctx, id)

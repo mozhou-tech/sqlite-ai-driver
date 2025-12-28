@@ -90,6 +90,11 @@ type ErrorResponse struct {
 }
 
 func main() {
+	// 预加载 sego 词典
+	if err := sego.Init(); err != nil {
+		logrus.WithError(err).Warn("Failed to initialize sego dictionary")
+	}
+
 	// 从环境变量读取数据库配置
 	dbName := os.Getenv("DB_NAME")
 	if dbName == "" {
@@ -295,32 +300,7 @@ func createDuckDBFTSIndex(db *sql.DB) error {
 
 // tokenizeWithSego 使用 sego 对文本进行分词，返回用空格分隔的词
 func tokenizeWithSego(text string) string {
-	if text == "" {
-		return ""
-	}
-
-	segmenter, err := sego.GetSegmenter()
-	if err != nil {
-		logrus.WithError(err).Warn("Failed to get sego segmenter, returning original text")
-		return text
-	}
-
-	segments := segmenter.Segment([]byte(text))
-	var tokens []string
-	for _, seg := range segments {
-		token := seg.Token().Text()
-		// 过滤掉空白字符和标点符号
-		token = strings.TrimSpace(token)
-		if token != "" && len(token) > 0 {
-			tokens = append(tokens, token)
-		}
-	}
-
-	if len(tokens) == 0 {
-		return text // 如果分词结果为空，返回原文
-	}
-
-	return strings.Join(tokens, " ")
+	return sego.Tokenize(text)
 }
 
 // createDuckDBVectorIndex 创建 DuckDB 向量索引

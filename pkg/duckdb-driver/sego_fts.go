@@ -60,32 +60,7 @@ func extractSearchTerms(query, queryTokens string) []string {
 // TokenizeWithSego 使用 sego 对文本进行中文分词，返回用空格分隔的词
 // 这是 duckdb-driver 包提供的公共 API，供外部使用
 func TokenizeWithSego(text string) string {
-	if text == "" {
-		return ""
-	}
-
-	segmenter, err := sego.GetSegmenter()
-	if err != nil {
-		// 如果 sego 初始化失败，返回原文
-		return text
-	}
-
-	segments := segmenter.Segment([]byte(text))
-	var tokens []string
-	for _, seg := range segments {
-		token := seg.Token().Text()
-		// 过滤掉空白字符和标点符号
-		token = strings.TrimSpace(token)
-		if token != "" && len(token) > 0 {
-			tokens = append(tokens, token)
-		}
-	}
-
-	if len(tokens) == 0 {
-		return text // 如果分词结果为空，返回原文
-	}
-
-	return strings.Join(tokens, " ")
+	return sego.Tokenize(text)
 }
 
 // CreateFTSIndexWithSego 创建支持 sego 中文分词的 DuckDB FTS 索引

@@ -3,6 +3,7 @@ package sego
 import (
 	_ "embed"
 	"os"
+	"strings"
 	"sync"
 
 	huichensego "github.com/huichen/sego"
@@ -42,4 +43,39 @@ func GetSegmenter() (*huichensego.Segmenter, error) {
 		globalSegmenter.LoadDictionary(tmpFile.Name())
 	})
 	return &globalSegmenter, initErr
+}
+
+// Init 显式初始化分词器，用于在程序启动时预加载词典
+func Init() error {
+	_, err := GetSegmenter()
+	return err
+}
+
+// Tokenize 使用 sego 对文本进行中文分词，返回用空格分隔的词
+func Tokenize(text string) string {
+	if text == "" {
+		return ""
+	}
+
+	segmenter, err := GetSegmenter()
+	if err != nil {
+		return text
+	}
+
+	segments := segmenter.Segment([]byte(text))
+	var tokens []string
+	for _, seg := range segments {
+		token := seg.Token().Text()
+		// 过滤掉空白字符和标点符号
+		token = strings.TrimSpace(token)
+		if token != "" {
+			tokens = append(tokens, token)
+		}
+	}
+
+	if len(tokens) == 0 {
+		return text // 如果分词结果为空，返回原文
+	}
+
+	return strings.Join(tokens, " ")
 }
