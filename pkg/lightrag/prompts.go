@@ -28,12 +28,34 @@ Identify entities and relationships from the given text.
 
 	QueryEntityExtractionPromptTemplate = `
 -Goal-
-Extract both high-level and low-level keywords from the user's query.
-High-level keywords: themes, topics, or abstract concepts.
-Low-level keywords: specific entities, people, organizations, or precise technical terms.
+Extract both high-level and low-level keywords from the user's query. Always try to extract keywords for both categories when possible.
+
+-Keyword Types-
+High-level keywords: abstract themes, broad topics, conceptual categories, or domain areas that the query relates to (e.g., "Artificial Intelligence Technology", "Database Systems", "Web Development", "Machine Learning", "Software Engineering").
+Low-level keywords: specific entities, proper nouns, people, organizations, acronyms, abbreviations, or precise technical terms mentioned directly in the query (e.g., "SQLiteAI", "GPT-4", "AIS", "John Doe", "OpenAI", "Python", "React").
+
+-Classification Rules-
+1. Acronyms and abbreviations (e.g., "AIS", "AI", "DB", "ML") should be classified as low-level keywords.
+2. If an acronym represents a broader domain, also extract the conceptual theme as a high-level keyword (e.g., query "AIS" → low_level: ["AIS"], high_level: ["Artificial Intelligence Technology"]).
+3. Specific technical terms, product names, and proper nouns should be low-level keywords.
+4. Abstract concepts, themes, and domain categories should be high-level keywords.
+5. A query can have both low-level and high-level keywords simultaneously.
+
+-Examples-
+Query: "What is AIS?"
+  low_level: ["AIS"]
+  high_level: ["Artificial Intelligence Technology"]
+
+Query: "How does SQLiteAI work?"
+  low_level: ["SQLiteAI"]
+  high_level: ["Database Systems", "Database Technology"]
+
+Query: "Tell me about machine learning algorithms"
+  low_level: []
+  high_level: ["Machine Learning", "Algorithms"]
 
 -Output Format-
-JSON object with two arrays:
+JSON object with two arrays (both arrays can contain multiple items or be empty):
 {{
   "low_level": ["Entity1", "Entity2", ...],
   "high_level": ["Theme1", "Theme2", ...]

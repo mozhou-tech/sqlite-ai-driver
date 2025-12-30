@@ -524,9 +524,12 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			return r.Retrieve(ctx, query, QueryParam{Mode: ModeHybrid, Limit: param.Limit})
 		}
 
+		// 根据 LightRAG 论文，Local search 使用 low-level keywords（具体实体）
+		// 用于检索直接包含这些实体的文档及其邻居实体
 		logrus.WithFields(logrus.Fields{
-			"query":     query,
-			"low_level": keywords.LowLevel,
+			"query":      query,
+			"low_level":  keywords.LowLevel,  // Local search 使用 low_level keywords
+			"high_level": keywords.HighLevel, // 同时显示 high_level 以便调试和理解分类
 		}).Info("Performing local search")
 
 		return r.retrieveByKeywords(ctx, keywords.LowLevel, param)
@@ -634,9 +637,12 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			return r.Retrieve(ctx, query, QueryParam{Mode: ModeHybrid, Limit: param.Limit})
 		}
 
+		// 根据 LightRAG 论文，Global search 使用 high-level keywords（抽象主题）
+		// 用于检索更广泛相关的文档，而不仅仅是直接包含具体实体的文档
 		logrus.WithFields(logrus.Fields{
 			"query":      query,
-			"high_level": keywords.HighLevel,
+			"low_level":  keywords.LowLevel,  // 同时显示 low_level 以便调试和理解分类
+			"high_level": keywords.HighLevel, // Global search 使用 high_level keywords
 		}).Info("Performing global search")
 
 		return r.retrieveByKeywords(ctx, keywords.HighLevel, param)
