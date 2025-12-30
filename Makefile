@@ -57,7 +57,7 @@ fix-deps:
 
 .PHONY: test
 
-test: fix-deps
+test: 
 	@echo "运行所有模块的测试用例..."
 	@failed=0; \
 	for dir in ./pkg/cayley-driver ./pkg/duckdb-driver ./pkg/eino-ext ./pkg/eino-ext/document/parser/pdf ./pkg/file-driver ./pkg/lightrag ./pkg/sego ./pkg/sqlite3-driver; do \

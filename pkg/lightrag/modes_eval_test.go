@@ -57,7 +57,13 @@ func TestEvaluateModes(t *testing.T) {
 	}
 
 	// 等待异步图谱提取完成
-	time.Sleep(2 * time.Second)
+	rag.Wait()
+
+	// 等待向量嵌入完成（embedding worker 每 2 秒检查一次，每次最多处理 10 个文档）
+	// 对于 5 个文档，需要等待足够的时间让 worker 处理完
+	if err := rag.WaitForEmbeddings(ctx, 10*time.Second); err != nil {
+		t.Logf("Warning: WaitForEmbeddings returned error: %v", err)
+	}
 
 	tests := []struct {
 		name     string

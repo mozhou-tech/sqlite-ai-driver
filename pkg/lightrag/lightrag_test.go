@@ -714,7 +714,8 @@ func TestLightRAG_Insert_Error(t *testing.T) {
 	rag.InitializeStorages(ctx)
 	rag.FinalizeStorages(ctx) // Close it
 
-	err := rag.Insert(ctx, "test")
+	// 使用足够长的文本以确保不会因为长度太短而跳过插入
+	err := rag.Insert(ctx, "This is a test document that is long enough to be inserted into the database.")
 	if err == nil {
 		t.Error("expected error inserting into closed database")
 	}

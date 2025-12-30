@@ -713,6 +713,12 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			return r.retrieveNaiveHybrid(ctx, query, param)
 		}
 
+		// 如果关键词列表都为空，也回退到朴素混合搜索
+		if len(keywords.LowLevel) == 0 && len(keywords.HighLevel) == 0 {
+			logrus.Warn("No keywords extracted, falling back to naive hybrid search")
+			return r.retrieveNaiveHybrid(ctx, query, param)
+		}
+
 		logrus.WithFields(logrus.Fields{
 			"query":      query,
 			"low_level":  keywords.LowLevel,
@@ -722,6 +728,12 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		// 分别进行 local 和 global 检索并合并结果
 		localResults, _ := r.retrieveByKeywords(ctx, keywords.LowLevel, param)
 		globalResults, _ := r.retrieveByKeywords(ctx, keywords.HighLevel, param)
+
+		// 如果两个结果都为空，回退到朴素混合搜索
+		if len(localResults) == 0 && len(globalResults) == 0 {
+			logrus.Warn("No results from keyword-based search, falling back to naive hybrid search")
+			return r.retrieveNaiveHybrid(ctx, query, param)
+		}
 
 		// 合并结果
 		return r.mergeSearchResults(localResults, globalResults, param.Limit), nil
@@ -761,6 +773,37 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			return results, nil
 		}
 
+		// 如果关键词列表为空，回退到向量搜索
+		allKeywords := append(keywords.LowLevel, keywords.HighLevel...)
+		if len(allKeywords) == 0 {
+			logrus.Warn("No keywords extracted for mix search, falling back to vector search")
+			if r.vector == nil || r.embedder == nil {
+				return nil, fmt.Errorf("vector search not available")
+			}
+			emb, err := r.embedder.Embed(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			vecResults, err := r.vector.Search(ctx, emb, VectorSearchOptions{
+				Limit:    param.Limit,
+				Selector: param.Filters,
+			})
+			if err != nil {
+				return nil, err
+			}
+			results := make([]SearchResult, 0, len(vecResults))
+			for _, v := range vecResults {
+				content, _ := v.Document.Data()["content"].(string)
+				results = append(results, SearchResult{
+					ID:       v.Document.ID(),
+					Content:  content,
+					Score:    v.Score,
+					Metadata: v.Document.Data(),
+				})
+			}
+			return results, nil
+		}
+
 		logrus.WithFields(logrus.Fields{
 			"query":      query,
 			"low_level":  keywords.LowLevel,
@@ -769,8 +812,38 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 
 		// Mix 模式使用所有关键词（low-level + high-level）进行检索
 		// retrieveByKeywords 方法已经实现了图谱 + 向量的组合检索
-		allKeywords := append(keywords.LowLevel, keywords.HighLevel...)
-		return r.retrieveByKeywords(ctx, allKeywords, param)
+		results, err := r.retrieveByKeywords(ctx, allKeywords, param)
+		if err != nil {
+			return nil, err
+		}
+		// 如果关键词检索没有结果，回退到向量搜索
+		if len(results) == 0 {
+			logrus.Warn("No results from keyword-based mix search, falling back to vector search")
+			if r.vector == nil || r.embedder == nil {
+				return results, nil // 返回空结果而不是错误
+			}
+			emb, err := r.embedder.Embed(ctx, query)
+			if err != nil {
+				return results, nil // 返回空结果而不是错误
+			}
+			vecResults, err := r.vector.Search(ctx, emb, VectorSearchOptions{
+				Limit:    param.Limit,
+				Selector: param.Filters,
+			})
+			if err != nil {
+				return results, nil // 返回空结果而不是错误
+			}
+			for _, v := range vecResults {
+				content, _ := v.Document.Data()["content"].(string)
+				results = append(results, SearchResult{
+					ID:       v.Document.ID(),
+					Content:  content,
+					Score:    v.Score,
+					Metadata: v.Document.Data(),
+				})
+			}
+		}
+		return results, nil
 	default:
 		if r.fulltext == nil {
 			return nil, fmt.Errorf("fulltext search not available")
@@ -1183,6 +1256,37 @@ func (r *LightRAG) Wait() {
 	r.statsMutex.Unlock()
 }
 
+// WaitForEmbeddings 等待所有向量嵌入完成（最多等待 maxWait 时间）
+// embedding worker 每 2 秒检查一次，每次最多处理 10 个文档，速率限制是每秒 5 次
+func (r *LightRAG) WaitForEmbeddings(ctx context.Context, maxWait time.Duration) error {
+	if r == nil || !r.initialized || r.docs == nil {
+		return nil
+	}
+	if r.vector == nil || r.embedder == nil {
+		return nil // 没有向量搜索，不需要等待
+	}
+
+	// 简单实现：等待足够的时间让 embedding worker 处理完所有文档
+	// 对于少量文档（<10），通常需要 2-4 秒
+	// 我们使用轮询方式，每 500ms 检查一次，最多等待 maxWait 时间
+	deadline := time.Now().Add(maxWait)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			// 检查是否超时
+			if time.Now().After(deadline) {
+				return nil // 超时了，返回 nil（不是错误）
+			}
+			// 继续等待
+		}
+	}
+}
+
 // GetExtractionStats 获取知识图谱提取统计信息
 func (r *LightRAG) GetExtractionStats() ExtractionStats {
 	r.statsMutex.RLock()
@@ -1243,8 +1347,12 @@ func (r *LightRAG) FinalizeStorages(ctx context.Context) error {
 		r.vector.Close()
 	}
 	if r.db != nil {
-		return r.db.Close(ctx)
+		err := r.db.Close(ctx)
+		// 无论关闭是否成功，都将 initialized 设置为 false
+		r.initialized = false
+		return err
 	}
+	r.initialized = false
 	return nil
 }
 

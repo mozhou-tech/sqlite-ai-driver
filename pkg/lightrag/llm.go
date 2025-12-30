@@ -19,42 +19,66 @@ type SimpleLLM struct {
 
 func (l *SimpleLLM) Complete(ctx context.Context, prompt string) (string, error) {
 	// 处理查询关键字提取 (LightRAG 论文定义)
-	if strings.Contains(prompt, "high-level and low-level keywords") {
+	// 检查提示词是否包含关键词提取相关的内容（不区分大小写）
+	promptLower := strings.ToLower(prompt)
+	if strings.Contains(promptLower, "high-level") && strings.Contains(promptLower, "low-level") {
 		lowLevel := `[]`
 		highLevel := `[]`
 
-		if strings.Contains(strings.ToLower(prompt), "sqliteai") {
+		// 提取查询内容（从 -Query- 之后）
+		queryStart := strings.Index(promptLower, "-query-")
+		var query string
+		if queryStart != -1 {
+			query = prompt[queryStart+7:]
+			query = strings.TrimSpace(query)
+		} else {
+			// 如果没有找到 -Query-，尝试从整个 prompt 中提取
+			query = prompt
+		}
+		queryLower := strings.ToLower(query)
+
+		if strings.Contains(queryLower, "sqliteai") {
 			lowLevel = `["SQLiteAI"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "golang") {
+		if strings.Contains(queryLower, "golang") {
 			lowLevel = `["Golang"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "database") {
+		if strings.Contains(queryLower, "database") {
 			highLevel = `["Database"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "javascript") {
+		if strings.Contains(queryLower, "javascript") {
 			lowLevel = `["JavaScript"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "apple") {
+		if strings.Contains(queryLower, "apple") {
 			lowLevel = `["Apple"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "fruit") {
+		if strings.Contains(queryLower, "fruit") {
 			highLevel = `["Fruit"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "ecosystem") {
+		if strings.Contains(queryLower, "ecosystem") {
 			highLevel = `["Ecosystem"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "capital") {
+		if strings.Contains(queryLower, "capital") {
 			highLevel = `["Capital"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "database") && strings.Contains(strings.ToLower(prompt), "system") {
+		if strings.Contains(queryLower, "database") && strings.Contains(queryLower, "system") {
 			highLevel = `["Database"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "mockentity") {
+		if strings.Contains(queryLower, "mockentity") {
 			lowLevel = `["MockEntity"]`
 		}
-		if strings.Contains(strings.ToLower(prompt), "fox") {
+		if strings.Contains(queryLower, "fox") {
 			lowLevel = `["Fox"]`
+		}
+		// 处理 "French capital city" 查询
+		if strings.Contains(queryLower, "french") || strings.Contains(queryLower, "paris") {
+			lowLevel = `["Paris"]`
+			highLevel = `["Capital", "City"]`
+		}
+		// 处理 "Eiffel Tower" 查询
+		if strings.Contains(queryLower, "eiffel") || strings.Contains(queryLower, "tower") {
+			lowLevel = `["Eiffel Tower"]`
+			highLevel = `["Landmark", "Architecture"]`
 		}
 
 		return fmt.Sprintf(`{
