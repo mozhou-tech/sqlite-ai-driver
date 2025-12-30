@@ -12,7 +12,7 @@ import (
 	openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
 	"github.com/cloudwego/eino/schema"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/transformer/splitter/tfidf"
-	lightragindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/lightrag"
+	lightrag "github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
 )
 
@@ -50,8 +50,8 @@ func main() {
 		log.Fatalf("DOCX 文件不存在: %s", docxPath)
 	}
 
-	// 3. 初始化 Embedder（使用 eino 的 embedding 接口）
-	embedder, err := openaiembedding.NewEmbedder(ctx, &openaiembedding.EmbeddingConfig{
+	// 3. 初始化 Embedder（使用 lightrag 的 OpenAI embedder）
+	embedder, err := lightrag.NewOpenAIEmbedder(ctx, &openaiembedding.EmbeddingConfig{
 		APIKey:  apiKey,
 		BaseURL: baseURL,
 		Model:   "text-embedding-v4",
@@ -60,7 +60,27 @@ func main() {
 		log.Fatalf("创建 embedder 失败: %v", err)
 	}
 
-	// 4. 创建 TFIDF Splitter
+	// 4. 初始化 LLM（用于知识图谱提取）
+	llm := lightrag.NewOpenAILLM(&lightrag.OpenAIConfig{
+		APIKey:  apiKey,
+		BaseURL: baseURL,
+		Model:   model,
+	})
+
+	// 5. 创建 LightRAG 实例（完整版本，支持知识图谱）
+	rag := lightrag.New(lightrag.Options{
+		WorkingDir: workingDir,
+		Embedder:   embedder,
+		LLM:        llm,
+	})
+
+	// 初始化存储
+	if err := rag.InitializeStorages(ctx); err != nil {
+		log.Fatalf("初始化存储失败: %v", err)
+	}
+	defer rag.FinalizeStorages(ctx)
+
+	// 6. 创建 TFIDF Splitter
 	splitter, err := tfidf.NewTFIDFSplitter(ctx, &tfidf.Config{
 		SimilarityThreshold:  0.2,
 		MaxChunkSize:         800,  // 800 字符
@@ -76,20 +96,7 @@ func main() {
 		log.Fatalf("创建 TFIDF splitter 失败: %v", err)
 	}
 
-	// 5. 创建 LightRAG Indexer，并传入 TFIDF splitter 作为 transformer
-	// 使用 pkg/eino-ext/indexer/lightrag 中的 LightRAG 实现（使用 DuckDB 和 Cayley graph）
-	lightRAGInstance, err := lightragindexer.New(lightragindexer.Options{
-		DuckDBPath: filepath.Join(workingDir, "lightrag.duckdb"),
-		GraphPath:  filepath.Join(workingDir, "lightrag.graph.db"),
-		Embedder:   embedder,
-		TableName:  "documents",
-	})
-	if err != nil {
-		log.Fatalf("创建 LightRAG 实例失败: %v", err)
-	}
-	defer lightRAGInstance.Close()
-
-	// 6. 解析 DOCX 文件
+	// 7. 解析 DOCX 文件
 	fmt.Printf("正在解析 DOCX 文件: %s\n", docxPath)
 	docxParser, err := docxparser.NewDocxParser(ctx, &docxparser.Config{
 		ToSections:      false, // 合并所有章节为一个文档
@@ -170,8 +177,8 @@ func main() {
 		fmt.Printf("========================================\n\n")
 	}
 
-	// 7. 使用 Indexer 索引文档
-	fmt.Println("正在使用 TFIDF splitter 和 LightRAG indexer 进行索引...")
+	// 8. 使用 TFIDF splitter 分割文档，然后使用 LightRAG 进行索引
+	fmt.Println("正在使用 TFIDF splitter 和 LightRAG 进行索引...")
 
 	// 调试：显示分割前的文档数量
 	fmt.Printf("分割前文档数量: %d\n", len(docs))
@@ -198,18 +205,22 @@ func main() {
 	}
 	fmt.Println("========== 所有 Chunk 内容打印完成 ==========\n")
 
-	// 创建一个不包含 transformer 的 indexer，使用已经分割好的文档进行索引
-	// 这样可以避免重复分割
-	indexer, err := lightragindexer.NewIndexer(ctx, &lightragindexer.IndexerConfig{
-		LightRAG:    lightRAGInstance,
-		Transformer: nil, // 不配置 transformer，因为文档已经分割好了
-	})
-	if err != nil {
-		log.Fatalf("创建 indexer 失败: %v", err)
+	// 将文档转换为 map 格式，用于 LightRAG InsertBatch
+	documents := make([]map[string]any, 0, len(chunkedDocs))
+	for _, doc := range chunkedDocs {
+		docMap := make(map[string]any)
+		docMap["id"] = doc.ID
+		docMap["content"] = doc.Content
+		if doc.MetaData != nil {
+			for k, v := range doc.MetaData {
+				docMap[k] = v
+			}
+		}
+		documents = append(documents, docMap)
 	}
 
-	// 使用已经分割好的文档进行索引
-	ids, err := indexer.Store(ctx, chunkedDocs)
+	// 使用 LightRAG 的 InsertBatch 方法进行索引（会自动提取知识图谱）
+	ids, err := rag.InsertBatch(ctx, documents)
 	if err != nil {
 		log.Fatalf("索引文档失败: %v", err)
 	}
@@ -232,7 +243,12 @@ func main() {
 		fmt.Println("3. 文档内容格式问题")
 	}
 
-	fmt.Println("索引完成！")
+	// 等待所有后台的知识图谱提取任务完成
+	fmt.Println("\n等待知识图谱提取任务完成...")
+	rag.Wait()
+	fmt.Println("知识图谱提取完成！")
+
+	fmt.Println("\n索引完成！")
 }
 
 // writeDocxToMarkdown 将DOCX解析结果写入Markdown文件
