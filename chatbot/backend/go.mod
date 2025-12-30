@@ -88,7 +88,7 @@ require (
 	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
-	google.golang.org/protobuf v1.36.5 // indirect
+	google.golang.org/protobuf v1.36.7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.66.3 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
@@ -97,4 +97,5 @@ require (
 )
 
 replace github.com/mozhou-tech/sqlite-ai-driver => ../../
+
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf => ../../pkg/eino-ext/document/parser/pdf

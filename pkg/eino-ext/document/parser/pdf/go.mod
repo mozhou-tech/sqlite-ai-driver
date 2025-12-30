@@ -1,6 +1,6 @@
 module github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf
 
-go 1.23.0
+go 1.24.1
 
 require (
 	github.com/cloudwego/eino v0.6.0
