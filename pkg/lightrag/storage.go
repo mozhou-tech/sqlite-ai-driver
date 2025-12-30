@@ -482,7 +482,7 @@ func (c *duckdbCollection) Find(ctx context.Context, opts FindOptions) ([]Docume
 
 	// TODO: 实现 Selector 过滤
 
-	selectSQL += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
+	selectSQL += fmt.Sprintf(" ORDER BY created_at DESC LIMIT %d OFFSET %d", limit, offset)
 
 	rows, err := c.db.QueryContext(ctx, selectSQL)
 	if err != nil {
