@@ -70,6 +70,7 @@ func main() {
 		IDGenerator: func(ctx context.Context, originalID string, splitIndex int) string {
 			return fmt.Sprintf("%s_chunk_%d", originalID, splitIndex)
 		},
+		FilterGarbageChunks: true, // 启用乱码过滤
 	})
 	if err != nil {
 		log.Fatalf("创建 TFIDF splitter 失败: %v", err)

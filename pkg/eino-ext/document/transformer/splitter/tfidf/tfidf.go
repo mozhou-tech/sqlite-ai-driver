@@ -77,9 +77,13 @@ type Config struct {
 	// IDGenerator is an optional function to generate new IDs for split chunks.
 	// If nil, the original document ID will be used for all splits.
 	IDGenerator IDGenerator
+	// FilterGarbageChunks specifies whether to filter out garbage chunks (like corrupted text from PDF parsing).
+	// Defaults to true. Set to false to disable filtering.
+	FilterGarbageChunks bool
 }
 
 func NewTFIDFSplitter(ctx context.Context, config *Config) (document.Transformer, error) {
+	wasNil := config == nil
 	if config == nil {
 		config = &Config{}
 	}
@@ -98,6 +102,15 @@ func NewTFIDFSplitter(ctx context.Context, config *Config) (document.Transformer
 	if config.SimilarityThreshold <= 0 {
 		config.SimilarityThreshold = 0.2
 	}
+	// FilterGarbageChunks defaults to true
+	// Since bool zero value is false, we can't distinguish "unset" from "explicitly false"
+	// We default to true when config was nil (user didn't provide config)
+	// If user provided config with FilterGarbageChunks: false, we respect that
+	if wasNil {
+		config.FilterGarbageChunks = true
+	}
+	// Note: If user creates Config{} without setting FilterGarbageChunks, it will be false (zero value)
+	// In that case, filtering will be disabled. To enable, user must explicitly set FilterGarbageChunks: true
 	idGenerator := config.IDGenerator
 	if idGenerator == nil {
 		idGenerator = defaultIDGenerator
@@ -356,6 +369,29 @@ func (s *tfidfSplitter) groupSentences(sentences []string, tfidfMatrix [][]float
 		}
 	}
 
+	// Filter garbage chunks if enabled
+	if s.config.FilterGarbageChunks {
+		filteredChunks := make([]string, 0, len(chunks))
+		for i, chunk := range chunks {
+			if isGarbageChunk(chunk) {
+				chunkLen := utf8.RuneCountInString(chunk)
+				// 截取前100个字符用于日志显示
+				preview := chunk
+				if chunkLen > 100 {
+					runes := []rune(chunk)
+					preview = string(runes[:100]) + "..."
+				}
+				fmt.Printf("[DEBUG] 过滤乱码 Chunk %d (长度: %d 字符): %q\n", i+1, chunkLen, preview)
+			} else {
+				filteredChunks = append(filteredChunks, chunk)
+			}
+		}
+		if len(filteredChunks) < len(chunks) {
+			fmt.Printf("[DEBUG] 共过滤 %d 个乱码 chunk，保留 %d 个有效 chunk\n", len(chunks)-len(filteredChunks), len(filteredChunks))
+		}
+		return filteredChunks
+	}
+
 	return chunks
 }
 
@@ -376,6 +412,84 @@ func removeAllWhitespace(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// isGarbageChunk 基于 sego 分词判断一个 chunk 是否是乱码
+// 乱码特征：
+// 1. 有效词比例过低（有效词比例 < 20%）
+// 2. 有效词比例较低且单字符词比例过高（有效词比例 < 30% 且单字符词比例 > 50%）
+func isGarbageChunk(chunk string) bool {
+	if len(chunk) == 0 {
+		return false // 空 chunk 不算乱码
+	}
+
+	// 基于 sego 分词判断
+	segmenter, err := sego.GetSegmenter()
+	if err != nil {
+		// 如果 sego 初始化失败，无法判断，返回 false（不认为是乱码）
+		return false
+	}
+
+	segments := segmenter.Segment([]byte(chunk))
+	if len(segments) == 0 {
+		// 如果分词结果为空，可能是乱码
+		return true
+	}
+
+	var (
+		validTokens      int // 有效词：长度 >= 2 且包含有效字符的词
+		singleCharTokens int // 单字符词
+		totalTokens      int // 总词数
+	)
+
+	for _, seg := range segments {
+		tokenStr := seg.Token().Text()
+		tokenStr = strings.TrimSpace(tokenStr)
+		if len(tokenStr) == 0 {
+			continue
+		}
+		totalTokens++
+
+		tokenRunes := []rune(tokenStr)
+		tokenLen := len(tokenRunes)
+
+		// 单字符词
+		if tokenLen == 1 {
+			singleCharTokens++
+		} else {
+			// 多字符词，检查是否包含有效字符
+			hasValidChar := false
+			for _, r := range tokenRunes {
+				if unicode.Is(unicode.Han, r) || unicode.IsLetter(r) || unicode.IsNumber(r) {
+					hasValidChar = true
+					break
+				}
+			}
+			if hasValidChar {
+				validTokens++
+			}
+		}
+	}
+
+	if totalTokens == 0 {
+		// 如果分词结果为空，认为是乱码
+		return true
+	}
+
+	validTokenRatio := float64(validTokens) / float64(totalTokens)
+	singleCharRatio := float64(singleCharTokens) / float64(totalTokens)
+
+	// 判断规则：
+	// 1. 如果有效词比例 < 20%，直接认为是乱码
+	// 2. 如果有效词比例 < 30% 且单字符词比例 > 50%，认为是乱码
+	if validTokenRatio < 0.2 {
+		return true
+	}
+	if validTokenRatio < 0.3 && singleCharRatio > 0.5 {
+		return true
+	}
+
+	return false
 }
 
 func (s *tfidfSplitter) initSego() error {

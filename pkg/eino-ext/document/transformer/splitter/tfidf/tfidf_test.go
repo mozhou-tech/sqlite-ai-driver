@@ -383,4 +383,82 @@ func TestTFIDFSplitter(t *testing.T) {
 		convey.So(err, convey.ShouldBeNil)
 		convey.So(len(splitDocs2), convey.ShouldBeGreaterThan, 0)
 	})
+
+	convey.Convey("Test TFIDFSplitter Filter Garbage Chunks", t, func() {
+		ctx := context.Background()
+		config := &Config{
+			SimilarityThreshold:  0.2,
+			MaxChunkSize:         500,
+			MinChunkSize:         10,
+			MaxSentencesPerChunk: 50,
+			FilterGarbageChunks:  true, // 启用乱码过滤
+		}
+
+		splitter, err := NewTFIDFSplitter(ctx, config)
+		convey.So(err, convey.ShouldBeNil)
+
+		// 混合正常文本和乱码文本
+		text := "This is a normal sentence. Au1k)g¡,9&C88DGAA'88DGAA'88DGAA'g¡,9&C264,#A'24\"#,264,#A'264,#A'264,#A'KKE,#A'PKSC%\"LE'88E›K(,#A'88E›K(,#A'88E›K(,#A'8K? Ne,{A'8K? Ne,{A'Oj788NXA:4\",#A'5%K)E{5%—x6y9x67F')7F')7F')24\"#,Au1k)9,,{PKSC%\"LE'Au1k)y9x67F')7F')7F')u5%—x6KxY,KxKSC%\"LE'KxY,? mKSC%\"LE'x4\"%\"LE'\"#,24\"#,\"#,Au1k)Au1k)y9x6yA'\"#,9&Cg¡,x4\"%\"LE'64\"#,24\"#,\"#,Au1k)KxKSC%\"LE'? mKSC%\"LE'y9x6yA'Au1k)88DGAA'\"#,Au1k)g¡,\"#,9&COj788NXA:4\",#A'KKE,#A'Au1k)Au1k)Au1k)88E›K(,#A'9,,{Au1k)D*DBguuh*D*h*uu)5%x6)5%x6)5%x6)5%x6Au1k)ux6&…市级港航? Ne5%\"6. This is another normal sentence."
+		docs := []*schema.Document{
+			{
+				ID:      "doc_garbage",
+				Content: text,
+			},
+		}
+
+		splitDocs, err := splitter.Transform(ctx, docs)
+		convey.So(err, convey.ShouldBeNil)
+
+		// 应该过滤掉乱码 chunk，只保留正常文本
+		convey.So(len(splitDocs), convey.ShouldBeGreaterThan, 0)
+
+		// 验证没有包含明显的乱码
+		for _, d := range splitDocs {
+			// 检查是否包含大量重复的特殊字符序列（乱码特征）
+			content := d.Content
+			hasGarbage := strings.Contains(content, "88DGAA'88DGAA'88DGAA'") ||
+				strings.Contains(content, "Au1k)Au1k)Au1k)") ||
+				strings.Contains(content, "7F')7F')7F'")
+			convey.So(hasGarbage, convey.ShouldBeFalse)
+		}
+	})
+
+	convey.Convey("Test TFIDFSplitter Disable Garbage Filter", t, func() {
+		ctx := context.Background()
+		config := &Config{
+			SimilarityThreshold:  0.2,
+			MaxChunkSize:         500,
+			MinChunkSize:         10,
+			MaxSentencesPerChunk: 50,
+			FilterGarbageChunks:  false, // 禁用乱码过滤
+		}
+
+		splitter, err := NewTFIDFSplitter(ctx, config)
+		convey.So(err, convey.ShouldBeNil)
+
+		text := "Normal text. Au1k)g¡,9&C88DGAA'88DGAA'88DGAA'g¡,9&C264,#A'24\"#,264,#A'264,#A'264,#A'KKE,#A'PKSC%\"LE'88E›K(,#A'88E›K(,#A'88E›K(,#A'8K? Ne,{A'8K? Ne,{A'Oj788NXA:4\",#A'5%K)E{5%—x6y9x67F')7F')7F')24\"#,Au1k)9,,{PKSC%\"LE'Au1k)y9x67F')7F')7F')u5%—x6KxY,KxKSC%\"LE'KxY,? mKSC%\"LE'x4\"%\"LE'\"#,24\"#,\"#,Au1k)Au1k)y9x6yA'\"#,9&Cg¡,x4\"%\"LE'64\"#,24\"#,\"#,Au1k)KxKSC%\"LE'? mKSC%\"LE'y9x6yA'Au1k)88DGAA'\"#,Au1k)g¡,\"#,9&COj788NXA:4\",#A'KKE,#A'Au1k)Au1k)Au1k)88E›K(,#A'9,,{Au1k)D*DBguuh*D*h*uu)5%x6)5%x6)5%x6)5%x6Au1k)ux6&…市级港航? Ne5%\"6. More normal text."
+		docs := []*schema.Document{
+			{
+				ID:      "doc_no_filter",
+				Content: text,
+			},
+		}
+
+		splitDocs, err := splitter.Transform(ctx, docs)
+		convey.So(err, convey.ShouldBeNil)
+
+		// 禁用过滤时，应该保留所有 chunk（包括乱码）
+		convey.So(len(splitDocs), convey.ShouldBeGreaterThan, 0)
+
+		// 应该能找到乱码内容
+		hasGarbage := false
+		for _, d := range splitDocs {
+			if strings.Contains(d.Content, "88DGAA'88DGAA'88DGAA'") ||
+				strings.Contains(d.Content, "Au1k)Au1k)Au1k)") {
+				hasGarbage = true
+				break
+			}
+		}
+		convey.So(hasGarbage, convey.ShouldBeTrue)
+	})
 }
