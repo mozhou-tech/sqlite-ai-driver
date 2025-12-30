@@ -157,6 +157,9 @@ func (l *OpenAILLM) Complete(ctx context.Context, prompt string) (string, error)
 			},
 		},
 		"temperature": 0.7,
+		"extra_body": map[string]interface{}{
+			"enable_thinking": false,
+		},
 	}
 
 	jsonData, err := json.Marshal(reqBody)

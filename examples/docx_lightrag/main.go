@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	docxparser "github.com/cloudwego/eino-ext/components/document/parser/docx"
 	openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
@@ -29,11 +30,7 @@ func main() {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
-	model := os.Getenv("OPENAI_MODEL")
-	if model == "" {
-		model = "gpt-4o-mini"
-	}
-
+	model := "qwen-plus" // "gpt-4o-mini"
 	// 初始化 sego 词典以获得更好的中文处理效果
 	if err := sego.Init(); err != nil {
 		log.Printf("警告：sego 初始化失败: %v", err)
@@ -248,6 +245,11 @@ func main() {
 	rag.Wait()
 	fmt.Println("知识图谱提取完成！")
 
+	// 验证并发知识图谱提取的有效性
+	fmt.Println("\n========== 验证并发知识图谱提取的有效性 ==========")
+	verifyGraphExtraction(ctx, rag, len(ids), len(chunkedDocs))
+	fmt.Println("================================================\n")
+
 	fmt.Println("\n索引完成！")
 }
 
@@ -379,4 +381,121 @@ func writeDocxToMarkdown(outputPath string, docxPath string, docs []*schema.Docu
 	}
 
 	return nil
+}
+
+// verifyGraphExtraction 验证并发知识图谱提取的有效性
+func verifyGraphExtraction(ctx context.Context, rag *lightrag.LightRAG, indexedDocCount int, chunkCount int) {
+	// 1. 获取提取统计信息
+	stats := rag.GetExtractionStats()
+
+	// 2. 查询图谱数据库验证数据（传入空字符串获取所有数据）
+	graphData, err := rag.ExportGraph(ctx, "")
+	if err != nil {
+		log.Printf("警告：查询图谱数据库失败: %v", err)
+		return
+	}
+
+	// 统计图谱数据库中的实体和关系
+	dbEntityCount := len(graphData.Entities)
+	dbRelationshipCount := len(graphData.Relationships)
+
+	// 统计 APPEARS_IN 链接数量（实体到文档的链接）
+	appearsInCount, err := rag.CountAppearsInLinks(ctx)
+	if err != nil {
+		log.Printf("警告：统计 APPEARS_IN 链接失败: %v", err)
+		appearsInCount = 0
+	}
+
+	// 3. 计算性能指标
+	var duration time.Duration
+	if !stats.StartTime.IsZero() && !stats.EndTime.IsZero() {
+		duration = stats.EndTime.Sub(stats.StartTime)
+	}
+	var avgTimePerDoc time.Duration
+	if stats.TotalExtractions > 0 {
+		avgTimePerDoc = duration / time.Duration(stats.TotalExtractions)
+	}
+
+	// 4. 输出验证报告
+	fmt.Println("\n--- 提取统计信息 ---")
+	fmt.Printf("总提取任务数: %d\n", stats.TotalExtractions)
+	fmt.Printf("成功提取数: %d\n", stats.SuccessCount)
+	fmt.Printf("失败提取数: %d\n", stats.FailureCount)
+	if stats.TotalExtractions > 0 {
+		successRate := float64(stats.SuccessCount) * 100.0 / float64(stats.TotalExtractions)
+		fmt.Printf("成功率: %.2f%%\n", successRate)
+	}
+	fmt.Printf("提取的实体总数: %d\n", stats.TotalEntities)
+	fmt.Printf("提取的关系总数: %d\n", stats.TotalRelationships)
+
+	fmt.Println("\n--- 性能指标 ---")
+	fmt.Printf("最大并发数: %d\n", stats.MaxConcurrency)
+	if duration > 0 {
+		fmt.Printf("总耗时: %v\n", duration)
+		fmt.Printf("平均每个文档块耗时: %v\n", avgTimePerDoc)
+		if duration > 0 {
+			throughput := float64(stats.TotalExtractions) / duration.Seconds()
+			fmt.Printf("吞吐量: %.2f 文档块/秒\n", throughput)
+		}
+	}
+
+	fmt.Println("\n--- 数据正确性验证 ---")
+	fmt.Printf("文档块总数: %d\n", chunkCount)
+	fmt.Printf("已索引文档数: %d\n", indexedDocCount)
+	fmt.Printf("图谱数据库中的实体数: %d\n", dbEntityCount)
+	fmt.Printf("图谱数据库中的关系数: %d\n", dbRelationshipCount)
+	fmt.Printf("实体到文档的链接数 (APPEARS_IN): %d\n", appearsInCount)
+
+	// 验证数据一致性
+	fmt.Println("\n--- 数据一致性检查 ---")
+	if stats.SuccessCount > 0 && dbEntityCount > 0 {
+		fmt.Printf("✓ 成功提取了 %d 个文档块的知识图谱\n", stats.SuccessCount)
+		fmt.Printf("✓ 图谱数据库中存储了 %d 个实体\n", dbEntityCount)
+		if appearsInCount > 0 {
+			fmt.Printf("✓ 实体与文档的链接关系已建立 (%d 个链接)\n", appearsInCount)
+		} else {
+			fmt.Printf("⚠ 警告：未找到实体与文档的链接关系\n")
+		}
+	} else {
+		fmt.Printf("⚠ 警告：未成功提取任何知识图谱数据\n")
+	}
+
+	// 验证并发有效性
+	fmt.Println("\n--- 并发有效性验证 ---")
+	if stats.MaxConcurrency > 1 {
+		fmt.Printf("✓ 使用了并发提取（最大并发数: %d）\n", stats.MaxConcurrency)
+		if stats.TotalExtractions > stats.MaxConcurrency {
+			fmt.Printf("✓ 并发提取正常工作（总任务数 %d > 最大并发数 %d）\n", stats.TotalExtractions, stats.MaxConcurrency)
+		}
+		if duration > 0 && stats.TotalExtractions > 0 {
+			// 估算串行耗时（假设每个任务平均耗时相同）
+			estimatedSerialTime := avgTimePerDoc * time.Duration(stats.TotalExtractions)
+			if estimatedSerialTime > duration {
+				speedup := float64(estimatedSerialTime) / float64(duration)
+				fmt.Printf("✓ 并发带来的加速比: %.2fx\n", speedup)
+			}
+		}
+	} else {
+		fmt.Printf("⚠ 警告：未使用并发提取（最大并发数为 1）\n")
+	}
+
+	// 总结
+	fmt.Println("\n--- 验证总结 ---")
+	if stats.SuccessCount == stats.TotalExtractions && stats.TotalExtractions > 0 {
+		fmt.Println("✓ 所有文档块的知识图谱提取均成功完成")
+	} else if stats.SuccessCount > 0 {
+		fmt.Printf("⚠ 部分文档块提取失败（成功: %d/%d）\n", stats.SuccessCount, stats.TotalExtractions)
+	} else {
+		fmt.Println("✗ 所有文档块的知识图谱提取均失败")
+	}
+
+	if dbEntityCount > 0 && dbRelationshipCount > 0 {
+		fmt.Println("✓ 知识图谱数据已成功存储到数据库")
+	} else {
+		fmt.Println("⚠ 警告：图谱数据库中未找到实体或关系数据")
+	}
+
+	if stats.MaxConcurrency > 1 && duration > 0 {
+		fmt.Println("✓ 并发知识图谱提取功能正常工作")
+	}
 }

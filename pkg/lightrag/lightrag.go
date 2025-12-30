@@ -14,6 +14,18 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// ExtractionStats 知识图谱提取统计信息
+type ExtractionStats struct {
+	TotalExtractions   int       // 总提取任务数
+	SuccessCount       int       // 成功提取数
+	FailureCount       int       // 失败提取数
+	TotalEntities      int       // 提取的实体总数
+	TotalRelationships int       // 提取的关系总数
+	StartTime          time.Time // 开始时间
+	EndTime            time.Time // 结束时间
+	MaxConcurrency     int       // 最大并发数
+}
+
 // LightRAG 基于新的driver实现的 LightRAG
 type LightRAG struct {
 	db         Database
@@ -32,6 +44,10 @@ type LightRAG struct {
 	initialized bool
 	wg          sync.WaitGroup
 	llmSem      chan struct{} // 用于限制 LLM 并发
+
+	// 统计信息
+	stats      ExtractionStats
+	statsMutex sync.RWMutex // 保护统计信息的读写
 }
 
 // Options LightRAG 配置选项
@@ -45,13 +61,17 @@ type Options struct {
 // New 创建 LightRAG 实例
 func New(opts Options) *LightRAG {
 	if opts.MaxConcurrentLLM <= 0 {
-		opts.MaxConcurrentLLM = 10
+		opts.MaxConcurrentLLM = 20
 	}
 	return &LightRAG{
 		workingDir: opts.WorkingDir,
 		embedder:   opts.Embedder,
 		llm:        opts.LLM,
 		llmSem:     make(chan struct{}, opts.MaxConcurrentLLM),
+		stats: ExtractionStats{
+			MaxConcurrency: opts.MaxConcurrentLLM,
+			StartTime:      time.Now(),
+		},
 	}
 }
 
@@ -288,12 +308,23 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 		return fmt.Errorf("graph database is not available")
 	}
 
+	// 更新统计：增加总提取任务数
+	r.statsMutex.Lock()
+	r.stats.TotalExtractions++
+	r.statsMutex.Unlock()
+
 	promptStr, err := GetExtractionPrompt(ctx, text)
 	if err != nil {
+		r.statsMutex.Lock()
+		r.stats.FailureCount++
+		r.statsMutex.Unlock()
 		return fmt.Errorf("failed to get extraction prompt: %w", err)
 	}
 	response, err := r.llm.Complete(ctx, promptStr)
 	if err != nil {
+		r.statsMutex.Lock()
+		r.stats.FailureCount++
+		r.statsMutex.Unlock()
 		return err
 	}
 
@@ -306,6 +337,9 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 		idxStart = strings.Index(jsonStr, "[")
 		idxEnd = strings.LastIndex(jsonStr, "]")
 		if idxStart == -1 || idxEnd == -1 || idxEnd < idxStart {
+			r.statsMutex.Lock()
+			r.stats.FailureCount++
+			r.statsMutex.Unlock()
 			return fmt.Errorf("no JSON object or array found in response: %s", response)
 		}
 	}
@@ -313,6 +347,9 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 
 	var result ExtractionResult
 	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		r.statsMutex.Lock()
+		r.stats.FailureCount++
+		r.statsMutex.Unlock()
 		return fmt.Errorf("failed to parse extraction result: %w, response: %s", err, response)
 	}
 
@@ -354,6 +391,13 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 		}
 	}
 
+	// 更新统计：成功提取
+	r.statsMutex.Lock()
+	r.stats.SuccessCount++
+	r.stats.TotalEntities += len(result.Entities)
+	r.stats.TotalRelationships += len(result.Relationships)
+	r.statsMutex.Unlock()
+
 	return nil
 }
 
@@ -385,6 +429,13 @@ func (r *LightRAG) InsertBatch(ctx context.Context, documents []map[string]any) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to bulk insert documents: %w", err)
 	}
+
+	// 记录批量提取开始时间（如果这是第一次批量提取）
+	r.statsMutex.Lock()
+	if r.stats.StartTime.IsZero() {
+		r.stats.StartTime = time.Now()
+	}
+	r.statsMutex.Unlock()
 
 	ids := make([]string, 0, len(res))
 	for _, doc := range res {
@@ -1126,6 +1177,54 @@ func (r *LightRAG) GetSubgraph(ctx context.Context, nodeID string, depth int) (*
 // Wait 等待所有后台任务完成
 func (r *LightRAG) Wait() {
 	r.wg.Wait()
+	// 记录结束时间
+	r.statsMutex.Lock()
+	r.stats.EndTime = time.Now()
+	r.statsMutex.Unlock()
+}
+
+// GetExtractionStats 获取知识图谱提取统计信息
+func (r *LightRAG) GetExtractionStats() ExtractionStats {
+	r.statsMutex.RLock()
+	defer r.statsMutex.RUnlock()
+	// 返回副本以避免竞态条件
+	return ExtractionStats{
+		TotalExtractions:   r.stats.TotalExtractions,
+		SuccessCount:       r.stats.SuccessCount,
+		FailureCount:       r.stats.FailureCount,
+		TotalEntities:      r.stats.TotalEntities,
+		TotalRelationships: r.stats.TotalRelationships,
+		StartTime:          r.stats.StartTime,
+		EndTime:            r.stats.EndTime,
+		MaxConcurrency:     r.stats.MaxConcurrency,
+	}
+}
+
+// CountAppearsInLinks 统计 APPEARS_IN 链接的数量（实体到文档的链接）
+func (r *LightRAG) CountAppearsInLinks(ctx context.Context) (int, error) {
+	if r == nil {
+		return 0, fmt.Errorf("LightRAG instance is nil")
+	}
+	if !r.initialized {
+		return 0, fmt.Errorf("storages not initialized")
+	}
+	if r.graph == nil {
+		return 0, fmt.Errorf("graph database not available")
+	}
+
+	triples, err := r.graph.AllTriples(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get all triples: %w", err)
+	}
+
+	count := 0
+	for _, t := range triples {
+		if t.Predicate == "APPEARS_IN" {
+			count++
+		}
+	}
+
+	return count, nil
 }
 
 // FinalizeStorages 关闭存储资源
