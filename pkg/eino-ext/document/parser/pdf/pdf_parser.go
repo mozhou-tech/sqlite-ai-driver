@@ -81,12 +81,7 @@ func (pp *PDFParser) Parse(ctx context.Context, reader io.Reader, opts ...parser
 		if p.V.IsNull() { // ledongthuc/pdf.Page is a struct, its internal value V is checked via IsNull()
 			fmt.Printf("[PDF Parser] 警告：页面 %d 无效，跳过\n", i)
 			skippedPages++
-			if toPages {
-				docs = append(docs, &schema.Document{
-					Content:  "",
-					MetaData: commonOpts.ExtraMeta,
-				})
-			}
+			// 不再创建空文档，直接跳过无效页面
 			continue
 		}
 
@@ -111,13 +106,7 @@ func (pp *PDFParser) Parse(ctx context.Context, reader io.Reader, opts ...parser
 			// 跳过有问题的页面，继续处理其他页面
 			fmt.Printf("[PDF Parser] 警告：页面 %d 解析失败: %v，跳过此页\n", i, err)
 			skippedPages++
-			// 为跳过的页面创建一个空文档，保持页面顺序
-			if toPages {
-				docs = append(docs, &schema.Document{
-					Content:  "",
-					MetaData: commonOpts.ExtraMeta,
-				})
-			}
+			// 不再创建空文档，直接跳过解析失败的页面
 			continue
 		}
 
@@ -135,13 +124,7 @@ func (pp *PDFParser) Parse(ctx context.Context, reader io.Reader, opts ...parser
 		if textLength < minContentLength {
 			fmt.Printf("[PDF Parser] 页面 %d: 内容长度 %d < %d，跳过此页\n", i, textLength, minContentLength)
 			skippedPages++
-			// 为跳过的页面创建一个空文档，保持页面顺序
-			if toPages {
-				docs = append(docs, &schema.Document{
-					Content:  "",
-					MetaData: commonOpts.ExtraMeta,
-				})
-			}
+			// 不再创建空文档，直接跳过内容过短的页面
 			continue
 		}
 

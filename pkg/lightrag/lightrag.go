@@ -92,7 +92,7 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 	r.docs = docs
 
 	// 使用 errgroup 并行初始化搜索索引
-	g, gCtx := errgroup.WithContext(ctx)
+	g, _ := errgroup.WithContext(ctx)
 
 	// 初始化全文搜索
 	g.Go(func() error {
@@ -117,7 +117,9 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 				Identifier: "docs_vector",
 				DocToEmbedding: func(doc map[string]any) ([]float64, error) {
 					content, _ := doc["content"].(string)
-					return r.embedder.Embed(gCtx, content)
+					// 使用 context.Background() 避免 context canceled 错误
+					// 后台 worker 处理时，原始的 context 可能已被取消
+					return r.embedder.Embed(context.Background(), content)
 				},
 				Dimensions: r.embedder.Dimensions(),
 			})

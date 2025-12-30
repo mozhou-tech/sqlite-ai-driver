@@ -17,6 +17,7 @@ require (
 	github.com/smartystreets/goconvey v1.8.1
 	github.com/viant/afs v1.20.0
 	golang.org/x/sync v0.18.0
+	golang.org/x/time v0.5.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
 	modernc.org/sqlite v1.38.2

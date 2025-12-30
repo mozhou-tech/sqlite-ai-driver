@@ -14,7 +14,7 @@ interface Message {
   content: string;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:45111/api";
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -248,7 +248,7 @@ export default function Home() {
             ref={fileInputRef}
             onChange={handleFileUpload}
             className="hidden"
-            accept=".txt,.md,.pdf"
+            accept=".txt,.md,.pdf,.docx,.doc"
           />
         </div>
       </header>

@@ -68,7 +68,7 @@ func main() {
 	// 启动服务器
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "45111"
 	}
 	log.Printf("Server starting on port %s", port)
 
@@ -188,14 +188,14 @@ func initLightRAG() error {
 
 	// 创建 TFIDF Splitter
 	splitter, err := tfidf.NewTFIDFSplitter(ctx, &tfidf.Config{
-		SimilarityThreshold:  0.2,
-		MaxChunkSize:         800,  // 从 10 句子改为 800 字符
-		MinChunkSize:         200,  // 增加最小字符限制
-		MaxSentencesPerChunk: 10,   // 保持原来的句子数限制
-		UseSego:              true, // 使用 sego 进行中文分词
+		SimilarityThreshold: 0.2,
+		MaxChunkSize:        800,  // 从 10 句子改为 800 字符
+		MinChunkSize:        600,  // 增加最小字符限制
+		UseSego:             true, // 使用 sego 进行中文分词
 		IDGenerator: func(ctx context.Context, originalID string, splitIndex int) string {
 			return fmt.Sprintf("%s_chunk_%d", originalID, splitIndex)
 		},
+		FilterGarbageChunks: true, // 启用乱码过滤
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create TFIDF splitter: %w", err)
@@ -414,11 +414,24 @@ func (i *LightRAGIndexer) Store(ctx context.Context, docs []*schema.Document, op
 		transformedDocs = docs
 	}
 
+	// 过滤掉空内容的文档
 	toStore := make([]map[string]any, 0, len(transformedDocs))
+	skippedEmpty := 0
 	for _, doc := range transformedDocs {
+		// 跳过空内容或只包含空白字符的文档
+		content := strings.TrimSpace(doc.Content)
+		if content == "" {
+			skippedEmpty++
+			logrus.WithFields(logrus.Fields{
+				"doc_id": doc.ID,
+				"reason": "empty_content",
+			}).Debug("Skipping document with empty content")
+			continue
+		}
+
 		m := map[string]any{
 			"id":      doc.ID,
-			"content": doc.Content,
+			"content": content, // 使用清理后的内容
 		}
 		for k, v := range doc.MetaData {
 			m[k] = v
@@ -426,13 +439,31 @@ func (i *LightRAGIndexer) Store(ctx context.Context, docs []*schema.Document, op
 		toStore = append(toStore, m)
 	}
 
+	if skippedEmpty > 0 {
+		logrus.WithField("skipped_empty_count", skippedEmpty).Info("Filtered out documents with empty content")
+	}
+
+	if len(toStore) == 0 {
+		logrus.Warn("No valid documents to index after filtering")
+		return []string{}, nil
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"total_docs":    len(toStore),
+		"skipped_empty": skippedEmpty,
+	}).Info("Starting batch insertion with embedding generation")
+
+	// InsertBatch 会同步执行 embedding（在 BulkUpsert 中）
 	ids, err := i.rag.InsertBatch(ctx, toStore)
 	if err != nil {
 		logrus.WithError(err).Error("LightRAG indexing failed")
 		return nil, err
 	}
 
-	logrus.WithField("count", len(ids)).Info("Indexed documents into LightRAG successfully")
+	logrus.WithFields(logrus.Fields{
+		"indexed_count": len(ids),
+		"total_docs":    len(toStore),
+	}).Info("Indexed documents into LightRAG successfully with embeddings")
 	return ids, nil
 }
 
@@ -611,7 +642,9 @@ func handleUploadDocument(c *gin.Context) {
 		return
 	}
 
-	ctx := c.Request.Context()
+	// 为上传操作创建带更长超时的 context（10分钟，足够处理大文件和 embedding）
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Minute)
+	defer cancel()
 
 	// 初始化解析器
 	if err := initParsers(ctx); err != nil {
@@ -634,12 +667,29 @@ func handleUploadDocument(c *gin.Context) {
 	var docs []*schema.Document
 
 	if parser, ok := parsers[ext]; ok {
-		// 使用对应的解析器解析文档
-		switch p := parser.(type) {
-		case interface {
-			Parse(context.Context, io.Reader) ([]*schema.Document, error)
-		}:
-			docs, err = p.Parse(ctx, f)
+		// 根据文件类型调用对应的解析器
+		switch ext {
+		case ".pdf":
+			if pdfParser, ok := parser.(*pdfparser.PDFParser); ok {
+				// PDF 解析器的 Parse 方法签名: Parse(ctx context.Context, reader io.Reader, opts ...parser.Option)
+				docs, err = pdfParser.Parse(ctx, f)
+			} else {
+				err = fmt.Errorf("PDF parser type assertion failed")
+			}
+		case ".docx":
+			if docxParser, ok := parser.(*docxparser.DocxParser); ok {
+				// DOCX 解析器的 Parse 方法签名: Parse(ctx context.Context, reader io.Reader, opts ...parser.Option)
+				docs, err = docxParser.Parse(ctx, f)
+			} else {
+				err = fmt.Errorf("DOCX parser type assertion failed")
+			}
+		case ".html", ".htm":
+			if htmlParser, ok := parser.(*htmlparser.Parser); ok {
+				// HTML 解析器的 Parse 方法签名: Parse(ctx context.Context, reader io.Reader, opts ...parser.Option)
+				docs, err = htmlParser.Parse(ctx, f)
+			} else {
+				err = fmt.Errorf("HTML parser type assertion failed")
+			}
 		default:
 			err = fmt.Errorf("unsupported parser type for extension: %s", ext)
 		}
@@ -695,19 +745,50 @@ func handleUploadDocument(c *gin.Context) {
 		doc.MetaData["filetype"] = ext
 	}
 
-	// 使用 Eino Indexer 插入文档
-	_, err = einoIndexer.Store(ctx, docs)
+	// 使用 Eino Indexer 插入文档（包含 embedding 操作）
+	logrus.WithFields(logrus.Fields{
+		"filename":  file.Filename,
+		"filetype":  ext,
+		"doc_count": len(docs),
+	}).Info("Starting document indexing with embedding")
+
+	ids, err := einoIndexer.Store(ctx, docs)
 	if err != nil {
+		logrus.WithError(err).Error("Failed to index documents")
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to insert document via Eino: %v", err)})
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"message":   "File uploaded and indexed successfully",
-		"filename":  file.Filename,
-		"filetype":  ext,
-		"doc_count": len(docs),
-	})
+	// 检查 context 是否被取消（可能表示超时）
+	contextErr := ctx.Err()
+	var warning string
+	if contextErr == context.DeadlineExceeded {
+		warning = "Upload timeout: Some embeddings may not have completed. Please check logs for details."
+		logrus.WithError(contextErr).Warn("Upload context deadline exceeded")
+	} else if contextErr == context.Canceled {
+		warning = "Upload canceled: Some embeddings may not have completed. Please check logs for details."
+		logrus.WithError(contextErr).Warn("Upload context canceled")
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"filename":    file.Filename,
+		"filetype":    ext,
+		"doc_count":   len(docs),
+		"indexed_ids": len(ids),
+		"context_err": contextErr,
+	}).Info("Documents indexed with embeddings")
+
+	response := gin.H{
+		"message":       "File uploaded and indexed successfully",
+		"filename":      file.Filename,
+		"filetype":      ext,
+		"doc_count":     len(docs),
+		"indexed_count": len(ids),
+	}
+	if warning != "" {
+		response["warning"] = warning
+	}
+	c.JSON(200, response)
 }
 
 func handleListDocuments(c *gin.Context) {

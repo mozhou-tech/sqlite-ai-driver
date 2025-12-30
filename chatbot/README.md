@@ -42,8 +42,8 @@ export OPENAI_BASE_URL="https://api.openai.com/v1"
 # RAG 工作目录（可选，默认为 ./rag_storage）
 export RAG_WORKING_DIR="./rag_storage"
 
-# 服务端口（可选，默认为 8080）
-export PORT="8080"
+# 服务端口（可选，默认为 45111）
+export PORT="45111"
 ```
 
 ### 前端环境变量
@@ -51,8 +51,8 @@ export PORT="8080"
 创建 `frontend/.env.local` 文件：
 
 ```bash
-# 后端 API 地址（可选，默认为 http://localhost:8080/api）
-NEXT_PUBLIC_API_URL=http://localhost:8080/api
+# 后端 API 地址（可选，默认为 http://localhost:45111/api）
+NEXT_PUBLIC_API_URL=http://localhost:45111/api
 ```
 
 ## 快速开始
@@ -65,7 +65,7 @@ go mod tidy
 go run main.go
 ```
 
-后端服务将在 `http://localhost:8080` 启动。
+后端服务将在 `http://localhost:45111` 启动。
 
 ### 2. 启动前端应用
 
@@ -75,21 +75,21 @@ npm install
 npm run dev
 ```
 
-前端应用将在 `http://localhost:3000` 启动。
+前端应用将在 `http://localhost:45112` 启动。
 
 ### 3. 添加文档
 
 在开始对话前，您可以通过 API 添加文档到知识库：
 
 ```bash
-curl -X POST http://localhost:8080/api/documents \
+curl -X POST http://localhost:45111/api/documents \
   -H "Content-Type: application/json" \
   -d '{"content": "您的文档内容..."}'
 ```
 
 ### 4. 开始对话
 
-打开浏览器访问 `http://localhost:3000`，开始与 chatbot 对话。
+打开浏览器访问 `http://localhost:45112`，开始与 chatbot 对话。
 
 ## API 接口
 

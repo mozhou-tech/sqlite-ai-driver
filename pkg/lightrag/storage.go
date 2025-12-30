@@ -8,11 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	duckdb_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/time/rate"
 )
 
 // --- Interfaces ---
@@ -245,11 +248,36 @@ func (d *duckdbDatabase) Collection(ctx context.Context, name string, schema Sch
 		_, _ = d.db.ExecContext(ctx, alterTableSQL)
 	}
 
+	// 创建 embedding_status 列用于跟踪 embedding 状态
+	// 状态值: 'pending' (待处理), 'processing' (处理中), 'completed' (已完成), 'failed' (失败)
+	statusColumn := "embedding_status"
+	err = d.db.QueryRowContext(ctx, checkColumnSQL, statusColumn).Scan(&count)
+	if err == nil && count == 0 {
+		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s VARCHAR DEFAULT 'pending'`, tableName, statusColumn)
+		_, _ = d.db.ExecContext(ctx, alterTableSQL)
+	}
+
 	return &duckdbCollection{
 		db:        d.db,
 		tableName: tableName,
 		schema:    schema,
 	}, nil
+}
+
+// getEmbeddingLimiter 获取或初始化 embedding 速率限制器（每秒5次）
+func (c *duckdbCollection) getEmbeddingLimiter() *rate.Limiter {
+	c.limiterOnce.Do(func() {
+		// 每秒5次，burst 为1（严格限制，不允许突发）
+		// rate.Limit(5) 表示每秒5次 = 每200ms一次
+		// burst 1 表示令牌桶中最多有1个令牌，每次请求消耗1个令牌
+		// 这样确保严格按每秒5次的速率执行，不允许突发
+		c.embeddingLimiter = rate.NewLimiter(rate.Limit(5), 1)
+		logrus.WithFields(logrus.Fields{
+			"rate":  "5 per second",
+			"burst": 1,
+		}).Info("Embedding rate limiter initialized")
+	})
+	return c.embeddingLimiter
 }
 
 func (d *duckdbDatabase) Graph() GraphDatabase {
@@ -279,10 +307,18 @@ func (d *duckdbDatabase) Close(ctx context.Context) error {
 
 // duckdbCollection 基于DuckDB的集合实现
 type duckdbCollection struct {
-	db             *sql.DB
-	tableName      string
-	schema         Schema
-	vectorSearches []*duckdbVectorSearch // 存储所有注册的向量搜索配置
+	db               *sql.DB
+	tableName        string
+	schema           Schema
+	vectorSearches   []*duckdbVectorSearch // 存储所有注册的向量搜索配置
+	embeddingLimiter *rate.Limiter         // Embedding API 速率限制器（每秒5次）
+	limiterOnce      sync.Once             // 确保 limiter 只初始化一次
+
+	// 后台 embedding worker 相关字段
+	embeddingWorkerCtx    context.Context
+	embeddingWorkerCancel context.CancelFunc
+	embeddingWorkerWg     sync.WaitGroup
+	embeddingWorkerOnce   sync.Once
 }
 
 func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Document, error) {
@@ -303,12 +339,13 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 	metadataJSON, _ := json.Marshal(metadata)
 
 	insertSQL := fmt.Sprintf(`
-		INSERT INTO %s (id, content, metadata, _rev)
-		VALUES (?, ?, ?::JSON, 1)
+		INSERT INTO %s (id, content, metadata, _rev, embedding_status)
+		VALUES (?, ?, ?::JSON, 1, 'pending')
 		ON CONFLICT (id) DO UPDATE SET
 			content = EXCLUDED.content,
 			metadata = EXCLUDED.metadata,
-			_rev = %s._rev + 1
+			_rev = %s._rev + 1,
+			embedding_status = 'pending'
 	`, c.tableName, c.tableName)
 
 	_, err := c.db.ExecContext(ctx, insertSQL, id, content, string(metadataJSON))
@@ -331,29 +368,10 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 		}
 	}
 
-	// 更新向量列（如果有向量搜索配置）
-	for _, vs := range c.vectorSearches {
-		if vs.config.DocToEmbedding != nil {
-			embedding, err := vs.config.DocToEmbedding(doc)
-			if err == nil && len(embedding) > 0 {
-				// 转换为字符串格式
-				vectorStr := "["
-				for i, v := range embedding {
-					if i > 0 {
-						vectorStr += ", "
-					}
-					vectorStr += fmt.Sprintf("%g", v)
-				}
-				vectorStr += "]"
-				vectorColumn := "vector_" + vs.config.Identifier
-				updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
-				_, err = c.db.ExecContext(ctx, updateSQL, vectorStr, id)
-				if err != nil {
-					logrus.WithError(err).Errorf("Failed to update vector column %s for document %s", vectorColumn, id)
-				}
-			}
-		}
-	}
+	// 启动后台 embedding worker（如果还没有启动）
+	c.startEmbeddingWorker(ctx)
+
+	// 不再立即处理 embedding，而是标记为 pending，由后台 worker 异步处理
 
 	return &duckdbDocument{
 		id:      id,
@@ -521,12 +539,13 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 
 		// 不使用 PrepareContext，直接使用 ExecContext
 		insertSQL := fmt.Sprintf(`
-			INSERT INTO %s (id, content, metadata, _rev)
-			VALUES (?, ?, ?::JSON, 1)
+			INSERT INTO %s (id, content, metadata, _rev, embedding_status)
+			VALUES (?, ?, ?::JSON, 1, 'pending')
 			ON CONFLICT (id) DO UPDATE SET
 				content = EXCLUDED.content,
 				metadata = EXCLUDED.metadata,
-				_rev = %s._rev + 1
+				_rev = %s._rev + 1,
+				embedding_status = 'pending'
 		`, c.tableName, c.tableName)
 
 		_, err := tx.ExecContext(ctx, insertSQL, id, content, string(metadataJSON))
@@ -541,29 +560,7 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 			_, _ = tx.ExecContext(ctx, updateSQL, tokens, id)
 		}
 
-		// 更新向量列（如果有向量搜索配置）
-		for _, vs := range c.vectorSearches {
-			if vs.config.DocToEmbedding != nil {
-				embedding, err := vs.config.DocToEmbedding(doc)
-				if err == nil && len(embedding) > 0 {
-					// 转换为字符串格式
-					vectorStr := "["
-					for i, v := range embedding {
-						if i > 0 {
-							vectorStr += ", "
-						}
-						vectorStr += fmt.Sprintf("%g", v)
-					}
-					vectorStr += "]"
-					vectorColumn := "vector_" + vs.config.Identifier
-					updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
-					_, err = tx.ExecContext(ctx, updateSQL, vectorStr, id)
-					if err != nil {
-						logrus.WithError(err).Errorf("Failed to update vector column %s for document %s in BulkUpsert", vectorColumn, id)
-					}
-				}
-			}
-		}
+		// 不再立即处理 embedding，而是标记为 pending，由后台 worker 异步处理
 
 		results = append(results, &duckdbDocument{
 			id:      id,
@@ -575,6 +572,13 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
+
+	// 启动后台 embedding worker（如果还没有启动）
+	c.startEmbeddingWorker(ctx)
+
+	logrus.WithFields(logrus.Fields{
+		"total_docs": len(docs),
+	}).Info("Documents inserted, embeddings will be processed asynchronously")
 
 	return results, nil
 }
@@ -790,6 +794,9 @@ func AddVectorSearch(collection Collection, config VectorSearchConfig) (VectorSe
 
 	// 注册向量搜索到集合中，以便在插入时自动计算向量
 	duckdbColl.vectorSearches = append(duckdbColl.vectorSearches, vectorSearch)
+
+	// 启动后台 embedding worker（如果还没有启动）
+	duckdbColl.startEmbeddingWorker(context.Background())
 
 	return vectorSearch, nil
 }
@@ -1080,4 +1087,218 @@ func (q *duckdbGraphQuery) All(ctx context.Context) ([]GraphQueryResult, error) 
 	}
 
 	return results, nil
+}
+
+// startEmbeddingWorker 启动后台 embedding worker（只启动一次）
+func (c *duckdbCollection) startEmbeddingWorker(ctx context.Context) {
+	c.embeddingWorkerOnce.Do(func() {
+		workerCtx, cancel := context.WithCancel(context.Background())
+		c.embeddingWorkerCtx = workerCtx
+		c.embeddingWorkerCancel = cancel
+
+		c.embeddingWorkerWg.Add(1)
+		go c.embeddingWorker(workerCtx)
+		logrus.Info("Background embedding worker started")
+	})
+}
+
+// stopEmbeddingWorker 停止后台 embedding worker
+func (c *duckdbCollection) stopEmbeddingWorker() {
+	if c.embeddingWorkerCancel != nil {
+		c.embeddingWorkerCancel()
+		c.embeddingWorkerWg.Wait()
+		logrus.Info("Background embedding worker stopped")
+	}
+}
+
+// embeddingWorker 后台 worker，定期检查并处理 pending 状态的 embedding
+func (c *duckdbCollection) embeddingWorker(ctx context.Context) {
+	defer c.embeddingWorkerWg.Done()
+
+	ticker := time.NewTicker(2 * time.Second) // 每2秒检查一次
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.processPendingEmbeddings(ctx)
+		}
+	}
+}
+
+// processPendingEmbeddings 处理所有 pending 状态的 embedding
+func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
+	if len(c.vectorSearches) == 0 {
+		return
+	}
+
+	// 使用独立的 context，避免使用可能被取消的请求 context
+	processCtx := context.Background()
+
+	// 查询所有 pending 状态的文档，限制每次处理的数量
+	selectSQL := fmt.Sprintf(`
+		SELECT id, content, metadata
+		FROM %s
+		WHERE embedding_status = 'pending'
+		LIMIT 10
+	`, c.tableName)
+
+	rows, err := c.db.QueryContext(processCtx, selectSQL)
+	if err != nil {
+		logrus.WithError(err).Error("Failed to query pending embeddings")
+		return
+	}
+	defer rows.Close()
+
+	var pendingDocs []struct {
+		id       string
+		content  string
+		metadata string
+	}
+
+	for rows.Next() {
+		var id, content, metadata string
+		if err := rows.Scan(&id, &content, &metadata); err != nil {
+			continue
+		}
+		pendingDocs = append(pendingDocs, struct {
+			id       string
+			content  string
+			metadata string
+		}{id: id, content: content, metadata: metadata})
+	}
+
+	if len(pendingDocs) == 0 {
+		return
+	}
+
+	logrus.WithField("count", len(pendingDocs)).Debug("Processing pending embeddings")
+
+	// 处理每个文档的 embedding
+	for _, doc := range pendingDocs {
+		// 检查 worker context 是否已取消
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// 将状态更新为 processing
+		updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND embedding_status = 'pending'`, c.tableName)
+		result, err := c.db.ExecContext(processCtx, updateStatusSQL, doc.id)
+		if err != nil {
+			logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status to processing")
+			continue
+		}
+
+		// 检查是否成功更新（可能被其他 worker 处理了）
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			continue // 文档已被其他 worker 处理
+		}
+
+		// 解析 metadata
+		var metadataMap map[string]any
+		if doc.metadata != "" {
+			if err := json.Unmarshal([]byte(doc.metadata), &metadataMap); err != nil {
+				metadataMap = make(map[string]any)
+			}
+		} else {
+			metadataMap = make(map[string]any)
+		}
+
+		// 构建文档对象
+		docMap := map[string]any{
+			"id":       doc.id,
+			"content":  doc.content,
+			"metadata": metadataMap,
+		}
+		for k, v := range metadataMap {
+			docMap[k] = v
+		}
+
+		// 为每个向量搜索配置生成 embedding
+		allSuccess := true
+		for _, vs := range c.vectorSearches {
+			if vs.config.DocToEmbedding == nil {
+				continue
+			}
+
+			// 等待速率限制器允许（每秒最多5次）
+			limiter := c.getEmbeddingLimiter()
+			if err := limiter.Wait(processCtx); err != nil {
+				logrus.WithError(err).WithFields(logrus.Fields{
+					"doc_id":      doc.id,
+					"content_len": len(doc.content),
+				}).Error("Rate limiter wait failed")
+				allSuccess = false
+				continue
+			}
+
+			// 生成 embedding（DocToEmbedding 内部会使用 context.Background()，避免 context canceled 错误）
+			embedding, err := vs.config.DocToEmbedding(docMap)
+			if err != nil {
+				// 检查是否是 context canceled 错误
+				if err == context.Canceled || err == context.DeadlineExceeded {
+					logrus.WithError(err).WithFields(logrus.Fields{
+						"doc_id":      doc.id,
+						"content_len": len(doc.content),
+						"note":        "This should not happen as we use context.Background()",
+					}).Warn("Embedding failed due to context cancellation (unexpected)")
+				} else {
+					logrus.WithError(err).WithFields(logrus.Fields{
+						"doc_id":      doc.id,
+						"content_len": len(doc.content),
+						"source":      "background_worker",
+					}).Error("Failed to generate embedding in background worker")
+				}
+				allSuccess = false
+				continue
+			}
+
+			if len(embedding) > 0 {
+				// 转换为字符串格式
+				vectorStr := "["
+				for i, v := range embedding {
+					if i > 0 {
+						vectorStr += ", "
+					}
+					vectorStr += fmt.Sprintf("%g", v)
+				}
+				vectorStr += "]"
+				vectorColumn := "vector_" + vs.config.Identifier
+				updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
+				_, err = c.db.ExecContext(processCtx, updateSQL, vectorStr, doc.id)
+				if err != nil {
+					logrus.WithError(err).WithFields(logrus.Fields{
+						"doc_id":        doc.id,
+						"vector_column": vectorColumn,
+					}).Error("Failed to update vector column")
+					allSuccess = false
+				} else {
+					logrus.WithFields(logrus.Fields{
+						"doc_id":      doc.id,
+						"vector_dim":  len(embedding),
+						"content_len": len(doc.content),
+					}).Debug("Successfully generated and stored embedding")
+				}
+			} else {
+				logrus.WithField("doc_id", doc.id).Warn("Empty embedding vector generated")
+				allSuccess = false
+			}
+		}
+
+		// 更新状态
+		status := "completed"
+		if !allSuccess {
+			status = "failed"
+		}
+		updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = ? WHERE id = ?`, c.tableName)
+		_, err = c.db.ExecContext(processCtx, updateStatusSQL, status, doc.id)
+		if err != nil {
+			logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status")
+		}
+	}
 }

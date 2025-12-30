@@ -26,7 +26,7 @@ interface GraphData {
   relationships: { source: string; target: string; relation: string; description?: string }[];
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:45111/api";
 
 export default function GraphPage() {
   const [loading, setLoading] = useState(true);
