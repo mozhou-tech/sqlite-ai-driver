@@ -152,6 +152,14 @@ func (r *LightRAG) Insert(ctx context.Context, text string) error {
 		return fmt.Errorf("documents collection is not initialized")
 	}
 
+	// 如果chunk不超过10个字符，则不需要嵌入和入库存储
+	if len([]rune(text)) <= 10 {
+		logrus.WithFields(logrus.Fields{
+			"content_len": len([]rune(text)),
+		}).Debug("Skipping chunk that is too short (<=10 characters)")
+		return nil
+	}
+
 	doc := map[string]any{
 		"id":         fmt.Sprintf("%d", time.Now().UnixNano()),
 		"content":    text,

@@ -22,10 +22,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/embedding"
 	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -181,7 +183,8 @@ func (r *LightRAG) InsertBatch(ctx context.Context, docs []map[string]any) ([]st
 
 		ids := make([]string, 0, len(batchDocs))
 		texts := make([]string, 0, len(batchDocs))
-		docToVectorIdx := make(map[int]int) // Maps document index to vector index
+		docToVectorIdx := make(map[int]int)      // Maps document index to vector index
+		vectorIdxToDocID := make(map[int]string) // Maps vector index to document ID
 
 		// Collect texts for embedding
 		for i, doc := range batchDocs {
@@ -196,7 +199,9 @@ func (r *LightRAG) InsertBatch(ctx context.Context, docs []map[string]any) ([]st
 
 			content, ok := doc["content"].(string)
 			if ok && content != "" {
-				docToVectorIdx[i] = len(texts)
+				vectorIdx := len(texts)
+				docToVectorIdx[i] = vectorIdx
+				vectorIdxToDocID[vectorIdx] = id
 				texts = append(texts, content)
 			}
 		}
@@ -207,13 +212,87 @@ func (r *LightRAG) InsertBatch(ctx context.Context, docs []map[string]any) ([]st
 			if r.embedder == nil {
 				return nil, fmt.Errorf("[InsertBatch] embedder is not available")
 			}
+
+			// 记录 embedding 开始日志
+			logrus.WithFields(logrus.Fields{
+				"batch":        fmt.Sprintf("%d-%d", batchStart, batchEnd-1),
+				"total_docs":   len(docs),
+				"batch_size":   len(batchDocs),
+				"text_count":   len(texts),
+				"batch_number": (batchStart / batchSize) + 1,
+			}).Info("[Embedding] 开始进行 embedding 处理")
+
+			// 打印每个文本的预览信息
+			for i, text := range texts {
+				previewLen := 100
+				preview := text
+				if len(text) > previewLen {
+					preview = text[:previewLen] + "..."
+				}
+				docID := vectorIdxToDocID[i]
+				logrus.WithFields(logrus.Fields{
+					"batch":       fmt.Sprintf("%d-%d", batchStart, batchEnd-1),
+					"text_index":  i,
+					"text_id":     docID,
+					"text_length": len(text),
+					"preview":     preview,
+				}).Debug("[Embedding] 准备 embedding 的文本")
+			}
+
+			// 记录开始时间
+			embedStartTime := time.Now()
 			var err error
 			vectors, err = r.embedder.EmbedStrings(ctx, texts)
+			embedDuration := time.Since(embedStartTime)
+
 			if err != nil {
+				logrus.WithFields(logrus.Fields{
+					"batch":      fmt.Sprintf("%d-%d", batchStart, batchEnd-1),
+					"text_count": len(texts),
+					"error":      err,
+				}).Error("[Embedding] embedding 失败")
 				return nil, fmt.Errorf("[InsertBatch] embedding failed: %w", err)
 			}
+
 			if len(vectors) != len(texts) {
+				logrus.WithFields(logrus.Fields{
+					"batch":          fmt.Sprintf("%d-%d", batchStart, batchEnd-1),
+					"expected_count": len(texts),
+					"actual_count":   len(vectors),
+				}).Error("[Embedding] 向量数量不匹配")
 				return nil, fmt.Errorf("[InsertBatch] vector count mismatch: expected %d, got %d", len(texts), len(vectors))
+			}
+
+			// 记录 embedding 完成日志
+			var vectorDim int
+			if len(vectors) > 0 {
+				vectorDim = len(vectors[0])
+			}
+			logrus.WithFields(logrus.Fields{
+				"batch":        fmt.Sprintf("%d-%d", batchStart, batchEnd-1),
+				"text_count":   len(texts),
+				"vector_count": len(vectors),
+				"vector_dim":   vectorDim,
+				"duration_ms":  embedDuration.Milliseconds(),
+				"duration_sec": embedDuration.Seconds(),
+				"avg_time_ms":  float64(embedDuration.Milliseconds()) / float64(len(texts)),
+			}).Info("[Embedding] embedding 处理完成")
+
+			// 打印每个向量的基本信息
+			for i, vector := range vectors {
+				docID := vectorIdxToDocID[i]
+				logrus.WithFields(logrus.Fields{
+					"batch":        fmt.Sprintf("%d-%d", batchStart, batchEnd-1),
+					"vector_index": i,
+					"text_id":      docID,
+					"vector_dim":   len(vector),
+					"first_3_vals": func() []float64 {
+						if len(vector) >= 3 {
+							return vector[:3]
+						}
+						return vector
+					}(),
+				}).Debug("[Embedding] 生成的向量信息")
 			}
 		}
 
@@ -372,14 +451,46 @@ func (r *LightRAG) retrieveVector(ctx context.Context, query string, limit int, 
 		return nil, fmt.Errorf("[retrieveVector] database connection is not available")
 	}
 	// Embed query
+	logrus.WithFields(logrus.Fields{
+		"query":        query,
+		"query_length": len(query),
+		"limit":        limit,
+		"threshold":    threshold,
+	}).Info("[Embedding] 开始对查询进行 embedding")
+
+	embedStartTime := time.Now()
 	vectors, err := r.embedder.EmbedStrings(ctx, []string{query})
+	embedDuration := time.Since(embedStartTime)
+
 	if err != nil {
+		logrus.WithFields(logrus.Fields{
+			"query": query,
+			"error": err,
+		}).Error("[Embedding] 查询 embedding 失败")
 		return nil, fmt.Errorf("[retrieveVector] embedding failed: %w", err)
 	}
 	if len(vectors) != 1 {
+		logrus.WithFields(logrus.Fields{
+			"query":          query,
+			"expected_count": 1,
+			"actual_count":   len(vectors),
+		}).Error("[Embedding] 查询向量数量不匹配")
 		return nil, fmt.Errorf("[retrieveVector] invalid vector count: %d", len(vectors))
 	}
 	queryVector := vectors[0]
+
+	logrus.WithFields(logrus.Fields{
+		"query":        query,
+		"vector_dim":   len(queryVector),
+		"duration_ms":  embedDuration.Milliseconds(),
+		"duration_sec": embedDuration.Seconds(),
+		"first_3_vals": func() []float64 {
+			if len(queryVector) >= 3 {
+				return queryVector[:3]
+			}
+			return queryVector
+		}(),
+	}).Info("[Embedding] 查询 embedding 完成")
 
 	// Build SQL query
 	sqlQuery := fmt.Sprintf(`

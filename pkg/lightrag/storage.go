@@ -329,6 +329,15 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 
 	content, _ := doc["content"].(string)
 
+	// 如果chunk不超过10个字符，则不需要嵌入和入库存储
+	if len([]rune(content)) <= 10 {
+		logrus.WithFields(logrus.Fields{
+			"id":          id,
+			"content_len": len([]rune(content)),
+		}).Debug("Skipping chunk that is too short (<=10 characters)")
+		return nil, nil
+	}
+
 	// 构建metadata（排除id和content）
 	metadata := make(map[string]any)
 	for k, v := range doc {
@@ -528,6 +537,15 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 		}
 
 		content, _ := doc["content"].(string)
+
+		// 如果chunk不超过10个字符，则跳过该文档
+		if len([]rune(content)) <= 10 {
+			logrus.WithFields(logrus.Fields{
+				"id":          id,
+				"content_len": len([]rune(content)),
+			}).Debug("Skipping chunk that is too short (<=10 characters)")
+			continue
+		}
 
 		metadata := make(map[string]any)
 		for k, v := range doc {
@@ -1197,6 +1215,21 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 		rowsAffected, _ := result.RowsAffected()
 		if rowsAffected == 0 {
 			continue // 文档已被其他 worker 处理
+		}
+
+		// 如果chunk不超过10个字符，则跳过嵌入处理
+		if len([]rune(doc.content)) <= 10 {
+			logrus.WithFields(logrus.Fields{
+				"doc_id":      doc.id,
+				"content_len": len([]rune(doc.content)),
+			}).Debug("Skipping embedding for chunk that is too short (<=10 characters)")
+			// 直接标记为 completed，跳过嵌入
+			updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'completed' WHERE id = ?`, c.tableName)
+			_, err = c.db.ExecContext(processCtx, updateStatusSQL, doc.id)
+			if err != nil {
+				logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status to completed")
+			}
+			continue
 		}
 
 		// 解析 metadata
