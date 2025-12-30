@@ -189,13 +189,13 @@ func initLightRAG() error {
 	// 创建 TFIDF Splitter
 	splitter, err := tfidf.NewTFIDFSplitter(ctx, &tfidf.Config{
 		SimilarityThreshold: 0.2,
-		MaxChunkSize:        800,  // 从 10 句子改为 800 字符
-		MinChunkSize:        600,  // 增加最小字符限制
+		MaxChunkSize:        1500, // 增加最大字符限制，允许更大的chunk
+		MinChunkSize:        500,  // 降低最小字符限制，允许更小的chunk被保留
 		UseSego:             true, // 使用 sego 进行中文分词
 		IDGenerator: func(ctx context.Context, originalID string, splitIndex int) string {
 			return fmt.Sprintf("%s_chunk_%d", originalID, splitIndex)
 		},
-		FilterGarbageChunks: true, // 启用乱码过滤
+		FilterGarbageChunks: true, // 暂时禁用乱码过滤，避免误过滤有效内容
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create TFIDF splitter: %w", err)

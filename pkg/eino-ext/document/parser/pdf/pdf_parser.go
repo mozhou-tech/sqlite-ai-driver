@@ -112,8 +112,8 @@ func (pp *PDFParser) Parse(ctx context.Context, reader io.Reader, opts ...parser
 
 		// 先过滤文本，只保留汉字、英文、数字和中英文标点符号
 		filteredText := keepOnlyValidChars(text)
-		// 去除文本中所有的空白字符
-		cleanedText := removeAllWhitespace(filteredText)
+		// 保留空格，但移除换行符、制表符等其他空白字符，以保持文本结构
+		cleanedText := normalizeWhitespace(filteredText)
 
 		// 调试：显示提取到的文本信息
 		textLength := len(cleanedText)
@@ -206,4 +206,32 @@ func removeAllWhitespace(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// normalizeWhitespace 保留空格，但将其他空白字符（换行、制表符等）转换为空格，并合并多个连续空格
+func normalizeWhitespace(s string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+	prevWasSpace := false
+
+	for _, r := range s {
+		if r == ' ' {
+			// 保留空格，但避免连续多个空格
+			if !prevWasSpace {
+				result.WriteRune(' ')
+				prevWasSpace = true
+			}
+		} else if unicode.IsSpace(r) {
+			// 将其他空白字符转换为空格
+			if !prevWasSpace {
+				result.WriteRune(' ')
+				prevWasSpace = true
+			}
+		} else {
+			result.WriteRune(r)
+			prevWasSpace = false
+		}
+	}
+
+	return strings.TrimSpace(result.String())
 }
