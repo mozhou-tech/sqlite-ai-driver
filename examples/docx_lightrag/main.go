@@ -30,7 +30,7 @@ func main() {
 	if baseURL == "" {
 		baseURL = "https://api.openai.com/v1"
 	}
-	model := "qwen-plus" // "gpt-4o-mini"
+	model := "qwen-flash" // "gpt-4o-mini"
 	// 初始化 sego 词典以获得更好的中文处理效果
 	if err := sego.Init(); err != nil {
 		log.Printf("警告：sego 初始化失败: %v", err)

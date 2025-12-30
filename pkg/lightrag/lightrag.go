@@ -61,7 +61,7 @@ type Options struct {
 // New 创建 LightRAG 实例
 func New(opts Options) *LightRAG {
 	if opts.MaxConcurrentLLM <= 0 {
-		opts.MaxConcurrentLLM = 20
+		opts.MaxConcurrentLLM = 100
 	}
 	return &LightRAG{
 		workingDir: opts.WorkingDir,
