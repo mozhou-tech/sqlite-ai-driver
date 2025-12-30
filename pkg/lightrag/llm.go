@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // SimpleLLM 简单的 LLM 实现，仅用于演示
@@ -156,6 +158,7 @@ func (l *OpenAILLM) Complete(ctx context.Context, prompt string) (string, error)
 				"content": prompt,
 			},
 		},
+		"stream":      false,
 		"temperature": 0.7,
 		"extra_body": map[string]interface{}{
 			"enable_thinking": false,
@@ -174,7 +177,10 @@ func (l *OpenAILLM) Complete(ctx context.Context, prompt string) (string, error)
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", l.config.APIKey))
-
+	logrus.WithFields(logrus.Fields{
+		"url":     url,
+		"request": reqBody,
+	}).Info("Sending request to OpenAI")
 	resp, err := l.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %w", err)
