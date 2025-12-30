@@ -8,9 +8,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	docxparser "github.com/cloudwego/eino-ext/components/document/parser/docx"
+	htmlparser "github.com/cloudwego/eino-ext/components/document/parser/html"
+	pdfparser "github.com/cloudwego/eino-ext/components/document/parser/pdf"
 	openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/indexer"
@@ -28,6 +34,10 @@ var (
 	lightRAGInstance *lightrag.LightRAG
 	ragGraph         compose.Runnable[string, *schema.Message]
 	einoIndexer      indexer.Indexer
+
+	// 文档解析器
+	parsers     map[string]interface{}
+	parsersOnce sync.Once
 )
 
 func main() {
@@ -508,10 +518,66 @@ func handleAddDocument(c *gin.Context) {
 	})
 }
 
+// initParsers 初始化文档解析器
+func initParsers(ctx context.Context) error {
+	parsersOnce.Do(func() {
+		parsers = make(map[string]interface{})
+
+		// 初始化 PDF 解析器
+		pdfParser, err := pdfparser.NewPDFParser(ctx, &pdfparser.Config{
+			ToPages: true, // 按页面分割文档
+		})
+		if err != nil {
+			logrus.WithError(err).Warn("Failed to initialize PDF parser")
+		} else {
+			parsers[".pdf"] = pdfParser
+		}
+
+		// 初始化 DOCX 解析器
+		docxParser, err := docxparser.NewDocxParser(ctx, &docxparser.Config{
+			ToSections:      true,
+			IncludeComments: true,
+			IncludeHeaders:  true,
+			IncludeFooters:  true,
+			IncludeTables:   true,
+		})
+		if err != nil {
+			logrus.WithError(err).Warn("Failed to initialize DOCX parser")
+		} else {
+			parsers[".docx"] = docxParser
+		}
+
+		// 注意：XLSX 解析器暂时不可用，XLSX 文件将作为普通文本处理
+		// TODO: 添加 XLSX 解析器支持
+
+		// 初始化 HTML 解析器
+		htmlParser, err := htmlparser.NewParser(ctx, &htmlparser.Config{
+			Selector: nil, // 默认提取 body 内容
+		})
+		if err != nil {
+			logrus.WithError(err).Warn("Failed to initialize HTML parser")
+		} else {
+			parsers[".html"] = htmlParser
+			parsers[".htm"] = htmlParser
+		}
+
+		logrus.WithField("parsers", len(parsers)).Info("Document parsers initialized")
+	})
+	return nil
+}
+
 func handleUploadDocument(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(400, gin.H{"error": "No file uploaded"})
+		return
+	}
+
+	ctx := c.Request.Context()
+
+	// 初始化解析器
+	if err := initParsers(ctx); err != nil {
+		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to initialize parsers: %v", err)})
 		return
 	}
 
@@ -523,32 +589,88 @@ func handleUploadDocument(c *gin.Context) {
 	}
 	defer f.Close()
 
-	// 读取内容
-	content, err := io.ReadAll(f)
-	if err != nil {
-		c.JSON(500, gin.H{"error": "Failed to read file"})
+	// 根据文件扩展名判断文件类型
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+
+	// 尝试使用 eino-ext 解析器解析文档
+	var docs []*schema.Document
+
+	if parser, ok := parsers[ext]; ok {
+		// 使用对应的解析器解析文档
+		switch p := parser.(type) {
+		case pdfparser.Parser:
+			docs, err = p.Parse(ctx, f)
+		case docxparser.Parser:
+			docs, err = p.Parse(ctx, f)
+		case htmlparser.Parser:
+			docs, err = p.Parse(ctx, f)
+		default:
+			err = fmt.Errorf("unsupported parser type for extension: %s", ext)
+		}
+
+		if err != nil {
+			logrus.WithError(err).WithField("extension", ext).Error("Failed to parse document")
+			c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to parse document: %v", err)})
+			return
+		}
+
+		logrus.WithFields(logrus.Fields{
+			"filename":  file.Filename,
+			"extension": ext,
+			"doc_count": len(docs),
+		}).Info("Successfully parsed document")
+	} else {
+		// 对于文本文件或其他未支持的格式，直接读取内容
+		content, readErr := io.ReadAll(f)
+		if readErr != nil {
+			c.JSON(500, gin.H{"error": "Failed to read file"})
+			return
+		}
+
+		textContent := string(content)
+		if strings.TrimSpace(textContent) == "" {
+			c.JSON(400, gin.H{"error": "No text content extracted from file"})
+			return
+		}
+
+		docs = []*schema.Document{
+			{
+				Content: textContent,
+				MetaData: map[string]any{
+					"filename": file.Filename,
+					"filetype": ext,
+				},
+			},
+		}
+		logrus.WithField("filename", file.Filename).Info("Treated as plain text file")
+	}
+
+	if len(docs) == 0 {
+		c.JSON(400, gin.H{"error": "No content extracted from file"})
 		return
 	}
 
-	ctx := c.Request.Context()
+	// 为每个文档添加文件名元数据
+	for _, doc := range docs {
+		if doc.MetaData == nil {
+			doc.MetaData = make(map[string]any)
+		}
+		doc.MetaData["filename"] = file.Filename
+		doc.MetaData["filetype"] = ext
+	}
 
 	// 使用 Eino Indexer 插入文档
-	_, err = einoIndexer.Store(ctx, []*schema.Document{
-		{
-			Content: string(content),
-			MetaData: map[string]any{
-				"filename": file.Filename,
-			},
-		},
-	})
+	_, err = einoIndexer.Store(ctx, docs)
 	if err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to insert document via Eino: %v", err)})
 		return
 	}
 
 	c.JSON(200, gin.H{
-		"message":  "File uploaded and indexed successfully",
-		"filename": file.Filename,
+		"message":   "File uploaded and indexed successfully",
+		"filename":  file.Filename,
+		"filetype":  ext,
+		"doc_count": len(docs),
 	})
 }
 

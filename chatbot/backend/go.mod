@@ -4,15 +4,22 @@ go 1.24.2
 
 require (
 	github.com/cloudwego/eino v0.7.14
+	github.com/cloudwego/eino-ext/components/document/parser/docx v0.0.0-20251229121631-716047332ba5
+	github.com/cloudwego/eino-ext/components/document/parser/html v0.0.0-20251229121631-716047332ba5
+	github.com/cloudwego/eino-ext/components/document/parser/pdf v0.0.0-20251229121631-716047332ba5
 	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251226123311-1d93d527c144
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.2
 	github.com/gin-gonic/gin v1.10.0
 	github.com/mozhou-tech/sqlite-ai-driver v0.0.0
+	github.com/sirupsen/logrus v1.9.3
 )
 
 require (
+	github.com/PuerkitoBio/goquery v1.8.1 // indirect
 	github.com/adamzy/cedar-go v0.0.0-20170805034717-80a9c64b256d // indirect
+	github.com/andybalholm/cascadia v1.3.1 // indirect
 	github.com/apache/arrow-go/v18 v18.2.0 // indirect
+	github.com/aymerick/douceur v0.2.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
@@ -20,6 +27,7 @@ require (
 	github.com/bytedance/sonic/loader v0.4.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.2 // indirect
+	github.com/dslipak/pdf v0.0.2 // indirect
 	github.com/duckdb/duckdb-go-bindings v0.1.9 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.4 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.4 // indirect
@@ -27,6 +35,7 @@ require (
 	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.4 // indirect
 	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.4 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/eino-contrib/docx2md v0.0.1 // indirect
 	github.com/eino-contrib/jsonschema v1.0.3 // indirect
 	github.com/evanphx/json-patch v0.5.2 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.3 // indirect
@@ -39,6 +48,7 @@ require (
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
+	github.com/gorilla/css v1.0.1 // indirect
 	github.com/huichen/sego v0.0.0-20210824061530-c87651ea5c76 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
@@ -49,7 +59,9 @@ require (
 	github.com/marcboeker/go-duckdb/mapping v0.0.2 // indirect
 	github.com/marcboeker/go-duckdb/v2 v2.0.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/meguminnnnnnnnn/go-openai v0.1.0 // indirect
+	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
@@ -58,7 +70,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/sirupsen/logrus v1.9.3 // indirect
+	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
