@@ -221,6 +221,12 @@ func (s *tfidfSplitter) splitText(text string) ([]string, error) {
 		if trimmed == "" {
 			return []string{}, nil
 		}
+		// 如果包含表格，使用 cleanChunk 保留表格格式
+		if containsTable(trimmed) {
+			chunk := s.cleanChunk(trimmed)
+			return []string{chunk}, nil
+		}
+		// 不包含表格，按原来的逻辑处理
 		chunk := trimmed
 		if s.config.RemoveWhitespace {
 			chunk = removeAllWhitespace(chunk)
@@ -307,6 +313,7 @@ func (s *tfidfSplitter) groupSentences(sentences []string, tfidfMatrix [][]float
 	var chunks []string
 	var currentChunk []string
 	var currentLength int
+	var inTable bool // 标记当前是否在处理表格
 
 	joinSep := " "
 	if s.config.RemoveWhitespace {
@@ -314,10 +321,82 @@ func (s *tfidfSplitter) groupSentences(sentences []string, tfidfMatrix [][]float
 	}
 
 	for i := 0; i < len(sentences); i++ {
+		sentence := sentences[i]
+		isTableRow := isMarkdownTableRow(sentence)
+
+		// 检测表格开始
+		if isTableRow && !inTable {
+			// 如果当前 chunk 不为空，先保存它
+			if len(currentChunk) > 0 {
+				chunk := s.cleanChunk(strings.Join(currentChunk, joinSep))
+				chunks = append(chunks, chunk)
+				currentChunk = []string{}
+				currentLength = 0
+			}
+			inTable = true
+		}
+
+		// 检测表格结束
+		if !isTableRow && inTable {
+			// 表格结束，检查是否需要分割
+			if len(currentChunk) > 0 {
+				// 硬性限制：embedding API 通常限制在 8192 字符，我们设置为 8000 以留出余量
+				const maxEmbeddingSize = 8000
+				tableChunk := strings.Join(currentChunk, "\n")
+				chunkLen := utf8.RuneCountInString(tableChunk)
+
+				if chunkLen > maxEmbeddingSize {
+					// 表格超过硬性限制，需要按行分割
+					tableChunks := s.splitLargeTable(currentChunk, maxEmbeddingSize)
+					chunks = append(chunks, tableChunks...)
+				} else {
+					// 表格内容保留换行符，使用 "\n" 连接
+					chunks = append(chunks, tableChunk)
+				}
+				currentChunk = []string{}
+				currentLength = 0
+			}
+			inTable = false
+		}
+
 		// 如果是第一个句子，直接添加
 		if len(currentChunk) == 0 {
-			currentChunk = append(currentChunk, sentences[i])
-			currentLength = utf8.RuneCountInString(sentences[i])
+			currentChunk = append(currentChunk, sentence)
+			if inTable {
+				// 表格行长度计算（包含换行符）
+				currentLength = utf8.RuneCountInString(sentence)
+			} else {
+				currentLength = utf8.RuneCountInString(sentence)
+			}
+			continue
+		}
+
+		// 如果正在处理表格，检查是否需要分割
+		if inTable {
+			// 硬性限制：embedding API 通常限制在 8192 字符，我们设置为 8000 以留出余量
+			const maxEmbeddingSize = 8000
+			potentialLength := currentLength + utf8.RuneCountInString(sentence) + 1 // +1 for newline
+
+			// 如果添加这一行会超过限制，先保存当前 chunk
+			if potentialLength > maxEmbeddingSize && len(currentChunk) > 0 {
+				tableChunk := strings.Join(currentChunk, "\n")
+				chunkLen := utf8.RuneCountInString(tableChunk)
+				if chunkLen > maxEmbeddingSize {
+					// 当前 chunk 已经超过限制，需要分割
+					tableChunks := s.splitLargeTable(currentChunk, maxEmbeddingSize)
+					chunks = append(chunks, tableChunks...)
+					// 开始新的 chunk
+					currentChunk = []string{sentence}
+					currentLength = utf8.RuneCountInString(sentence)
+				} else {
+					chunks = append(chunks, tableChunk)
+					currentChunk = []string{sentence}
+					currentLength = utf8.RuneCountInString(sentence)
+				}
+			} else {
+				currentChunk = append(currentChunk, sentence)
+				currentLength = potentialLength
+			}
 			continue
 		}
 
@@ -330,7 +409,7 @@ func (s *tfidfSplitter) groupSentences(sentences []string, tfidfMatrix [][]float
 		}
 
 		// 识别当前句子是否为 Markdown 标题
-		isHeader := isMarkdownHeader(strings.TrimSpace(sentences[i]))
+		isHeader := isMarkdownHeader(strings.TrimSpace(sentence))
 
 		// 切分判定
 		shouldSplit := isHeader || sim < s.config.SimilarityThreshold || currentLength >= s.config.MaxChunkSize || len(currentChunk) >= s.config.MaxSentencesPerChunk
@@ -340,26 +419,40 @@ func (s *tfidfSplitter) groupSentences(sentences []string, tfidfMatrix [][]float
 		if (shouldSplit && canSplit) || forceSplit {
 			chunk := s.cleanChunk(strings.Join(currentChunk, joinSep))
 			chunks = append(chunks, chunk)
-			currentChunk = []string{sentences[i]}
-			currentLength = utf8.RuneCountInString(sentences[i])
+			currentChunk = []string{sentence}
+			currentLength = utf8.RuneCountInString(sentence)
 		} else {
-			currentChunk = append(currentChunk, sentences[i])
-			currentLength += utf8.RuneCountInString(sentences[i]) + utf8.RuneCountInString(joinSep)
+			currentChunk = append(currentChunk, sentence)
+			currentLength += utf8.RuneCountInString(sentence) + utf8.RuneCountInString(joinSep)
 		}
 	}
 
 	// 处理最后一个 chunk
 	if len(currentChunk) > 0 {
-		chunk := s.cleanChunk(strings.Join(currentChunk, joinSep))
+		var chunk string
+		if inTable {
+			// 表格内容保留换行符
+			chunk = strings.Join(currentChunk, "\n")
+		} else {
+			chunk = s.cleanChunk(strings.Join(currentChunk, joinSep))
+		}
 		chunkLen := utf8.RuneCountInString(chunk)
 
-		// 强制合并最后一个 Chunk，只要它小于 MinChunkSize 且前面还有 Chunk
-		if chunkLen < s.config.MinChunkSize && len(chunks) > 0 {
+		// 硬性限制：embedding API 通常限制在 8192 字符，我们设置为 8000 以留出余量
+		const maxEmbeddingSize = 8000
+
+		if inTable && chunkLen > maxEmbeddingSize {
+			// 表格超过硬性限制，需要按行分割，但保持表格行完整
+			tableChunks := s.splitLargeTable(currentChunk, maxEmbeddingSize)
+			chunks = append(chunks, tableChunks...)
+		} else if !inTable && chunkLen < s.config.MinChunkSize && len(chunks) > 0 {
+			// 对于普通文本，强制合并最后一个 Chunk，只要它小于 MinChunkSize 且前面还有 Chunk
 			prevChunk := chunks[len(chunks)-1]
 			mergedChunk := prevChunk + joinSep + chunk
 			// 放宽限制：为了满足 MinChunkSize，允许合并后的结果超过 MaxChunkSize
-			// 但我们仍然保留一个合理的上限，比如 MaxChunkSize * 3
-			if utf8.RuneCountInString(mergedChunk) <= s.config.MaxChunkSize*3 {
+			// 但我们仍然保留一个合理的上限，比如 MaxChunkSize * 3，但不能超过 embedding 限制
+			mergedLen := utf8.RuneCountInString(mergedChunk)
+			if mergedLen <= s.config.MaxChunkSize*3 && mergedLen <= maxEmbeddingSize {
 				chunks[len(chunks)-1] = mergedChunk
 			} else {
 				chunks = append(chunks, chunk)
@@ -395,7 +488,148 @@ func (s *tfidfSplitter) groupSentences(sentences []string, tfidfMatrix [][]float
 	return chunks
 }
 
+// splitLargeTable 将大表格按行分割成多个 chunk，保持表格行完整
+// 尽量保持表格的语义完整性：如果可能，在每个 chunk 中包含表头
+func (s *tfidfSplitter) splitLargeTable(tableRows []string, maxSize int) []string {
+	if len(tableRows) == 0 {
+		return nil
+	}
+
+	var chunks []string
+	var currentChunk []string
+	var currentLength int
+
+	// 尝试识别表头（通常是前两行：标题行和分隔行）
+	var headerRows []string
+	headerEndIndex := 0
+
+	// 查找表头：第一行通常是标题，第二行可能是分隔行（包含 ---）
+	if len(tableRows) > 0 && isMarkdownTableRow(tableRows[0]) {
+		headerRows = append(headerRows, tableRows[0])
+		headerEndIndex = 1
+		currentLength = utf8.RuneCountInString(tableRows[0])
+
+		// 检查第二行是否是分隔行
+		if len(tableRows) > 1 && isMarkdownTableRow(tableRows[1]) {
+			secondRow := tableRows[1]
+			if strings.Contains(secondRow, "---") {
+				headerRows = append(headerRows, secondRow)
+				headerEndIndex = 2
+				currentLength += utf8.RuneCountInString(secondRow) + 1 // +1 for newline
+			}
+		}
+	}
+
+	// 计算表头长度
+	headerLength := 0
+	if len(headerRows) > 0 {
+		headerLength = utf8.RuneCountInString(strings.Join(headerRows, "\n"))
+	}
+
+	// 从表头之后开始处理数据行
+	for i := headerEndIndex; i < len(tableRows); i++ {
+		row := tableRows[i]
+		rowLength := utf8.RuneCountInString(row)
+
+		// 计算添加这一行后的长度
+		// 如果当前 chunk 为空，需要加上表头（如果存在）
+		var potentialLength int
+		if len(currentChunk) == 0 && len(headerRows) > 0 {
+			// 表头 + 新行：headerLength 已经包含了表头行之间的换行符
+			// 还需要加上表头和数据行之间的换行符（len(headerRows) 个换行符）
+			potentialLength = headerLength + rowLength + len(headerRows)
+		} else {
+			potentialLength = currentLength + rowLength + 1 // +1 for newline
+		}
+
+		// 如果添加这一行会超过限制，且当前 chunk 不为空，先保存当前 chunk
+		if potentialLength > maxSize && len(currentChunk) > 0 {
+			chunk := strings.Join(currentChunk, "\n")
+			chunks = append(chunks, chunk)
+			currentChunk = []string{}
+			currentLength = 0
+			// 重新计算 potentialLength（因为 currentChunk 已清空）
+			if len(headerRows) > 0 {
+				potentialLength = headerLength + rowLength + len(headerRows)
+			} else {
+				potentialLength = rowLength
+			}
+		}
+
+		// 如果当前 chunk 为空，添加表头（如果存在且不会超过限制）
+		if len(currentChunk) == 0 {
+			if len(headerRows) > 0 {
+				// 检查单独一行是否超过限制
+				if rowLength > maxSize {
+					// 单行就超过限制，无法处理，直接添加（这种情况很少见）
+					currentChunk = append(currentChunk, row)
+					currentLength = rowLength
+				} else if potentialLength <= maxSize {
+					// 可以添加表头
+					currentChunk = append(currentChunk, headerRows...)
+					currentChunk = append(currentChunk, row)
+					currentLength = potentialLength
+				} else {
+					// 表头+行超过限制，只添加行
+					currentChunk = append(currentChunk, row)
+					currentLength = rowLength
+				}
+			} else {
+				// 没有表头，直接添加行
+				currentChunk = append(currentChunk, row)
+				currentLength = rowLength
+			}
+		} else {
+			// 添加数据行到现有 chunk
+			currentChunk = append(currentChunk, row)
+			currentLength = potentialLength
+		}
+	}
+
+	// 处理最后一个 chunk
+	if len(currentChunk) > 0 {
+		chunk := strings.Join(currentChunk, "\n")
+		chunks = append(chunks, chunk)
+	}
+
+	return chunks
+}
+
 func (s *tfidfSplitter) cleanChunk(chunk string) string {
+	// 检查是否包含表格
+	if containsTable(chunk) {
+		// 如果包含表格，保留表格格式（包括换行符）
+		// 即使 RemoveWhitespace=true，也保留表格的换行符
+		// 只对非表格行进行空白处理
+		lines := strings.Split(chunk, "\n")
+		var result []string
+		for _, line := range lines {
+			if isMarkdownTableRow(line) {
+				// 表格行：保留原样（包括前导和尾随空格）
+				result = append(result, line)
+			} else {
+				// 非表格行：根据配置处理
+				if s.config.RemoveWhitespace {
+					cleaned := removeAllWhitespace(line)
+					if cleaned != "" {
+						result = append(result, cleaned)
+					}
+				} else {
+					// 移除回车符，但保留空格和换行符结构
+					cleaned := strings.ReplaceAll(line, "\r", "")
+					cleaned = strings.TrimSpace(cleaned)
+					if cleaned != "" {
+						result = append(result, cleaned)
+					}
+				}
+			}
+		}
+		// 对于包含表格的 chunk，始终使用换行符连接所有行
+		// 这样可以保持表格的结构完整性
+		return strings.Join(result, "\n")
+	}
+
+	// 不包含表格，按原来的逻辑处理
 	if s.config.RemoveWhitespace {
 		return removeAllWhitespace(chunk)
 	}
@@ -527,16 +761,129 @@ func (s *tfidfSplitter) segoTokenize(sentences []string) ([]string, [][]string, 
 	return vocabulary, tokens, nil
 }
 
+// tableRange 表示一个 Markdown 表格的范围（字节位置）
+type tableRange struct {
+	start int // 表格开始位置（字节索引）
+	end   int // 表格结束位置（字节索引）
+}
+
+// isMarkdownTableRow 判断一行是否是 Markdown 表格行
+// 表格行特征：
+// - 以 | 开头（可选前导空格）
+// - 包含至少一个 | 分隔符
+// - 以 | 结尾（可选尾随空格）
+func isMarkdownTableRow(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if len(trimmed) == 0 {
+		return false
+	}
+
+	// 必须包含 | 字符
+	if !strings.Contains(trimmed, "|") {
+		return false
+	}
+
+	// 检查是否是表格分隔行（包含 --- 或 :--- 等格式）
+	// 例如：| --- | --- | 或 |:---|:---:|---:|
+	if strings.Contains(trimmed, "---") {
+		// 检查是否包含表格分隔符模式
+		sepPattern := regexp.MustCompile(`\|[\s:]*[-:]+[\s:]*\|`)
+		return sepPattern.MatchString(trimmed)
+	}
+
+	// 普通表格行：以 | 开头（去除前导空格后）
+	return strings.HasPrefix(trimmed, "|")
+}
+
+// findMarkdownTables 识别文本中所有 Markdown 表格的位置范围
+// 返回表格范围的切片，按起始位置排序
+func findMarkdownTables(text string) []tableRange {
+	if text == "" {
+		return nil
+	}
+
+	lines := strings.Split(text, "\n")
+	var tables []tableRange
+	var currentTableStart int = -1
+	var currentPos int = 0
+
+	for i, line := range lines {
+		lineStart := currentPos
+		lineEnd := currentPos + len(line)
+
+		isTableRow := isMarkdownTableRow(line)
+
+		if isTableRow {
+			if currentTableStart == -1 {
+				// 开始一个新的表格
+				currentTableStart = lineStart
+			}
+			// 继续当前表格
+		} else {
+			// 不是表格行
+			if currentTableStart != -1 {
+				// 结束当前表格（包含换行符）
+				// 表格结束于上一行的末尾
+				prevLineEnd := lineStart
+				if prevLineEnd > 0 && prevLineEnd < len(text) && text[prevLineEnd-1] == '\n' {
+					prevLineEnd--
+				}
+				tables = append(tables, tableRange{
+					start: currentTableStart,
+					end:   prevLineEnd,
+				})
+				currentTableStart = -1
+			}
+		}
+
+		// 移动到下一行（包括换行符）
+		currentPos = lineEnd
+		if i < len(lines)-1 {
+			currentPos++ // 加上换行符
+		}
+	}
+
+	// 处理文件末尾的表格
+	if currentTableStart != -1 {
+		tables = append(tables, tableRange{
+			start: currentTableStart,
+			end:   len(text),
+		})
+	}
+
+	return tables
+}
+
+// isInTableRange 检查给定的字节位置是否在任何一个表格范围内
+func isInTableRange(pos int, tables []tableRange) bool {
+	for _, tr := range tables {
+		if pos >= tr.start && pos < tr.end {
+			return true
+		}
+	}
+	return false
+}
+
+// containsTable 检查文本是否包含 Markdown 表格
+func containsTable(text string) bool {
+	tables := findMarkdownTables(text)
+	return len(tables) > 0
+}
+
 func splitIntoSentences(text string) []string {
 	// 安全检查：处理空文本
 	if text == "" {
 		return nil
 	}
 
+	// 先识别所有表格位置
+	tables := findMarkdownTables(text)
+
 	// 使用正则表达式匹配常见的标点符号或 Markdown 标题
 	// Markdown 标题必须：在行首（或字符串开头），1-6 个 # 后跟空格，然后是标题内容
 	// 普通句子分隔符：中英文句号、问号、感叹号、换行符
 	// 注意：只匹配真正的 Markdown 标题格式，避免匹配 PDF 乱码中的 # 字符
+	// 注意：小数点（前后都是数字的 .）在循环中检查并排除
 	sentenceRegexp := regexp.MustCompile(`((?:^|\n)#{1,6}\s+[^\n\r]*|[.!?。！？\n\r][.!?。！？\n\r\s]*)`)
 
 	// 查找所有匹配的分隔符位置
@@ -553,6 +900,99 @@ func splitIntoSentences(text string) []string {
 
 		// 安全检查：确保索引在有效范围内
 		if start < 0 || end < 0 || start > len(text) || end > len(text) || start > end {
+			continue
+		}
+
+		// 跳过表格区域内的匹配
+		if isInTableRange(start, tables) || isInTableRange(end, tables) {
+			// 如果当前匹配在表格内，跳过
+			continue
+		}
+
+		// 检查是否是小数点（前后都是数字的情况）
+		// 如果匹配到的是 . 且前后都是数字，则跳过（因为这是小数点，不是句子分隔符）
+		if start > 0 && end > start && end < len(text) {
+			firstChar := text[start]
+			if firstChar == '.' {
+				// 检查前一个字符是否是数字
+				prevRune, _ := utf8.DecodeLastRuneInString(text[:start])
+				if unicode.IsDigit(prevRune) {
+					// 检查后一个字符是否是数字
+					nextRune, _ := utf8.DecodeRuneInString(text[end:])
+					if unicode.IsDigit(nextRune) {
+						// 这是小数点（前后都是数字），跳过该匹配
+						continue
+					}
+				}
+			}
+		}
+
+		// 检查 content 区域是否跨越表格
+		// 如果 lastPos 到 start 之间包含表格，需要特殊处理
+		contentHasTable := false
+		for _, tr := range tables {
+			if tr.start >= lastPos && tr.end <= start {
+				// 表格完全在 content 区域内
+				contentHasTable = true
+				// 将表格前的文本作为句子
+				if tr.start > lastPos {
+					preTableContent := cleanContentText(text[lastPos:tr.start])
+					if preTableContent != "" {
+						sentences = append(sentences, preTableContent)
+					}
+				}
+				// 将整个表格作为一个句子单元（保留格式）
+				tableContent := text[tr.start:tr.end]
+				if tableContent != "" {
+					sentences = append(sentences, tableContent)
+				}
+				// 更新 lastPos 到表格之后
+				lastPos = tr.end
+				break
+			}
+		}
+
+		if contentHasTable {
+			// 已经处理了表格，继续处理当前匹配
+			// 重新计算 content（从 lastPos 到 start）
+			if lastPos < start {
+				content := text[lastPos:start]
+				delims := text[start:end]
+
+				trimmedDelims := strings.TrimSpace(delims)
+				isHeader := isMarkdownHeader(trimmedDelims)
+
+				if isHeader {
+					cleanContent := cleanContentText(content)
+					if cleanContent != "" {
+						sentences = append(sentences, cleanContent)
+					}
+					cleanHeader := strings.TrimRightFunc(delims, unicode.IsSpace)
+					cleanHeader = strings.TrimLeftFunc(cleanHeader, func(r rune) bool {
+						return r == '\n' || r == '\r'
+					})
+					if cleanHeader != "" {
+						sentences = append(sentences, cleanHeader)
+					}
+				} else {
+					cleanContent := cleanContentText(content)
+					cleanDelims := ""
+					for _, r := range delims {
+						if !unicode.IsSpace(r) {
+							cleanDelims += string(r)
+						}
+					}
+					if cleanContent == "" && len(sentences) > 0 {
+						sentences[len(sentences)-1] += cleanDelims
+					} else {
+						sentence := cleanContent + cleanDelims
+						if sentence != "" {
+							sentences = append(sentences, sentence)
+						}
+					}
+				}
+			}
+			lastPos = end
 			continue
 		}
 
@@ -605,9 +1045,45 @@ func splitIntoSentences(text string) []string {
 
 	// 处理剩余的文本
 	if lastPos < len(text) {
-		remaining := cleanContentText(text[lastPos:])
-		if remaining != "" {
-			sentences = append(sentences, remaining)
+		// 检查剩余文本中是否包含表格
+		remainingText := text[lastPos:]
+		remainingTables := findMarkdownTables(remainingText)
+
+		if len(remainingTables) > 0 {
+			// 调整表格位置（加上 lastPos 偏移）
+			for i := range remainingTables {
+				remainingTables[i].start += lastPos
+				remainingTables[i].end += lastPos
+			}
+
+			currentPos := lastPos
+			for _, tr := range remainingTables {
+				// 添加表格前的文本
+				if tr.start > currentPos {
+					preTableContent := cleanContentText(text[currentPos:tr.start])
+					if preTableContent != "" {
+						sentences = append(sentences, preTableContent)
+					}
+				}
+				// 添加表格
+				tableContent := text[tr.start:tr.end]
+				if tableContent != "" {
+					sentences = append(sentences, tableContent)
+				}
+				currentPos = tr.end
+			}
+			// 添加最后剩余的文本
+			if currentPos < len(text) {
+				remaining := cleanContentText(text[currentPos:])
+				if remaining != "" {
+					sentences = append(sentences, remaining)
+				}
+			}
+		} else {
+			remaining := cleanContentText(remainingText)
+			if remaining != "" {
+				sentences = append(sentences, remaining)
+			}
 		}
 	}
 

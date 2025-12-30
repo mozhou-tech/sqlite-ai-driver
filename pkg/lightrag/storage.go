@@ -235,10 +235,11 @@ func (d *duckdbDatabase) Collection(ctx context.Context, name string, schema Sch
 	// 注意：这里先不创建，等AddFulltextSearch时再创建
 	// 创建tokens列用于FTS
 	tokensColumn := "content_tokens"
+	// 使用 DuckDB 原生的 information_schema 查询列信息，避免触发 sqlite 扩展的 catalog 错误
 	checkColumnSQL := fmt.Sprintf(`
 		SELECT COUNT(*) 
-		FROM pragma_table_info('%s') 
-		WHERE name = ?
+		FROM information_schema.columns 
+		WHERE table_name = '%s' AND column_name = ?
 	`, tableName)
 
 	var count int
@@ -254,6 +255,14 @@ func (d *duckdbDatabase) Collection(ctx context.Context, name string, schema Sch
 	err = d.db.QueryRowContext(ctx, checkColumnSQL, statusColumn).Scan(&count)
 	if err == nil && count == 0 {
 		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s VARCHAR DEFAULT 'pending'`, tableName, statusColumn)
+		_, _ = d.db.ExecContext(ctx, alterTableSQL)
+	}
+
+	// 创建 chunk_length 列用于存储 chunk 长度
+	chunkLengthColumn := "chunk_length"
+	err = d.db.QueryRowContext(ctx, checkColumnSQL, chunkLengthColumn).Scan(&count)
+	if err == nil && count == 0 {
+		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s INTEGER`, tableName, chunkLengthColumn)
 		_, _ = d.db.ExecContext(ctx, alterTableSQL)
 	}
 
@@ -330,10 +339,11 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 	content, _ := doc["content"].(string)
 
 	// 如果chunk不超过10个字符，则不需要嵌入和入库存储
-	if len([]rune(content)) <= 10 {
+	chunkLength := len([]rune(content))
+	if chunkLength <= 10 {
 		logrus.WithFields(logrus.Fields{
 			"id":          id,
-			"content_len": len([]rune(content)),
+			"content_len": chunkLength,
 		}).Debug("Skipping chunk that is too short (<=10 characters)")
 		return nil, nil
 	}
@@ -348,16 +358,17 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 	metadataJSON, _ := json.Marshal(metadata)
 
 	insertSQL := fmt.Sprintf(`
-		INSERT INTO %s (id, content, metadata, _rev, embedding_status)
-		VALUES (?, ?, ?::JSON, 1, 'pending')
+		INSERT INTO %s (id, content, metadata, _rev, embedding_status, chunk_length)
+		VALUES (?, ?, ?::JSON, 1, 'pending', ?)
 		ON CONFLICT (id) DO UPDATE SET
 			content = EXCLUDED.content,
 			metadata = EXCLUDED.metadata,
 			_rev = %s._rev + 1,
-			embedding_status = 'pending'
+			embedding_status = 'pending',
+			chunk_length = EXCLUDED.chunk_length
 	`, c.tableName, c.tableName)
 
-	_, err := c.db.ExecContext(ctx, insertSQL, id, content, string(metadataJSON))
+	_, err := c.db.ExecContext(ctx, insertSQL, id, content, string(metadataJSON), chunkLength)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert document: %w", err)
 	}
@@ -539,10 +550,11 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 		content, _ := doc["content"].(string)
 
 		// 如果chunk不超过10个字符，则跳过该文档
-		if len([]rune(content)) <= 10 {
+		chunkLength := len([]rune(content))
+		if chunkLength <= 10 {
 			logrus.WithFields(logrus.Fields{
 				"id":          id,
-				"content_len": len([]rune(content)),
+				"content_len": chunkLength,
 			}).Debug("Skipping chunk that is too short (<=10 characters)")
 			continue
 		}
@@ -557,16 +569,17 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 
 		// 不使用 PrepareContext，直接使用 ExecContext
 		insertSQL := fmt.Sprintf(`
-			INSERT INTO %s (id, content, metadata, _rev, embedding_status)
-			VALUES (?, ?, ?::JSON, 1, 'pending')
+			INSERT INTO %s (id, content, metadata, _rev, embedding_status, chunk_length)
+			VALUES (?, ?, ?::JSON, 1, 'pending', ?)
 			ON CONFLICT (id) DO UPDATE SET
 				content = EXCLUDED.content,
 				metadata = EXCLUDED.metadata,
 				_rev = %s._rev + 1,
-				embedding_status = 'pending'
+				embedding_status = 'pending',
+				chunk_length = EXCLUDED.chunk_length
 		`, c.tableName, c.tableName)
 
-		_, err := tx.ExecContext(ctx, insertSQL, id, content, string(metadataJSON))
+		_, err := tx.ExecContext(ctx, insertSQL, id, content, string(metadataJSON), chunkLength)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upsert document: %w", err)
 		}
@@ -787,10 +800,11 @@ func AddVectorSearch(collection Collection, config VectorSearchConfig) (VectorSe
 
 	// 检查并创建vector列
 	vectorColumn := "vector_" + config.Identifier
+	// 使用 DuckDB 原生的 information_schema 查询列信息，避免触发 sqlite 扩展的 catalog 错误
 	checkColumnSQL := fmt.Sprintf(`
 		SELECT COUNT(*) 
-		FROM pragma_table_info('%s') 
-		WHERE name = ?
+		FROM information_schema.columns 
+		WHERE table_name = '%s' AND column_name = ?
 	`, duckdbColl.tableName)
 
 	var count int
