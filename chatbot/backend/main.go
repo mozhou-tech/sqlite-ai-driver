@@ -16,15 +16,17 @@ import (
 
 	docxparser "github.com/cloudwego/eino-ext/components/document/parser/docx"
 	htmlparser "github.com/cloudwego/eino-ext/components/document/parser/html"
-	pdfparser "github.com/cloudwego/eino-ext/components/document/parser/pdf"
 	openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
 	openaimodel "github.com/cloudwego/eino-ext/components/model/openai"
+	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/components/prompt"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 	"github.com/gin-gonic/gin"
+	pdfparser "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/transformer/splitter/tfidf"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
 	"github.com/sirupsen/logrus"
@@ -184,8 +186,26 @@ func initLightRAG() error {
 		return fmt.Errorf("failed to create eino chat model: %w", err)
 	}
 
+	// 创建 TFIDF Splitter
+	splitter, err := tfidf.NewTFIDFSplitter(ctx, &tfidf.Config{
+		SimilarityThreshold:  0.2,
+		MaxChunkSize:         800,  // 从 10 句子改为 800 字符
+		MinChunkSize:         200,  // 增加最小字符限制
+		MaxSentencesPerChunk: 10,   // 保持原来的句子数限制
+		UseSego:              true, // 使用 sego 进行中文分词
+		IDGenerator: func(ctx context.Context, originalID string, splitIndex int) string {
+			return fmt.Sprintf("%s_chunk_%d", originalID, splitIndex)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create TFIDF splitter: %w", err)
+	}
+
 	retrieverInstance := &LightRAGRetriever{rag: lightRAGInstance}
-	einoIndexer = &LightRAGIndexer{rag: lightRAGInstance}
+	einoIndexer = &LightRAGIndexer{
+		rag:      lightRAGInstance,
+		splitter: splitter,
+	}
 
 	// 构建 RAG Graph
 	chatTemplate := prompt.FromMessages(
@@ -370,14 +390,32 @@ func (r *LightRAGRetriever) IsCallbacksEnabled() bool {
 
 // Eino Indexer 包装
 type LightRAGIndexer struct {
-	rag *lightrag.LightRAG
+	rag      *lightrag.LightRAG
+	splitter document.Transformer
 }
 
 func (i *LightRAGIndexer) Store(ctx context.Context, docs []*schema.Document, opts ...indexer.Option) ([]string, error) {
 	logrus.WithField("count", len(docs)).Info("Indexing documents into LightRAG")
 
-	toStore := make([]map[string]any, 0, len(docs))
-	for _, doc := range docs {
+	// 使用 TFIDF Splitter 分割文档
+	var transformedDocs []*schema.Document
+	var err error
+	if i.splitter != nil {
+		transformedDocs, err = i.splitter.Transform(ctx, docs)
+		if err != nil {
+			logrus.WithError(err).Error("Failed to transform documents with TFIDF splitter")
+			return nil, fmt.Errorf("failed to transform documents: %w", err)
+		}
+		logrus.WithFields(logrus.Fields{
+			"original_count": len(docs),
+			"split_count":    len(transformedDocs),
+		}).Info("Documents split using TFIDF splitter")
+	} else {
+		transformedDocs = docs
+	}
+
+	toStore := make([]map[string]any, 0, len(transformedDocs))
+	for _, doc := range transformedDocs {
 		m := map[string]any{
 			"id":      doc.ID,
 			"content": doc.Content,
@@ -598,11 +636,9 @@ func handleUploadDocument(c *gin.Context) {
 	if parser, ok := parsers[ext]; ok {
 		// 使用对应的解析器解析文档
 		switch p := parser.(type) {
-		case pdfparser.Parser:
-			docs, err = p.Parse(ctx, f)
-		case docxparser.Parser:
-			docs, err = p.Parse(ctx, f)
-		case htmlparser.Parser:
+		case interface {
+			Parse(context.Context, io.Reader) ([]*schema.Document, error)
+		}:
 			docs, err = p.Parse(ctx, f)
 		default:
 			err = fmt.Errorf("unsupported parser type for extension: %s", ext)

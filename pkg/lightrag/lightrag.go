@@ -140,8 +140,14 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 
 // Insert 插入文本
 func (r *LightRAG) Insert(ctx context.Context, text string) error {
+	if r == nil {
+		return fmt.Errorf("LightRAG instance is nil")
+	}
 	if !r.initialized {
 		return fmt.Errorf("storages not initialized")
+	}
+	if r.docs == nil {
+		return fmt.Errorf("documents collection is not initialized")
 	}
 
 	doc := map[string]any{
@@ -183,8 +189,14 @@ func (r *LightRAG) Insert(ctx context.Context, text string) error {
 
 // ListDocuments 获取文档列表
 func (r *LightRAG) ListDocuments(ctx context.Context, limit, offset int) ([]map[string]any, error) {
+	if r == nil {
+		return nil, fmt.Errorf("LightRAG instance is nil")
+	}
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
+	}
+	if r.docs == nil {
+		return nil, fmt.Errorf("documents collection is not initialized")
 	}
 
 	docs, err := r.docs.Find(ctx, FindOptions{
@@ -205,14 +217,23 @@ func (r *LightRAG) ListDocuments(ctx context.Context, limit, offset int) ([]map[
 
 // DeleteDocument 删除文档
 func (r *LightRAG) DeleteDocument(ctx context.Context, id string) error {
+	if r == nil {
+		return fmt.Errorf("LightRAG instance is nil")
+	}
 	if !r.initialized {
 		return fmt.Errorf("storages not initialized")
+	}
+	if r.docs == nil {
+		return fmt.Errorf("documents collection is not initialized")
 	}
 
 	return r.docs.Delete(ctx, id)
 }
 
 func (r *LightRAG) extractQueryKeywords(ctx context.Context, query string) (*QueryKeywords, error) {
+	if r == nil {
+		return nil, fmt.Errorf("LightRAG instance is nil")
+	}
 	if r.llm == nil {
 		return &QueryKeywords{}, nil
 	}
@@ -246,6 +267,17 @@ func (r *LightRAG) extractQueryKeywords(ctx context.Context, query string) (*Que
 }
 
 func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID string) error {
+	// 安全检查：防止 nil 指针
+	if r == nil {
+		return fmt.Errorf("LightRAG instance is nil")
+	}
+	if r.llm == nil {
+		return fmt.Errorf("LLM is not available")
+	}
+	if r.graph == nil {
+		return fmt.Errorf("graph database is not available")
+	}
+
 	promptStr, err := GetExtractionPrompt(ctx, text)
 	if err != nil {
 		return fmt.Errorf("failed to get extraction prompt: %w", err)
@@ -317,8 +349,14 @@ func (r *LightRAG) extractAndStore(ctx context.Context, text string, docID strin
 
 // InsertBatch 批量插入带元数据的文档
 func (r *LightRAG) InsertBatch(ctx context.Context, documents []map[string]any) ([]string, error) {
+	if r == nil {
+		return nil, fmt.Errorf("LightRAG instance is nil")
+	}
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
+	}
+	if r.docs == nil {
+		return nil, fmt.Errorf("documents collection is not initialized")
 	}
 
 	for i := range documents {
@@ -367,6 +405,9 @@ func (r *LightRAG) InsertBatch(ctx context.Context, documents []map[string]any) 
 
 // Query 执行查询
 func (r *LightRAG) Query(ctx context.Context, query string, param QueryParam) (string, error) {
+	if r == nil {
+		return "", fmt.Errorf("LightRAG instance is nil")
+	}
 	results, err := r.Retrieve(ctx, query, param)
 	if err != nil {
 		return "", err
@@ -416,6 +457,9 @@ func (r *LightRAG) Query(ctx context.Context, query string, param QueryParam) (s
 
 // Retrieve 执行检索
 func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam) ([]SearchResult, error) {
+	if r == nil {
+		return nil, fmt.Errorf("LightRAG instance is nil")
+	}
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
 	}
@@ -432,6 +476,9 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 	case ModeVector, ModeNaive:
 		if r.vector == nil {
 			return nil, fmt.Errorf("vector search not available")
+		}
+		if r.embedder == nil {
+			return nil, fmt.Errorf("embedder is not available")
 		}
 		emb, err := r.embedder.Embed(ctx, query)
 		if err != nil {
@@ -453,6 +500,9 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 			})
 		}
 	case ModeFulltext:
+		if r.fulltext == nil {
+			return nil, fmt.Errorf("fulltext search not available")
+		}
 		rawResults, err = r.fulltext.FindWithScores(ctx, query, FulltextSearchOptions{
 			Limit:    param.Limit,
 			Selector: param.Filters,
@@ -609,6 +659,9 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 		// 合并结果
 		return r.mergeSearchResults(localResults, globalResults, param.Limit), nil
 	default:
+		if r.fulltext == nil {
+			return nil, fmt.Errorf("fulltext search not available")
+		}
 		rawResults, err = r.fulltext.FindWithScores(ctx, query, FulltextSearchOptions{Limit: param.Limit})
 		if err != nil {
 			return nil, err
@@ -617,6 +670,9 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 
 	results := make([]SearchResult, 0, len(rawResults))
 	for _, res := range rawResults {
+		if res.Document == nil {
+			continue
+		}
 		content, _ := res.Document.Data()["content"].(string)
 		results = append(results, SearchResult{
 			ID:              res.Document.ID(),
@@ -647,6 +703,9 @@ func (r *LightRAG) ExportFullGraph(ctx context.Context) (*GraphData, error) {
 
 // ExportGraph 导出知识图谱，可选指定文档 ID 过滤
 func (r *LightRAG) ExportGraph(ctx context.Context, docID string) (*GraphData, error) {
+	if r == nil {
+		return nil, fmt.Errorf("LightRAG instance is nil")
+	}
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
 	}
@@ -738,6 +797,9 @@ func (r *LightRAG) SearchGraph(ctx context.Context, query string) (*GraphData, e
 
 // SearchGraphWithDepth 从图谱检索实体和关系，支持指定搜索深度
 func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth int) (*GraphData, error) {
+	if r == nil {
+		return nil, fmt.Errorf("LightRAG instance is nil")
+	}
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
 	}
@@ -771,25 +833,33 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 	for _, e := range entities {
 		entityName := e
 		g.Go(func() error {
-			// 检查该实体是否在图中有任何“非文档链接”的关系
+			// 检查该实体是否在图中有任何"非文档链接"的关系
 			hasRelation := false
 
 			// 检查出边
-			res, _ := r.graph.Query().V(entityName).Out("").All(gCtx)
-			for _, qr := range res {
-				if qr.Predicate != "APPEARS_IN" {
-					hasRelation = true
-					break
+			if r.graph != nil {
+				query := r.graph.Query()
+				if query != nil {
+					res, _ := query.V(entityName).Out("").All(gCtx)
+					for _, qr := range res {
+						if qr.Predicate != "APPEARS_IN" {
+							hasRelation = true
+							break
+						}
+					}
 				}
 			}
 
 			// 检查入边
-			if !hasRelation {
-				res, _ := r.graph.Query().V(entityName).In("").All(gCtx)
-				for _, qr := range res {
-					if qr.Predicate != "APPEARS_IN" {
-						hasRelation = true
-						break
+			if !hasRelation && r.graph != nil {
+				query := r.graph.Query()
+				if query != nil {
+					res, _ := query.V(entityName).In("").All(gCtx)
+					for _, qr := range res {
+						if qr.Predicate != "APPEARS_IN" {
+							hasRelation = true
+							break
+						}
 					}
 				}
 			}
@@ -798,7 +868,7 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 				mu.Lock()
 				allEntities[entityName] = true
 				mu.Unlock()
-			} else if mode != ModeGraph && r.vector != nil {
+			} else if mode != ModeGraph && r.vector != nil && r.embedder != nil {
 				// 如果没找到直接关联，通过向量搜索寻找最相关的文档，从而发现相关实体
 				emb, err := r.embedder.Embed(gCtx, entityName)
 				if err == nil {
@@ -811,19 +881,21 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 
 							docID := res.Document.ID()
 							// 查找链接到该文档的所有实体 (Subject --[APPEARS_IN]--> docID)
-							linkedEntities, _ := r.graph.GetInNeighbors(gCtx, docID, "APPEARS_IN")
-							mu.Lock()
-							for _, le := range linkedEntities {
-								if !allEntities[le] {
-									allEntities[le] = true
-									logrus.WithFields(logrus.Fields{
-										"query_entity": entityName,
-										"found_entity": le,
-										"score":        res.Score,
-									}).Debug("Expanded entity via vector search")
+							if r.graph != nil {
+								linkedEntities, _ := r.graph.GetInNeighbors(gCtx, docID, "APPEARS_IN")
+								mu.Lock()
+								for _, le := range linkedEntities {
+									if !allEntities[le] {
+										allEntities[le] = true
+										logrus.WithFields(logrus.Fields{
+											"query_entity": entityName,
+											"found_entity": le,
+											"score":        res.Score,
+										}).Debug("Expanded entity via vector search")
+									}
 								}
+								mu.Unlock()
 							}
-							mu.Unlock()
 						}
 					}
 				}
@@ -892,6 +964,9 @@ func (r *LightRAG) SearchGraphWithDepth(ctx context.Context, query string, depth
 
 // GetSubgraph 获取子图
 func (r *LightRAG) GetSubgraph(ctx context.Context, nodeID string, depth int) (*GraphData, error) {
+	if r == nil {
+		return nil, fmt.Errorf("LightRAG instance is nil")
+	}
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
 	}
@@ -924,8 +999,14 @@ func (r *LightRAG) GetSubgraph(ctx context.Context, nodeID string, depth int) (*
 			n := node
 			g.Go(func() error {
 				// 获取所有关系
-				query := r.graph.Query().V(n)
-				res, err := query.Both().All(gCtx)
+				if r.graph == nil {
+					return nil
+				}
+				query := r.graph.Query()
+				if query == nil {
+					return nil
+				}
+				res, err := query.V(n).Both().All(gCtx)
 				if err != nil {
 					return nil
 				}
@@ -1003,8 +1084,14 @@ func (r *LightRAG) FinalizeStorages(ctx context.Context) error {
 }
 
 func (r *LightRAG) retrieveByKeywords(ctx context.Context, keywords []string, param QueryParam) ([]SearchResult, error) {
+	if r == nil {
+		return nil, fmt.Errorf("LightRAG instance is nil")
+	}
 	if len(keywords) == 0 {
 		return []SearchResult{}, nil
+	}
+	if r.graph == nil {
+		return nil, fmt.Errorf("graph database is not available")
 	}
 
 	docIDMap := make(map[string]float64) // docID -> score
@@ -1024,12 +1111,14 @@ func (r *LightRAG) retrieveByKeywords(ctx context.Context, keywords []string, pa
 
 				// 查找关联文档
 				for _, entity := range subgraph.Entities {
-					neighbors, _ := r.graph.GetNeighbors(gCtx, entity.Name, "APPEARS_IN")
-					mu.Lock()
-					for _, id := range neighbors {
-						docIDMap[id] += 1.0 // 简单的计数评分
+					if r.graph != nil {
+						neighbors, _ := r.graph.GetNeighbors(gCtx, entity.Name, "APPEARS_IN")
+						mu.Lock()
+						for _, id := range neighbors {
+							docIDMap[id] += 1.0 // 简单的计数评分
+						}
+						mu.Unlock()
 					}
-					mu.Unlock()
 				}
 			}
 
@@ -1075,6 +1164,9 @@ func (r *LightRAG) retrieveByKeywords(ctx context.Context, keywords []string, pa
 	sortedDocs = sortedDocs[:limit]
 
 	results := make([]SearchResult, 0, len(sortedDocs))
+	if r.docs == nil {
+		return results, nil
+	}
 	for _, sd := range sortedDocs {
 		doc, err := r.docs.FindByID(ctx, sd.id)
 		if err == nil && doc != nil {
@@ -1093,6 +1185,12 @@ func (r *LightRAG) retrieveByKeywords(ctx context.Context, keywords []string, pa
 }
 
 func (r *LightRAG) retrieveNaiveHybrid(ctx context.Context, query string, param QueryParam) ([]SearchResult, error) {
+	if r == nil {
+		return nil, fmt.Errorf("LightRAG instance is nil")
+	}
+	if r.fulltext == nil {
+		return nil, fmt.Errorf("fulltext search not available")
+	}
 	// 实现简单的混合搜索（向量 + 全文）
 	var ftResults []FulltextSearchResult
 	var vecResults []VectorSearchResult
@@ -1132,12 +1230,18 @@ func (r *LightRAG) retrieveNaiveHybrid(ctx context.Context, query string, param 
 	docMap := make(map[string]Document)
 
 	for i, res := range ftResults {
+		if res.Document == nil {
+			continue
+		}
 		score := 1.0 / float64(i+60)
 		docScores[res.Document.ID()] += score
 		docMap[res.Document.ID()] = res.Document
 	}
 
 	for i, res := range vecResults {
+		if res.Document == nil {
+			continue
+		}
 		score := 1.0 / float64(i+60)
 		docScores[res.Document.ID()] += score
 		docMap[res.Document.ID()] = res.Document
@@ -1146,6 +1250,9 @@ func (r *LightRAG) retrieveNaiveHybrid(ctx context.Context, query string, param 
 	var results []SearchResult
 	for id, score := range docScores {
 		doc := docMap[id]
+		if doc == nil {
+			continue
+		}
 		content, _ := doc.Data()["content"].(string)
 		results = append(results, SearchResult{
 			ID:       id,

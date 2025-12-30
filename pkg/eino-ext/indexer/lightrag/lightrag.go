@@ -38,6 +38,9 @@ const (
 	// Graph predicates
 	predicateContains = "contains" // Document contains entity
 	predicateRelated  = "related"  // Entities are related
+
+	// Default batch size for embedding API calls
+	defaultEmbeddingBatchSize = 10
 )
 
 // QueryMode represents the retrieval mode
@@ -127,6 +130,12 @@ func New(opts Options) (*LightRAG, error) {
 
 // initSchema initializes the database schema
 func (r *LightRAG) initSchema(ctx context.Context) error {
+	if r == nil {
+		return fmt.Errorf("[initSchema] LightRAG instance is nil")
+	}
+	if r.db == nil {
+		return fmt.Errorf("[initSchema] database connection is not available")
+	}
 	// Create documents table with vector and fulltext support
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -152,127 +161,172 @@ func (r *LightRAG) initSchema(ctx context.Context) error {
 
 // InsertBatch inserts a batch of documents
 func (r *LightRAG) InsertBatch(ctx context.Context, docs []map[string]any) ([]string, error) {
+	if r == nil {
+		return nil, fmt.Errorf("[InsertBatch] LightRAG instance is nil")
+	}
 	if len(docs) == 0 {
 		return []string{}, nil
 	}
 
-	ids := make([]string, 0, len(docs))
-	texts := make([]string, 0, len(docs))
-	docToVectorIdx := make(map[int]int) // Maps document index to vector index
+	// Process documents in batches to respect API batch size limits
+	batchSize := defaultEmbeddingBatchSize
+	allIds := make([]string, 0, len(docs))
 
-	// Collect texts for embedding
-	for i, doc := range docs {
-		id, ok := doc["id"].(string)
-		if !ok {
-			return nil, fmt.Errorf("[InsertBatch] document %d missing id field", i)
+	for batchStart := 0; batchStart < len(docs); batchStart += batchSize {
+		batchEnd := batchStart + batchSize
+		if batchEnd > len(docs) {
+			batchEnd = len(docs)
 		}
-		ids = append(ids, id)
+		batchDocs := docs[batchStart:batchEnd]
 
-		content, ok := doc["content"].(string)
-		if ok && content != "" {
-			docToVectorIdx[i] = len(texts)
-			texts = append(texts, content)
-		}
-	}
+		ids := make([]string, 0, len(batchDocs))
+		texts := make([]string, 0, len(batchDocs))
+		docToVectorIdx := make(map[int]int) // Maps document index to vector index
 
-	// Embed texts
-	var vectors [][]float64
-	if len(texts) > 0 {
-		var err error
-		vectors, err = r.embedder.EmbedStrings(ctx, texts)
-		if err != nil {
-			return nil, fmt.Errorf("[InsertBatch] embedding failed: %w", err)
-		}
-		if len(vectors) != len(texts) {
-			return nil, fmt.Errorf("[InsertBatch] vector count mismatch: expected %d, got %d", len(texts), len(vectors))
-		}
-	}
+		// Collect texts for embedding
+		for i, doc := range batchDocs {
+			if doc == nil {
+				return nil, fmt.Errorf("[InsertBatch] document at index %d is nil", batchStart+i)
+			}
+			id, ok := doc["id"].(string)
+			if !ok {
+				return nil, fmt.Errorf("[InsertBatch] document %d missing id field", batchStart+i)
+			}
+			ids = append(ids, id)
 
-	// Start transaction
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("[InsertBatch] failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
-	// Prepare insert statement
-	// Note: For DuckDB, we need to use ::FLOAT[] to convert string to FLOAT[]
-	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
-		INSERT OR REPLACE INTO %s (id, content, vector_content, metadata)
-		VALUES (?, ?, ?::FLOAT[], ?)
-	`, r.tableName))
-	if err != nil {
-		return nil, fmt.Errorf("[InsertBatch] failed to prepare statement: %w", err)
-	}
-	defer stmt.Close()
-
-	// Insert documents
-	for i, doc := range docs {
-		id := ids[i]
-		content, _ := doc["content"].(string)
-
-		// Get vector if available
-		var vector []float64
-		if vectorIdx, exists := docToVectorIdx[i]; exists {
-			if vectorIdx < len(vectors) {
-				vector = vectors[vectorIdx]
+			content, ok := doc["content"].(string)
+			if ok && content != "" {
+				docToVectorIdx[i] = len(texts)
+				texts = append(texts, content)
 			}
 		}
 
-		// Build metadata (all fields except id, content)
-		metadata := make(map[string]any)
-		for k, v := range doc {
-			if k != "id" && k != "content" {
-				metadata[k] = v
+		// Embed texts in batches
+		var vectors [][]float64
+		if len(texts) > 0 {
+			if r.embedder == nil {
+				return nil, fmt.Errorf("[InsertBatch] embedder is not available")
+			}
+			var err error
+			vectors, err = r.embedder.EmbedStrings(ctx, texts)
+			if err != nil {
+				return nil, fmt.Errorf("[InsertBatch] embedding failed: %w", err)
+			}
+			if len(vectors) != len(texts) {
+				return nil, fmt.Errorf("[InsertBatch] vector count mismatch: expected %d, got %d", len(texts), len(vectors))
 			}
 		}
 
-		metadataJSON, err := json.Marshal(metadata)
+		// Start transaction
+		if r.db == nil {
+			return nil, fmt.Errorf("[InsertBatch] database connection is not available")
+		}
+		tx, err := r.db.BeginTx(ctx, nil)
 		if err != nil {
-			return nil, fmt.Errorf("[InsertBatch] failed to marshal metadata: %w", err)
+			return nil, fmt.Errorf("[InsertBatch] failed to begin transaction: %w", err)
+		}
+		defer tx.Rollback()
+
+		// Prepare insert statement
+		// Note: For DuckDB, we need to use ::FLOAT[] to convert string to FLOAT[]
+		stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
+			INSERT OR REPLACE INTO %s (id, content, vector_content, metadata)
+			VALUES (?, ?, ?::FLOAT[], ?)
+		`, r.tableName))
+		if err != nil {
+			return nil, fmt.Errorf("[InsertBatch] failed to prepare statement: %w", err)
 		}
 
-		// Convert vector to DuckDB-compatible format
-		// DuckDB requires FLOAT[] type, but go-duckdb driver doesn't support []float64 directly
-		// So we convert to string format and use CAST in SQL
-		var vectorArg interface{}
-		if len(vector) == 0 {
-			vectorArg = nil
-		} else {
-			// Convert []float64 to string format that DuckDB can parse
-			// Format: [1.0, 2.0, 3.0]
-			vectorStr := "["
-			for i, v := range vector {
-				if i > 0 {
-					vectorStr += ", "
+		// Insert documents
+		for i, doc := range batchDocs {
+			if doc == nil {
+				stmt.Close()
+				return nil, fmt.Errorf("[InsertBatch] document at index %d is nil", batchStart+i)
+			}
+			if i >= len(ids) {
+				stmt.Close()
+				return nil, fmt.Errorf("[InsertBatch] index %d out of range for ids array (length: %d)", i, len(ids))
+			}
+			id := ids[i]
+			content, _ := doc["content"].(string)
+
+			// Get vector if available
+			var vector []float64
+			if docToVectorIdx != nil {
+				if vectorIdx, exists := docToVectorIdx[i]; exists {
+					if vectorIdx < len(vectors) {
+						vector = vectors[vectorIdx]
+					}
 				}
-				vectorStr += fmt.Sprintf("%g", v)
 			}
-			vectorStr += "]"
-			vectorArg = vectorStr
+
+			// Build metadata (all fields except id, content)
+			metadata := make(map[string]any)
+			for k, v := range doc {
+				if k != "id" && k != "content" {
+					metadata[k] = v
+				}
+			}
+
+			metadataJSON, err := json.Marshal(metadata)
+			if err != nil {
+				stmt.Close()
+				return nil, fmt.Errorf("[InsertBatch] failed to marshal metadata: %w", err)
+			}
+
+			// Convert vector to DuckDB-compatible format
+			// DuckDB requires FLOAT[] type, but go-duckdb driver doesn't support []float64 directly
+			// So we convert to string format and use CAST in SQL
+			var vectorArg interface{}
+			if len(vector) == 0 {
+				vectorArg = nil
+			} else {
+				// Convert []float64 to string format that DuckDB can parse
+				// Format: [1.0, 2.0, 3.0]
+				vectorStr := "["
+				for i, v := range vector {
+					if i > 0 {
+						vectorStr += ", "
+					}
+					vectorStr += fmt.Sprintf("%g", v)
+				}
+				vectorStr += "]"
+				vectorArg = vectorStr
+			}
+
+			_, err = stmt.ExecContext(ctx, id, content, vectorArg, string(metadataJSON))
+			if err != nil {
+				stmt.Close()
+				return nil, fmt.Errorf("[InsertBatch] failed to execute statement: %w", err)
+			}
+
+			// Create graph relationships
+			// Link document to itself (for graph traversal)
+			if r.graph != nil {
+				if err := r.graph.Link(ctx, id, "is_document", id); err != nil {
+					stmt.Close()
+					return nil, fmt.Errorf("[InsertBatch] failed to create graph link: %w", err)
+				}
+			}
 		}
 
-		_, err = stmt.ExecContext(ctx, id, content, vectorArg, string(metadataJSON))
-		if err != nil {
-			return nil, fmt.Errorf("[InsertBatch] failed to execute statement: %w", err)
+		stmt.Close()
+
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("[InsertBatch] failed to commit transaction: %w", err)
 		}
 
-		// Create graph relationships
-		// Link document to itself (for graph traversal)
-		if err := r.graph.Link(ctx, id, "is_document", id); err != nil {
-			return nil, fmt.Errorf("[InsertBatch] failed to create graph link: %w", err)
-		}
+		allIds = append(allIds, ids...)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("[InsertBatch] failed to commit transaction: %w", err)
-	}
-
-	return ids, nil
+	return allIds, nil
 }
 
 // Retrieve retrieves documents based on query and parameters
 func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam) ([]QueryResult, error) {
+	if r == nil {
+		return nil, fmt.Errorf("[Retrieve] LightRAG instance is nil")
+	}
 	mode := param.Mode
 	if mode == "" {
 		mode = ModeHybrid
@@ -308,6 +362,15 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 
 // retrieveVector performs vector similarity search
 func (r *LightRAG) retrieveVector(ctx context.Context, query string, limit int, threshold float64) ([]QueryResult, error) {
+	if r == nil {
+		return nil, fmt.Errorf("[retrieveVector] LightRAG instance is nil")
+	}
+	if r.embedder == nil {
+		return nil, fmt.Errorf("[retrieveVector] embedder is not available")
+	}
+	if r.db == nil {
+		return nil, fmt.Errorf("[retrieveVector] database connection is not available")
+	}
 	// Embed query
 	vectors, err := r.embedder.EmbedStrings(ctx, []string{query})
 	if err != nil {
@@ -417,6 +480,12 @@ func (r *LightRAG) retrieveVector(ctx context.Context, query string, limit int, 
 
 // retrieveFulltext performs full-text search
 func (r *LightRAG) retrieveFulltext(ctx context.Context, query string, limit int) ([]QueryResult, error) {
+	if r == nil {
+		return nil, fmt.Errorf("[retrieveFulltext] LightRAG instance is nil")
+	}
+	if r.db == nil {
+		return nil, fmt.Errorf("[retrieveFulltext] database connection is not available")
+	}
 	// Use LIKE query for simple fulltext search
 	// Split query into words and search for documents containing all words
 	words := strings.Fields(strings.ToLower(query))
@@ -490,6 +559,15 @@ func (r *LightRAG) retrieveFulltext(ctx context.Context, query string, limit int
 
 // retrieveGraph performs graph-based search
 func (r *LightRAG) retrieveGraph(ctx context.Context, query string, limit int) ([]QueryResult, error) {
+	if r == nil {
+		return nil, fmt.Errorf("[retrieveGraph] LightRAG instance is nil")
+	}
+	if r.db == nil {
+		return nil, fmt.Errorf("[retrieveGraph] database connection is not available")
+	}
+	if r.graph == nil {
+		return nil, fmt.Errorf("[retrieveGraph] graph database is not available")
+	}
 	// For graph search, we need to find documents related to query entities
 	// This is a simplified implementation
 	// In a real implementation, you would extract entities from the query
@@ -524,11 +602,13 @@ func (r *LightRAG) retrieveGraph(ctx context.Context, query string, limit int) (
 
 	// Find related documents via graph
 	relatedDocs := make(map[string]bool)
-	for _, docID := range docIDs {
-		neighbors, err := r.graph.GetNeighbors(ctx, docID, predicateRelated)
-		if err == nil {
-			for _, neighbor := range neighbors {
-				relatedDocs[neighbor] = true
+	if r.graph != nil {
+		for _, docID := range docIDs {
+			neighbors, err := r.graph.GetNeighbors(ctx, docID, predicateRelated)
+			if err == nil {
+				for _, neighbor := range neighbors {
+					relatedDocs[neighbor] = true
+				}
 			}
 		}
 	}
@@ -615,6 +695,9 @@ func (r *LightRAG) retrieveGraph(ctx context.Context, query string, limit int) (
 
 // retrieveHybrid performs hybrid search combining vector and fulltext
 func (r *LightRAG) retrieveHybrid(ctx context.Context, query string, limit int, threshold float64) ([]QueryResult, error) {
+	if r == nil {
+		return nil, fmt.Errorf("[retrieveHybrid] LightRAG instance is nil")
+	}
 	// Get results from both vector and fulltext search
 	vectorResults, _ := r.retrieveVector(ctx, query, limit*2, threshold)
 	fulltextResults, _ := r.retrieveFulltext(ctx, query, limit*2)

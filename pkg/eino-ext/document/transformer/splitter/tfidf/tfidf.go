@@ -27,6 +27,7 @@ import (
 
 	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/schema"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
 	"github.com/rioloc/tfidf-go"
 	"github.com/rioloc/tfidf-go/token"
 )
@@ -53,13 +54,18 @@ type Config struct {
 	// If similarity is below this, a new chunk is started.
 	// Default is 0.2.
 	SimilarityThreshold float64
-	// MaxChunkSize is the maximum number of sentences in a chunk.
-	// Default is 10.
+	// MaxChunkSize is the maximum number of characters (runes) in a chunk.
+	// When a chunk reaches this size, it will be split regardless of similarity.
+	// Default is 1000.
 	MaxChunkSize int
-	// MinChunkSize is the minimum number of characters in a chunk.
+	// MinChunkSize is the minimum number of characters (runes) in a chunk.
 	// If a chunk is shorter than this, more sentences will be added even if similarity is low.
-	// Default is 0.
+	// Default is 50.
 	MinChunkSize int
+	// MaxSentencesPerChunk is the maximum number of sentences in a chunk.
+	// This is a secondary limit to prevent chunks with too many sentences.
+	// Default is 50.
+	MaxSentencesPerChunk int
 	// RemoveWhitespace specifies whether to remove all whitespace characters from the final chunks.
 	// Default is false.
 	RemoveWhitespace bool
@@ -78,7 +84,16 @@ func NewTFIDFSplitter(ctx context.Context, config *Config) (document.Transformer
 		config = &Config{}
 	}
 	if config.MaxChunkSize <= 0 {
-		config.MaxChunkSize = 10
+		config.MaxChunkSize = 1000 // 默认最大 1000 字符
+	}
+	if config.MinChunkSize <= 0 {
+		config.MinChunkSize = 50 // 默认最小 50 字符
+	}
+	if config.MaxChunkSize < config.MinChunkSize {
+		config.MaxChunkSize = config.MinChunkSize
+	}
+	if config.MaxSentencesPerChunk <= 0 {
+		config.MaxSentencesPerChunk = 50 // 默认最多 50 个句子
 	}
 	if config.SimilarityThreshold <= 0 {
 		config.SimilarityThreshold = 0.2
@@ -99,16 +114,74 @@ type tfidfSplitter struct {
 }
 
 func (s *tfidfSplitter) Transform(ctx context.Context, docs []*schema.Document, opts ...document.TransformerOption) ([]*schema.Document, error) {
-	var ret []*schema.Document
+	if s == nil {
+		return nil, fmt.Errorf("tfidfSplitter is nil")
+	}
+	if s.config == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	ret := make([]*schema.Document, 0) // 初始化为空切片而不是 nil
 	for _, doc := range docs {
-		chunks := s.splitText(doc.Content)
-		for i, chunk := range chunks {
+		if doc == nil {
+			continue
+		}
+		// 调试：显示原始内容
+		runeCount := utf8.RuneCountInString(doc.Content)
+		fmt.Printf("\n[DEBUG] 处理文档 %s，原始内容长度: %d 字符 (Runes)\n", doc.ID, runeCount)
+		if runeCount > 0 && runeCount <= 200 {
+			fmt.Printf("[DEBUG] 原始内容预览: %q\n", doc.Content)
+		} else if runeCount > 200 {
+			// 安全地截取前 200 个 rune
+			runes := []rune(doc.Content)
+			fmt.Printf("[DEBUG] 原始内容预览（前200字符）: %q\n", string(runes[:200]))
+		}
+
+		chunks, err := s.splitText(doc.Content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to split document %s: %w", doc.ID, err)
+		}
+		fmt.Printf("[DEBUG] splitText 返回 %d 个 chunks\n", len(chunks))
+
+		// 如果 splitText 返回 nil 或空切片，至少保留原始文档
+		if len(chunks) == 0 {
+			// 如果内容为空，跳过该文档
+			if doc.Content == "" {
+				fmt.Printf("\n========== 文档 %s (跳过，内容为空) ==========\n\n", doc.ID)
+				continue
+			}
+			// 否则创建一个包含原始内容的文档
+			chunkID := s.idGenerator(ctx, doc.ID, 0)
+			fmt.Printf("\n========== 文档 %s 分割为 1 个 chunk (未分割) ==========\n", doc.ID)
+			fmt.Printf("\n--- Chunk 1 (ID: %s) ---\n", chunkID)
+			fmt.Printf("长度: %d 字符 (Runes)\n", runeCount)
+			fmt.Printf("内容:\n%s\n", doc.Content)
+			fmt.Printf("---\n")
+			fmt.Printf("==========================================\n\n")
+
 			nDoc := &schema.Document{
-				ID:       s.idGenerator(ctx, doc.ID, i),
-				Content:  chunk,
+				ID:       chunkID,
+				Content:  doc.Content,
 				MetaData: deepCopyAnyMap(doc.MetaData),
 			}
 			ret = append(ret, nDoc)
+		} else {
+			fmt.Printf("\n========== 文档 %s 分割为 %d 个 chunks ==========\n", doc.ID, len(chunks))
+			for i, chunk := range chunks {
+				chunkID := s.idGenerator(ctx, doc.ID, i)
+				cRuneCount := utf8.RuneCountInString(chunk)
+				fmt.Printf("\n--- Chunk %d (ID: %s) ---\n", i+1, chunkID)
+				fmt.Printf("长度: %d 字符 (Runes)\n", cRuneCount)
+				fmt.Printf("内容:\n%s\n", chunk)
+				fmt.Printf("---\n")
+
+				nDoc := &schema.Document{
+					ID:       chunkID,
+					Content:  chunk,
+					MetaData: deepCopyAnyMap(doc.MetaData),
+				}
+				ret = append(ret, nDoc)
+			}
+			fmt.Printf("==========================================\n\n")
 		}
 	}
 	return ret, nil
@@ -118,79 +191,141 @@ func (s *tfidfSplitter) GetType() string {
 	return "TFIDFSplitter"
 }
 
-func (s *tfidfSplitter) splitText(text string) []string {
+func (s *tfidfSplitter) splitText(text string) ([]string, error) {
+	// 安全检查
+	if s == nil || s.config == nil {
+		return []string{text}, nil
+	}
+
+	// 如果文本为空，返回空切片
+	if text == "" {
+		return []string{}, nil
+	}
+
+	// 如果文本太短（少于 MinChunkSize 个字符），直接返回原始文本，不进行分割
+	trimmed := strings.TrimSpace(text)
+	if utf8.RuneCountInString(trimmed) < s.config.MinChunkSize {
+		if trimmed == "" {
+			return []string{}, nil
+		}
+		chunk := trimmed
+		if s.config.RemoveWhitespace {
+			chunk = removeAllWhitespace(chunk)
+		} else {
+			chunk = strings.ReplaceAll(chunk, "\n", " ")
+			chunk = strings.ReplaceAll(chunk, "\r", " ")
+		}
+		return []string{chunk}, nil
+	}
+
 	// 1. Split into sentences
 	sentences := splitIntoSentences(text)
 	if len(sentences) == 0 {
-		return nil
+		// 如果无法分割成句子，但文本不为空，返回包含原始文本的切片
+		if trimmed != "" {
+			return []string{trimmed}, nil
+		}
+		return []string{}, nil
 	}
 	if len(sentences) == 1 {
-		return sentences
+		return sentences, nil
 	}
 
+	// 过滤掉太短的句子（少于3个字符），避免产生只有1-2个字符的chunk
+	filteredSentences := make([]string, 0, len(sentences))
+	for _, sent := range sentences {
+		trimmedSent := strings.TrimSpace(sent)
+		if utf8.RuneCountInString(trimmedSent) >= 3 {
+			filteredSentences = append(filteredSentences, sent)
+		}
+	}
+
+	// 如果过滤后没有句子，返回原始文本
+	if len(filteredSentences) == 0 {
+		return []string{trimmed}, nil
+	}
+
+	// 如果过滤后只剩一个句子，直接返回
+	if len(filteredSentences) == 1 {
+		return filteredSentences, nil
+	}
+
+	sentences = filteredSentences
+
 	// 2. Calculate TF-IDF for each sentence
+	var tfidfMatrix [][]float64
+
 	var vocabulary []string
 	var tokens [][]string
 	var err error
 
 	if s.config.UseSego {
 		vocabulary, tokens, err = s.segoTokenize(sentences)
+		if err != nil {
+			return nil, fmt.Errorf("sego tokenizer failed: %w", err)
+		}
 	} else {
 		tokenizer := token.NewTokenizer()
-		vocabulary, tokens, err = tokenizer.Tokenize(sentences)
+		if tokenizer != nil {
+			vocabulary, tokens, err = tokenizer.Tokenize(sentences)
+		} else {
+			err = fmt.Errorf("tokenizer creation failed")
+		}
 	}
 
-	if err != nil {
-		// Fallback to simple split if tokenization fails
-		return sentences
+	if err == nil && vocabulary != nil && tokens != nil && len(tokens) == len(sentences) {
+		tfMatrix := tfidf.Tf(vocabulary, tokens)
+		idfVector := tfidf.Idf(vocabulary, tokens, true)
+		vectorizer := tfidf.NewTfIdfVectorizer()
+		if tfMatrix != nil && idfVector != nil && vectorizer != nil {
+			tfidfMatrix, _ = vectorizer.TfIdf(tfMatrix, idfVector)
+		}
 	}
 
-	tfMatrix := tfidf.Tf(vocabulary, tokens)
-	idfVector := tfidf.Idf(vocabulary, tokens, true) // with smoothing
+	// 3. Group sentences into chunks
+	return s.groupSentences(sentences, tfidfMatrix), nil
+}
 
-	vectorizer := tfidf.NewTfIdfVectorizer()
-	tfidfMatrix, err := vectorizer.TfIdf(tfMatrix, idfVector)
-	if err != nil {
-		return sentences
+func (s *tfidfSplitter) groupSentences(sentences []string, tfidfMatrix [][]float64) []string {
+	if len(sentences) == 0 {
+		return []string{}
 	}
 
-	// 3. Group sentences into chunks based on similarity
 	var chunks []string
 	var currentChunk []string
 	var currentLength int
-
-	currentChunk = append(currentChunk, sentences[0])
-	currentLength = utf8.RuneCountInString(sentences[0])
 
 	joinSep := " "
 	if s.config.RemoveWhitespace {
 		joinSep = ""
 	}
 
-	for i := 1; i < len(sentences); i++ {
-		sim := cosineSimilarity(tfidfMatrix[i-1], tfidfMatrix[i])
+	for i := 0; i < len(sentences); i++ {
+		// 如果是第一个句子，直接添加
+		if len(currentChunk) == 0 {
+			currentChunk = append(currentChunk, sentences[i])
+			currentLength = utf8.RuneCountInString(sentences[i])
+			continue
+		}
+
+		// 计算相似度（如果有 TF-IDF 矩阵）
+		sim := 1.0 // 默认高度相似，防止在没有矩阵时乱切分
+		if tfidfMatrix != nil && i > 0 && i < len(tfidfMatrix) && i-1 < len(tfidfMatrix) {
+			if tfidfMatrix[i-1] != nil && tfidfMatrix[i] != nil {
+				sim = cosineSimilarity(tfidfMatrix[i-1], tfidfMatrix[i])
+			}
+		}
 
 		// 识别当前句子是否为 Markdown 标题
-		isHeader := strings.HasPrefix(strings.TrimSpace(sentences[i]), "#")
+		isHeader := isMarkdownHeader(strings.TrimSpace(sentences[i]))
 
-		// 如果是标题，或者相似度低，或者达到最大尺寸，则触发切分意向
-		shouldSplit := isHeader || sim < s.config.SimilarityThreshold || len(currentChunk) >= s.config.MaxChunkSize
-
-		// 满足以下切分条件：
-		// 1. 必须达到最小长度限制 (MinChunkSize)，除非句子数已经达到限制的两倍以防止无限增长
-		// 2. 或者是标题触发且已经达到最小长度
+		// 切分判定
+		shouldSplit := isHeader || sim < s.config.SimilarityThreshold || currentLength >= s.config.MaxChunkSize || len(currentChunk) >= s.config.MaxSentencesPerChunk
 		canSplit := currentLength >= s.config.MinChunkSize
-		forceSplit := len(currentChunk) >= s.config.MaxChunkSize*2
+		forceSplit := currentLength >= s.config.MaxChunkSize || len(currentChunk) >= s.config.MaxSentencesPerChunk*2
 
 		if (shouldSplit && canSplit) || forceSplit {
-			chunk := strings.Join(currentChunk, joinSep)
-			if s.config.RemoveWhitespace {
-				chunk = removeAllWhitespace(chunk)
-			} else {
-				// 即使不移除所有空白，也应移除换行符
-				chunk = strings.ReplaceAll(chunk, "\n", " ")
-				chunk = strings.ReplaceAll(chunk, "\r", " ")
-			}
+			chunk := s.cleanChunk(strings.Join(currentChunk, joinSep))
 			chunks = append(chunks, chunk)
 			currentChunk = []string{sentences[i]}
 			currentLength = utf8.RuneCountInString(sentences[i])
@@ -200,19 +335,38 @@ func (s *tfidfSplitter) splitText(text string) []string {
 		}
 	}
 
+	// 处理最后一个 chunk
 	if len(currentChunk) > 0 {
-		chunk := strings.Join(currentChunk, joinSep)
-		if s.config.RemoveWhitespace {
-			chunk = removeAllWhitespace(chunk)
+		chunk := s.cleanChunk(strings.Join(currentChunk, joinSep))
+		chunkLen := utf8.RuneCountInString(chunk)
+
+		// 强制合并最后一个 Chunk，只要它小于 MinChunkSize 且前面还有 Chunk
+		if chunkLen < s.config.MinChunkSize && len(chunks) > 0 {
+			prevChunk := chunks[len(chunks)-1]
+			mergedChunk := prevChunk + joinSep + chunk
+			// 放宽限制：为了满足 MinChunkSize，允许合并后的结果超过 MaxChunkSize
+			// 但我们仍然保留一个合理的上限，比如 MaxChunkSize * 3
+			if utf8.RuneCountInString(mergedChunk) <= s.config.MaxChunkSize*3 {
+				chunks[len(chunks)-1] = mergedChunk
+			} else {
+				chunks = append(chunks, chunk)
+			}
 		} else {
-			// 即使不移除所有空白，也应移除换行符，确保返回结果在单行内或符合预期
-			chunk = strings.ReplaceAll(chunk, "\n", " ")
-			chunk = strings.ReplaceAll(chunk, "\r", " ")
+			chunks = append(chunks, chunk)
 		}
-		chunks = append(chunks, chunk)
 	}
 
 	return chunks
+}
+
+func (s *tfidfSplitter) cleanChunk(chunk string) string {
+	if s.config.RemoveWhitespace {
+		return removeAllWhitespace(chunk)
+	}
+	// 即使不移除所有空白，也应移除换行符
+	chunk = strings.ReplaceAll(chunk, "\n", " ")
+	chunk = strings.ReplaceAll(chunk, "\r", " ")
+	return chunk
 }
 
 func removeAllWhitespace(s string) string {
@@ -229,16 +383,47 @@ func (s *tfidfSplitter) initSego() error {
 }
 
 func (s *tfidfSplitter) segoTokenize(sentences []string) ([]string, [][]string, error) {
-	// sego package is not available, fallback to regular tokenizer
-	// Return error to trigger fallback in splitText
-	return nil, nil, fmt.Errorf("sego tokenizer is not available: package github.com/mozhou-tech/sqlite-ai-driver/pkg/sego not found")
+	segmenter, err := sego.GetSegmenter()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var vocabulary []string
+	var tokens [][]string
+	wordMap := make(map[string]bool)
+
+	for _, sentence := range sentences {
+		segments := segmenter.Segment([]byte(sentence))
+		var sentenceTokens []string
+		for _, seg := range segments {
+			tokenStr := seg.Token().Text()
+			// 过滤掉空白
+			tokenStr = strings.TrimSpace(tokenStr)
+			if len(tokenStr) > 0 {
+				sentenceTokens = append(sentenceTokens, tokenStr)
+				if !wordMap[tokenStr] {
+					wordMap[tokenStr] = true
+					vocabulary = append(vocabulary, tokenStr)
+				}
+			}
+		}
+		tokens = append(tokens, sentenceTokens)
+	}
+
+	return vocabulary, tokens, nil
 }
 
 func splitIntoSentences(text string) []string {
+	// 安全检查：处理空文本
+	if text == "" {
+		return nil
+	}
+
 	// 使用正则表达式匹配常见的标点符号或 Markdown 标题
-	// 1. 匹配 1-6 个 # 号开头的标题部分，直到遇到标点或行尾
-	// 2. 匹配普通标点符号及其后的空白
-	sentenceRegexp := regexp.MustCompile(`(#{1,6}\s*[^#.!?。！？\n\r]*|[.!?。！？\n\r][.!?。！？\n\r\s]*)`)
+	// Markdown 标题必须：在行首（或字符串开头），1-6 个 # 后跟空格，然后是标题内容
+	// 普通句子分隔符：中英文句号、问号、感叹号、换行符
+	// 注意：只匹配真正的 Markdown 标题格式，避免匹配 PDF 乱码中的 # 字符
+	sentenceRegexp := regexp.MustCompile(`((?:^|\n)#{1,6}\s+[^\n\r]*|[.!?。！？\n\r][.!?。！？\n\r\s]*)`)
 
 	// 查找所有匹配的分隔符位置
 	matches := sentenceRegexp.FindAllStringIndex(text, -1)
@@ -246,16 +431,25 @@ func splitIntoSentences(text string) []string {
 	var sentences []string
 	lastPos := 0
 	for _, match := range matches {
+		// 安全检查：确保 match 有足够的元素
+		if len(match) < 2 {
+			continue
+		}
 		start, end := match[0], match[1]
+
+		// 安全检查：确保索引在有效范围内
+		if start < 0 || end < 0 || start > len(text) || end > len(text) || start > end {
+			continue
+		}
 
 		// 1. 获取句子正文部分
 		content := text[lastPos:start]
 		// 2. 获取分隔符区域（标题或标点）
 		delims := text[start:end]
 
-		// 检查是否是 Markdown 标题
+		// 检查是否是 Markdown 标题（必须是 # 后跟空格的格式）
 		trimmedDelims := strings.TrimSpace(delims)
-		isHeader := strings.HasPrefix(trimmedDelims, "#")
+		isHeader := isMarkdownHeader(trimmedDelims)
 
 		if isHeader {
 			// 如果是标题
@@ -265,6 +459,9 @@ func splitIntoSentences(text string) []string {
 			}
 			// 标题本身作为一个独立的句子
 			cleanHeader := strings.TrimRightFunc(delims, unicode.IsSpace)
+			cleanHeader = strings.TrimLeftFunc(cleanHeader, func(r rune) bool {
+				return r == '\n' || r == '\r'
+			})
 			if cleanHeader != "" {
 				sentences = append(sentences, cleanHeader)
 			}
@@ -303,6 +500,34 @@ func splitIntoSentences(text string) []string {
 	return sentences
 }
 
+// isMarkdownHeader 检查字符串是否是有效的 Markdown 标题格式
+// 有效格式：1-6 个 # 号后跟至少一个空格，然后是标题内容
+func isMarkdownHeader(s string) bool {
+	if s == "" {
+		return false
+	}
+	// 统计开头的 # 数量
+	hashCount := 0
+	for _, r := range s {
+		if r == '#' {
+			hashCount++
+		} else {
+			break
+		}
+	}
+	// 必须是 1-6 个 #
+	if hashCount < 1 || hashCount > 6 {
+		return false
+	}
+	// # 后面必须跟空格（标准 Markdown 格式）
+	if len(s) <= hashCount {
+		return false
+	}
+	// 检查 # 后面是否是空格
+	nextChar := s[hashCount]
+	return nextChar == ' ' || nextChar == '\t'
+}
+
 func cleanContentText(content string) string {
 	if content == "" {
 		return ""
@@ -325,6 +550,10 @@ func cleanContentText(content string) string {
 }
 
 func cosineSimilarity(v1, v2 []float64) float64 {
+	// 安全检查：防止 nil 指针
+	if v1 == nil || v2 == nil {
+		return 0
+	}
 	if len(v1) != len(v2) || len(v1) == 0 {
 		return 0
 	}

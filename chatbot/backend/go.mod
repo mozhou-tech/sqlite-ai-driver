@@ -6,11 +6,11 @@ require (
 	github.com/cloudwego/eino v0.7.14
 	github.com/cloudwego/eino-ext/components/document/parser/docx v0.0.0-20251229121631-716047332ba5
 	github.com/cloudwego/eino-ext/components/document/parser/html v0.0.0-20251229121631-716047332ba5
-	github.com/cloudwego/eino-ext/components/document/parser/pdf v0.0.0-20251229121631-716047332ba5
 	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251226123311-1d93d527c144
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.2
 	github.com/gin-gonic/gin v1.10.0
 	github.com/mozhou-tech/sqlite-ai-driver v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf v0.0.0
 	github.com/sirupsen/logrus v1.9.3
 )
 
@@ -27,7 +27,6 @@ require (
 	github.com/bytedance/sonic/loader v0.4.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.2 // indirect
-	github.com/dslipak/pdf v0.0.2 // indirect
 	github.com/duckdb/duckdb-go-bindings v0.1.9 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.4 // indirect
 	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.4 // indirect
@@ -98,3 +97,4 @@ require (
 )
 
 replace github.com/mozhou-tech/sqlite-ai-driver => ../../
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf => ../../pkg/eino-ext/document/parser/pdf

@@ -78,8 +78,9 @@ func TestDuckDBFullFlow(t *testing.T) {
 
 		// 1. Splitter
 		splitter, err := tfidf.NewTFIDFSplitter(ctx, &tfidf.Config{
-			SimilarityThreshold: 0.1,
-			MaxChunkSize:        100,
+			SimilarityThreshold:  0.1,
+			MaxChunkSize:         1000, // 从 100 句子改为 1000 字符
+			MaxSentencesPerChunk: 100,  // 保持原来的句子数限制
 			IDGenerator: func(ctx context.Context, originalID string, splitIndex int) string {
 				return fmt.Sprintf("%s_%d", originalID, splitIndex)
 			},

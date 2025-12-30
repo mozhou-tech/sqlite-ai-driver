@@ -59,6 +59,12 @@ func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 
 // Store indexes the provided documents into LightRAG.
 func (i *Indexer) Store(ctx context.Context, docs []*schema.Document, opts ...indexer.Option) (ids []string, err error) {
+	if i == nil {
+		return nil, fmt.Errorf("[Store] Indexer instance is nil")
+	}
+	if i.config == nil {
+		return nil, fmt.Errorf("[Store] config is nil")
+	}
 	ctx = callbacks.EnsureRunInfo(ctx, i.GetType(), components.ComponentOfIndexer)
 	ctx = callbacks.OnStart(ctx, &indexer.CallbackInput{Docs: docs})
 	defer func() {
@@ -73,16 +79,29 @@ func (i *Indexer) Store(ctx context.Context, docs []*schema.Document, opts ...in
 			return nil, fmt.Errorf("[Store] failed to transform documents: %w", err)
 		}
 	}
+	if docs == nil {
+		return nil, fmt.Errorf("[Store] transformed documents is nil")
+	}
 
 	toStore := make([]map[string]any, 0, len(docs))
 	for _, doc := range docs {
+		if doc == nil {
+			return nil, fmt.Errorf("[Store] document is nil")
+		}
 		docMap, err := i.config.DocumentToMap(ctx, doc)
 		if err != nil {
 			return nil, fmt.Errorf("[Store] failed to convert document to map: %w", err)
 		}
+		if docMap == nil {
+			return nil, fmt.Errorf("[Store] DocumentToMap returned nil map")
+		}
 		toStore = append(toStore, docMap)
 	}
 
+	// i.config 已经在函数开头检查过了，这里只需要检查 LightRAG
+	if i.config.LightRAG == nil {
+		return nil, fmt.Errorf("[Store] LightRAG instance is nil")
+	}
 	ids, err = i.config.LightRAG.InsertBatch(ctx, toStore)
 	if err != nil {
 		return nil, fmt.Errorf("[Store] failed to insert batch into lightrag: %w", err)
@@ -104,11 +123,20 @@ func (i *Indexer) IsCallbacksEnabled() bool {
 }
 
 func defaultDocumentToMap(ctx context.Context, doc *schema.Document) (map[string]any, error) {
-	docMap := make(map[string]any, len(doc.MetaData)+2)
+	if doc == nil {
+		return nil, fmt.Errorf("[defaultDocumentToMap] document is nil")
+	}
+	metaDataLen := 0
+	if doc.MetaData != nil {
+		metaDataLen = len(doc.MetaData)
+	}
+	docMap := make(map[string]any, metaDataLen+2)
 	docMap["id"] = doc.ID
 	docMap["content"] = doc.Content
-	for k, v := range doc.MetaData {
-		docMap[k] = v
+	if doc.MetaData != nil {
+		for k, v := range doc.MetaData {
+			docMap[k] = v
+		}
 	}
 	return docMap, nil
 }

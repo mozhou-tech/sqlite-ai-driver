@@ -5,3 +5,4 @@ testdata
 *.db
 *.log
 node_modules
+rag_storage
