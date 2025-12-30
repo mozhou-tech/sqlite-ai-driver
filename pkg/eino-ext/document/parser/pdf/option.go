@@ -19,12 +19,21 @@ package pdf
 import "github.com/cloudwego/eino/components/document/parser"
 
 type options struct {
-	toPages *bool
+	toPages         *bool
+	minContentLength *int
 }
 
 // WithToPages is a parser option that specifies whether to parse the PDF into pages.
 func WithToPages(toPages bool) parser.Option {
 	return parser.WrapImplSpecificOptFn(func(opts *options) {
 		opts.toPages = &toPages
+	})
+}
+
+// WithMinContentLength is a parser option that specifies the minimum content length for a page to be included.
+// Pages with content shorter than this will be skipped. Default is 100.
+func WithMinContentLength(length int) parser.Option {
+	return parser.WrapImplSpecificOptFn(func(opts *options) {
+		opts.minContentLength = &length
 	})
 }

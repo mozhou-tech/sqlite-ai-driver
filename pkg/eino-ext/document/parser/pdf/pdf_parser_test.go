@@ -35,7 +35,7 @@ func TestLoader_Load(t *testing.T) {
 		p, err := NewPDFParser(ctx, nil)
 		assert.NoError(t, err)
 
-		docs, err := p.Parse(ctx, f, WithToPages(true), parser.WithExtraMeta(map[string]any{"test": "test"}))
+		docs, err := p.Parse(ctx, f, WithToPages(true), WithMinContentLength(0), parser.WithExtraMeta(map[string]any{"test": "test"}))
 		assert.NoError(t, err)
 		assert.Equal(t, 2, len(docs))
 		assert.True(t, len(docs[0].Content) > 0)

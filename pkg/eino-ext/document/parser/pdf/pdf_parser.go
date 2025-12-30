@@ -71,9 +71,13 @@ func (pp *PDFParser) Parse(ctx context.Context, reader io.Reader, opts ...parser
 
 	pages := f.NumPage()
 	var (
-		buf     bytes.Buffer
-		toPages = specificOpts.toPages != nil && *specificOpts.toPages
+		buf             bytes.Buffer
+		toPages         = specificOpts.toPages != nil && *specificOpts.toPages
+		minContentLength = 100 // 默认值
 	)
+	if specificOpts.minContentLength != nil {
+		minContentLength = *specificOpts.minContentLength
+	}
 	fonts := make(map[string]*pdf.Font)
 	skippedPages := 0
 	for i := 1; i <= pages; i++ {
@@ -119,8 +123,7 @@ func (pp *PDFParser) Parse(ctx context.Context, reader io.Reader, opts ...parser
 		textLength := len(cleanedText)
 		fmt.Printf("[PDF Parser] 页面 %d: 原始文本长度=%d, 去除所有空白后长度=%d\n", i, len(text), textLength)
 
-		// 只处理超过100个字符的页面
-		minContentLength := 100
+		// 只处理超过最小内容长度的页面
 		if textLength < minContentLength {
 			fmt.Printf("[PDF Parser] 页面 %d: 内容长度 %d < %d，跳过此页\n", i, textLength, minContentLength)
 			skippedPages++
