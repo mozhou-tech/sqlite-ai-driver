@@ -674,6 +674,52 @@ func (r *LightRAG) Retrieve(ctx context.Context, query string, param QueryParam)
 
 		// 合并结果
 		return r.mergeSearchResults(localResults, globalResults, param.Limit), nil
+	case ModeMix:
+		// Mix 模式：结合知识图谱和向量检索
+		// 根据 Python 版本，mix 模式整合知识图谱和向量检索
+		if r.graph == nil {
+			return nil, fmt.Errorf("graph search not available")
+		}
+		keywords, err := r.extractQueryKeywords(ctx, query)
+		if err != nil {
+			// 如果提取关键词失败，回退到向量搜索
+			if r.vector == nil || r.embedder == nil {
+				return nil, fmt.Errorf("vector search not available")
+			}
+			emb, err := r.embedder.Embed(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			vecResults, err := r.vector.Search(ctx, emb, VectorSearchOptions{
+				Limit:    param.Limit,
+				Selector: param.Filters,
+			})
+			if err != nil {
+				return nil, err
+			}
+			results := make([]SearchResult, 0, len(vecResults))
+			for _, v := range vecResults {
+				content, _ := v.Document.Data()["content"].(string)
+				results = append(results, SearchResult{
+					ID:       v.Document.ID(),
+					Content:  content,
+					Score:    v.Score,
+					Metadata: v.Document.Data(),
+				})
+			}
+			return results, nil
+		}
+
+		logrus.WithFields(logrus.Fields{
+			"query":      query,
+			"low_level":  keywords.LowLevel,
+			"high_level": keywords.HighLevel,
+		}).Info("Performing mix search (graph + vector)")
+
+		// Mix 模式使用所有关键词（low-level + high-level）进行检索
+		// retrieveByKeywords 方法已经实现了图谱 + 向量的组合检索
+		allKeywords := append(keywords.LowLevel, keywords.HighLevel...)
+		return r.retrieveByKeywords(ctx, allKeywords, param)
 	default:
 		if r.fulltext == nil {
 			return nil, fmt.Errorf("fulltext search not available")
@@ -1084,8 +1130,12 @@ func (r *LightRAG) Wait() {
 
 // FinalizeStorages 关闭存储资源
 func (r *LightRAG) FinalizeStorages(ctx context.Context) error {
-	// 等待所有后台任务完成
+	// 等待所有后台任务完成（包括实体提取任务）
 	r.wg.Wait()
+
+	// 等待一小段时间，确保 embedding worker 有机会完成当前正在处理的文档
+	// 注意：embedding worker 会在数据库关闭时自动停止
+	time.Sleep(100 * time.Millisecond)
 
 	if r.fulltext != nil {
 		r.fulltext.Close()

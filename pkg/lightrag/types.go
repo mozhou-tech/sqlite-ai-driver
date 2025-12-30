@@ -15,6 +15,7 @@ const (
 	ModeLocal    QueryMode = "local"    // 局部搜索 (Low-level keywords)
 	ModeGlobal   QueryMode = "global"   // 全局搜索 (High-level keywords)
 	ModeNaive    QueryMode = "naive"    // 朴素 RAG (仅向量搜索)
+	ModeMix      QueryMode = "mix"      // 混合模式：结合知识图谱和向量检索
 )
 
 // QueryParam 查询参数

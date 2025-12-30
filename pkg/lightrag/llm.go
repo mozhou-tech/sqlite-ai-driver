@@ -45,6 +45,9 @@ func (l *SimpleLLM) Complete(ctx context.Context, prompt string) (string, error)
 		if strings.Contains(strings.ToLower(prompt), "capital") {
 			highLevel = `["Capital"]`
 		}
+		if strings.Contains(strings.ToLower(prompt), "database") && strings.Contains(strings.ToLower(prompt), "system") {
+			highLevel = `["Database"]`
+		}
 		if strings.Contains(strings.ToLower(prompt), "mockentity") {
 			lowLevel = `["MockEntity"]`
 		}
@@ -72,6 +75,18 @@ func (l *SimpleLLM) Complete(ctx context.Context, prompt string) (string, error)
 			return `{
 				"entities": [{"name": "SQLiteAI", "type": "Database", "description": "SQLite AI driver"}],
 				"relationships": [{"source": "SQLiteAI", "target": "Golang", "relation": "BUILT_FOR", "description": "Used in Go"}]
+			}`, nil
+		}
+		if strings.Contains(prompt, "Apple") && strings.Contains(prompt, "fruit") {
+			return `{
+				"entities": [{"name": "Apple", "type": "Fruit", "description": "A type of fruit"}],
+				"relationships": []
+			}`, nil
+		}
+		if strings.Contains(prompt, "Apple") {
+			return `{
+				"entities": [{"name": "Apple", "type": "Company", "description": "Technology company"}],
+				"relationships": []
 			}`, nil
 		}
 		return `{

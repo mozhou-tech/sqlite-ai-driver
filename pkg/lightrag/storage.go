@@ -170,9 +170,11 @@ type VectorSearchConfig struct {
 
 // duckdbDatabase 基于DuckDB的数据库实现
 type duckdbDatabase struct {
-	db    *sql.DB
-	graph cayley_driver.Graph
-	path  string
+	db          *sql.DB
+	graph       cayley_driver.Graph
+	path        string
+	collections []*duckdbCollection // 跟踪所有创建的集合，以便在关闭时停止它们的 worker
+	mu          sync.Mutex          // 保护 collections 的并发访问
 }
 
 // CreateDatabase 创建数据库实例
@@ -266,11 +268,18 @@ func (d *duckdbDatabase) Collection(ctx context.Context, name string, schema Sch
 		_, _ = d.db.ExecContext(ctx, alterTableSQL)
 	}
 
-	return &duckdbCollection{
+	collection := &duckdbCollection{
 		db:        d.db,
 		tableName: tableName,
 		schema:    schema,
-	}, nil
+	}
+
+	// 将集合添加到数据库的跟踪列表中
+	d.mu.Lock()
+	d.collections = append(d.collections, collection)
+	d.mu.Unlock()
+
+	return collection, nil
 }
 
 // getEmbeddingLimiter 获取或初始化 embedding 速率限制器（每秒5次）
@@ -297,6 +306,13 @@ func (d *duckdbDatabase) Graph() GraphDatabase {
 }
 
 func (d *duckdbDatabase) Close(ctx context.Context) error {
+	// 在关闭数据库之前，停止所有集合的后台 worker
+	d.mu.Lock()
+	for _, collection := range d.collections {
+		collection.stopEmbeddingWorker()
+	}
+	d.mu.Unlock()
+
 	var errs []error
 	if d.db != nil {
 		if err := d.db.Close(); err != nil {
@@ -1179,6 +1195,10 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 
 	rows, err := c.db.QueryContext(processCtx, selectSQL)
 	if err != nil {
+		// 如果数据库已关闭，这是预期的行为，不需要记录错误
+		if err.Error() == "sql: database is closed" {
+			return
+		}
 		logrus.WithError(err).Error("Failed to query pending embeddings")
 		return
 	}

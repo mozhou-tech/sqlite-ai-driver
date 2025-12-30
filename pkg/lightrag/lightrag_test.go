@@ -588,6 +588,15 @@ func TestLightRAG_Retrieve_Modes_Extra(t *testing.T) {
 		t.Error("ModeHybrid returned no results")
 	}
 
+	// Test ModeMix (graph + vector retrieval)
+	results, err = rag.Retrieve(ctx, "fox", QueryParam{Mode: ModeMix})
+	if err != nil {
+		t.Errorf("ModeMix failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Error("ModeMix returned no results")
+	}
+
 	// Test Default mode
 	results, err = rag.Retrieve(ctx, "fox", QueryParam{Mode: "unsupported"})
 	if err != nil {

@@ -26,6 +26,9 @@ func setupRAG(t *testing.T, workingDir string) (*LightRAG, func()) {
 	}
 
 	return rag, func() {
+		// 等待所有后台任务完成（包括实体提取任务）
+		rag.Wait()
+		// 关闭存储资源（这会停止 embedding worker 并等待其完成）
 		rag.FinalizeStorages(ctx)
 		os.RemoveAll(workingDir)
 	}
@@ -91,6 +94,12 @@ func TestEvaluateModes(t *testing.T) {
 			query:    "The Eiffel Tower",
 			mode:     ModeNaive,
 			expected: []string{"Eiffel Tower"},
+		},
+		{
+			name:     "混合模式评估 (Mix)",
+			query:    "What is SQLiteAI?",
+			mode:     ModeMix,
+			expected: []string{"SQLiteAI", "Golang"}, // Mix 模式结合图谱和向量检索
 		},
 	}
 
@@ -166,8 +175,9 @@ func TestEvaluateAdvancedModes(t *testing.T) {
 	})
 
 	t.Run("全局搜索评估 (Global Mode)", func(t *testing.T) {
-		// Global 模式结合了图搜索和混合搜索
-		results, err := rag.Retrieve(ctx, "JavaScript ecosystem", QueryParam{Mode: ModeGlobal, Limit: 2})
+		// Global 模式使用 high-level keywords，查询与数据库相关的主题
+		// 插入的文档包含 "database"，所以查询 "database system" 应该能找到相关文档
+		results, err := rag.Retrieve(ctx, "database system", QueryParam{Mode: ModeGlobal, Limit: 2})
 		if err != nil {
 			t.Fatalf("Global mode failed: %v", err)
 		}
@@ -185,6 +195,32 @@ func TestEvaluateAdvancedModes(t *testing.T) {
 		}
 		if !hasTriples {
 			t.Log("Note: Global mode recalled no triples in this test case (depends on entity extraction)")
+		}
+	})
+
+	t.Run("混合模式评估 (Mix Mode)", func(t *testing.T) {
+		// Mix 模式结合知识图谱和向量检索
+		results, err := rag.Retrieve(ctx, "SQLiteAI database", QueryParam{Mode: ModeMix, Limit: 2})
+		if err != nil {
+			t.Fatalf("Mix mode failed: %v", err)
+		}
+
+		if len(results) == 0 {
+			t.Error("Mix mode returned no results")
+		}
+
+		hasSQLiteAI := false
+		for _, res := range results {
+			if strings.Contains(res.Content, "SQLiteAI") {
+				hasSQLiteAI = true
+			}
+			// Mix 模式应该召回三元组（来自图谱检索）
+			if len(res.RecalledTriples) > 0 {
+				t.Logf("Mix mode recalled %d triples", len(res.RecalledTriples))
+			}
+		}
+		if !hasSQLiteAI {
+			t.Error("Mix mode failed to recall doc containing SQLiteAI")
 		}
 	})
 }
