@@ -42,7 +42,38 @@ release: verify-release
 install:
 	go mod tidy
 
-test:
-	MOCKEY_CHECK_GCFLAGS=false go test -gcflags="all=-N -l" ./pkg/...
+.PHONY: fix-deps test
+
+fix-deps:
+	@echo "修复所有子模块的依赖..."
+	@for dir in ./pkg/cayley-driver ./pkg/duckdb-driver ./pkg/eino-ext ./pkg/eino-ext/document/parser/pdf ./pkg/file-driver ./pkg/lightrag ./pkg/sego ./pkg/sqlite3-driver; do \
+		if [ -f "$$dir/go.mod" ]; then \
+			echo "修复依赖: $$dir"; \
+			(cd $$dir && go mod tidy 2>&1 | grep -v "go: downloading" || true); \
+			(cd $$dir && go get -d ./... 2>&1 | grep -v "go: downloading" || true); \
+		fi; \
+	done; \
+	echo "✓ 依赖修复完成"
+
+.PHONY: test
+
+test: fix-deps
+	@echo "运行所有模块的测试用例..."
+	@failed=0; \
+	for dir in ./pkg/cayley-driver ./pkg/duckdb-driver ./pkg/eino-ext ./pkg/eino-ext/document/parser/pdf ./pkg/file-driver ./pkg/lightrag ./pkg/sego ./pkg/sqlite3-driver; do \
+		if [ -f "$$dir/go.mod" ]; then \
+			echo ""; \
+			echo "测试模块: $$dir"; \
+			(cd $$dir && MOCKEY_CHECK_GCFLAGS=false go test -gcflags="all=-N -l" ./...) || failed=$$((failed + 1)); \
+		fi; \
+	done; \
+	if [ $$failed -eq 0 ]; then \
+		echo ""; \
+		echo "✓ 所有测试通过"; \
+	else \
+		echo ""; \
+		echo "✗ 有 $$failed 个模块的测试失败"; \
+		exit 1; \
+	fi
 
 
