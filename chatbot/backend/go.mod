@@ -10,7 +10,10 @@ require (
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.2
 	github.com/gin-gonic/gin v1.10.0
 	github.com/mozhou-tech/sqlite-ai-driver v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
 	github.com/sirupsen/logrus v1.9.3
 )
 
@@ -98,4 +101,14 @@ require (
 
 replace github.com/mozhou-tech/sqlite-ai-driver => ../../
 
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ../../pkg/cayley-driver
+
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ../../pkg/duckdb-driver
+
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext => ../../pkg/eino-ext
+
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf => ../../pkg/eino-ext/document/parser/pdf
+
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ../../pkg/lightrag
+
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../../pkg/sego

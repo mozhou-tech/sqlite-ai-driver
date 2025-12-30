@@ -15,7 +15,7 @@ require (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver v0.0.0-00010101000000-000000000000
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag v0.0.0-00010101000000-000000000000
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0-00010101000000-000000000000
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
 	modernc.org/sqlite v1.38.2
@@ -28,7 +28,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
-	github.com/bytedance/mockey v1.4.0 // indirect
 	github.com/bytedance/sonic v1.14.2 // indirect
 	github.com/bytedance/sonic/loader v0.4.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
@@ -48,7 +47,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/hablullah/go-hijri v1.0.2 // indirect
