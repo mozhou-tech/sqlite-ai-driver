@@ -91,7 +91,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 		TopK:      &r.config.TopK,
 		Embedding: r.config.Embedding,
 	}, opts...)
-	// io := retriever.GetImplSpecificOptions(&implOptions{}, opts...)
+	io := retriever.GetImplSpecificOptions(&implOptions{}, opts...)
 
 	ctx = callbacks.EnsureRunInfo(ctx, r.GetType(), components.ComponentOfRetriever)
 	ctx = callbacks.OnStart(ctx, &retriever.CallbackInput{
@@ -148,6 +148,41 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	vectorStr += "]"
 
 	args := []interface{}{vectorStr}
+
+	// Add metadata filters if provided
+	if io.MetadataFilter != nil && len(io.MetadataFilter) > 0 {
+		for key, value := range io.MetadataFilter {
+			// Use json_extract with JSONPath syntax to extract JSON field
+			// JSONPath format: $.key for top-level fields
+			jsonPath := fmt.Sprintf("$.%s", key)
+			switch v := value.(type) {
+			case string:
+				// For strings, json_extract returns JSON string (with quotes), so we compare as JSON
+				// Convert the filter value to JSON string format for comparison
+				valueJSON, _ := json.Marshal(v)
+				sqlQuery += fmt.Sprintf(" AND json_extract(metadata, '%s') = ?::JSON", jsonPath)
+				args = append(args, string(valueJSON))
+			case int, int8, int16, int32, int64:
+				sqlQuery += fmt.Sprintf(" AND CAST(json_extract(metadata, '%s') AS BIGINT) = ?", jsonPath)
+				args = append(args, v)
+			case float32, float64:
+				sqlQuery += fmt.Sprintf(" AND CAST(json_extract(metadata, '%s') AS DOUBLE) = ?", jsonPath)
+				args = append(args, v)
+			case bool:
+				sqlQuery += fmt.Sprintf(" AND CAST(json_extract(metadata, '%s') AS BOOLEAN) = ?", jsonPath)
+				args = append(args, v)
+			default:
+				// For other types, convert to JSON string and compare as JSON
+				valueJSON, err := json.Marshal(v)
+				if err != nil {
+					return nil, fmt.Errorf("[duckdb retriever] failed to marshal filter value for key %s: %w", key, err)
+				}
+				// Compare JSON values directly (json_extract returns JSON type)
+				sqlQuery += fmt.Sprintf(" AND json_extract(metadata, '%s') = ?::JSON", jsonPath)
+				args = append(args, string(valueJSON))
+			}
+		}
+	}
 
 	if co.ScoreThreshold != nil {
 		// For cosine similarity: similarity = 1 - distance

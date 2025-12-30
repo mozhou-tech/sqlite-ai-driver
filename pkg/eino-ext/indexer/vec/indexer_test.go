@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package duckdb
+package vss
 
 import (
 	"context"
@@ -29,7 +29,7 @@ import (
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/smartystreets/goconvey/convey"
 )
 
@@ -52,7 +52,7 @@ func TestBulkStore(t *testing.T) {
 	PatchConvey("test bulkStore", t, func() {
 		ctx := context.Background()
 
-		// Create a temporary DuckDB database for testing
+		// Create a temporary SQLite database for testing
 		testdataDir := getProjectRootTestdata()
 		if err := os.MkdirAll(testdataDir, 0755); err != nil {
 			t.Fatalf("Failed to create testdata directory: %v", err)
@@ -62,7 +62,7 @@ func TestBulkStore(t *testing.T) {
 			_ = os.Remove(dbPath)
 		}()
 
-		db, err := sql.Open("duckdb", dbPath)
+		db, err := sql.Open("sqlite3", dbPath)
 		if err != nil {
 			t.Fatalf("Failed to open database: %v", err)
 		}

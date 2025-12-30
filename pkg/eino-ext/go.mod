@@ -13,6 +13,7 @@ require (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
 	github.com/smartystreets/goconvey v1.8.1
 )
 
@@ -86,4 +87,5 @@ replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ../cayley-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ../duckdb-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ../sqlite3-driver
 )

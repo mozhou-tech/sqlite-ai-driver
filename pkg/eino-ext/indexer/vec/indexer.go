@@ -14,30 +14,35 @@
  * limitations under the License.
  */
 
-package duckdb
+package vss
 
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components"
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 )
 
 type IndexerConfig struct {
-	// DB is an already opened DuckDB database connection instance.
+	// DB is an already opened SQLite database connection instance.
 	// This indexer does not open or close the database connection.
 	// The caller is responsible for managing the database connection lifecycle.
 	DB *sql.DB
-	// TableName is the name of the table to store documents.
+	// TableName is the name of the virtual table to store documents.
 	// Default "documents".
 	TableName string
+	// VectorDimensions is the dimension of the embedding vectors.
+	// This is required for creating the VSS virtual table.
+	VectorDimensions int
 	// DocumentToMap supports customize how to convert eino document to map.
 	// It should return the map and a mapping of which fields in the map should be embedded.
 	// The key in fieldsToEmbed is the field whose value (should be string) will be embedded,
@@ -56,11 +61,15 @@ type Indexer struct {
 
 func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 	if config.Embedding == nil {
-		return nil, fmt.Errorf("[NewIndexer] embedding not provided for duckdb indexer")
+		return nil, fmt.Errorf("[NewIndexer] embedding not provided for vss indexer")
 	}
 
 	if config.DB == nil {
-		return nil, fmt.Errorf("[NewIndexer] duckdb database connection not provided, must pass an already opened *sql.DB instance")
+		return nil, fmt.Errorf("[NewIndexer] sqlite database connection not provided, must pass an already opened *sql.DB instance")
+	}
+
+	if config.VectorDimensions <= 0 {
+		return nil, fmt.Errorf("[NewIndexer] vector dimensions must be provided (VectorDimensions > 0)")
 	}
 
 	if config.DocumentToMap == nil {
@@ -145,7 +154,7 @@ func (i *Indexer) bulkStore(ctx context.Context, docs []*schema.Document, option
 		}
 
 		if err := i.bulkUpsert(ctx, toStore); err != nil {
-			return fmt.Errorf("[bulkStore] duckdb bulk upsert failed: %w", err)
+			return fmt.Errorf("[bulkStore] vss bulk upsert failed: %w", err)
 		}
 
 		toStore = toStore[:0]
@@ -224,7 +233,7 @@ func (i *Indexer) makeEmbeddingCtx(ctx context.Context, emb embedding.Embedder) 
 	return callbacks.ReuseHandlers(ctx, runInfo)
 }
 
-const typ = "DuckDB"
+const typ = "VSS"
 
 func (i *Indexer) GetType() string {
 	return typ
@@ -255,27 +264,26 @@ func defaultDocumentToMap(ctx context.Context, doc *schema.Document) (map[string
 
 // initSchema initializes the database table schema
 func (i *Indexer) initSchema(ctx context.Context) error {
-	// Create table with dynamic columns support
-	// DuckDB supports JSON columns and we'll store metadata as JSON
+	// Create VSS virtual table for vector storage
+	// SQLite VSS uses virtual tables with vss0 module
+	// Format: CREATE VIRTUAL TABLE table_name USING vss0(vector(dimension), content TEXT, metadata TEXT)
 	createTableSQL := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			id VARCHAR PRIMARY KEY,
+		CREATE VIRTUAL TABLE IF NOT EXISTS %s USING vss0(
+			vector(%d),
 			content TEXT,
-			vector_content FLOAT[],
-			metadata JSON,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+			metadata TEXT
 		)
-	`, i.config.TableName)
+	`, i.config.TableName, i.config.VectorDimensions)
 
 	_, err := i.config.DB.ExecContext(ctx, createTableSQL)
 	if err != nil {
-		return fmt.Errorf("[initSchema] failed to create table: %w", err)
+		return fmt.Errorf("[initSchema] failed to create vss virtual table: %w", err)
 	}
 
 	return nil
 }
 
-// bulkUpsert inserts or updates documents in DuckDB
+// bulkUpsert inserts or updates documents in SQLite VSS
 func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	if len(docs) == 0 {
 		return nil
@@ -289,10 +297,10 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	defer tx.Rollback()
 
 	// Prepare upsert statement using INSERT OR REPLACE
-	// DuckDB supports INSERT OR REPLACE syntax
+	// SQLite VSS virtual table supports INSERT OR REPLACE syntax
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
-		INSERT OR REPLACE INTO %s (id, content, vector_content, metadata)
-		VALUES (?, ?, ?::FLOAT[], ?)
+		INSERT OR REPLACE INTO %s (vector, content, metadata)
+		VALUES (?, ?, ?)
 	`, i.config.TableName))
 	if err != nil {
 		return fmt.Errorf("[bulkUpsert] failed to prepare statement: %w", err)
@@ -300,12 +308,7 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	defer stmt.Close()
 
 	for _, doc := range docs {
-		// Extract id, content, vector_content, and metadata
-		id, ok := doc["id"].(string)
-		if !ok {
-			return fmt.Errorf("[bulkUpsert] document id is not a string")
-		}
-
+		// Extract content and vector_content
 		content, _ := doc[defaultReturnFieldContent].(string)
 
 		// Get vector_content
@@ -316,6 +319,15 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 			}
 		}
 
+		if len(vectorContent) == 0 {
+			return fmt.Errorf("[bulkUpsert] vector content is empty")
+		}
+
+		if len(vectorContent) != i.config.VectorDimensions {
+			return fmt.Errorf("[bulkUpsert] vector dimension mismatch, expected=%d, got=%d",
+				i.config.VectorDimensions, len(vectorContent))
+		}
+
 		// Build metadata JSON (all fields except id, content, and vector fields)
 		metadata := make(map[string]any)
 		for k, v := range doc {
@@ -324,32 +336,25 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 			}
 		}
 
+		// Add id to metadata for retrieval
+		if id, ok := doc["id"].(string); ok {
+			metadata["id"] = id
+		}
+
 		// Convert metadata to JSON
 		metadataJSON, err := json.Marshal(metadata)
 		if err != nil {
 			return fmt.Errorf("[bulkUpsert] failed to marshal metadata: %w", err)
 		}
 
-		// Convert vector to DuckDB array format
-		// DuckDB expects FLOAT[] which can be passed as string representation
-		var vectorArg interface{}
-		if len(vectorContent) == 0 {
-			vectorArg = nil
-		} else {
-			// Convert []float64 to string format that DuckDB can parse
-			// Format: [1.0, 2.0, 3.0]
-			vectorStr := "["
-			for i, v := range vectorContent {
-				if i > 0 {
-					vectorStr += ", "
-				}
-				vectorStr += fmt.Sprintf("%g", v)
-			}
-			vectorStr += "]"
-			vectorArg = vectorStr
+		// Convert vector to SQLite VSS format (BLOB)
+		// SQLite VSS expects vectors as BLOB in F32 format (little-endian float32)
+		vectorBlob := make([]byte, len(vectorContent)*4)
+		for i, v := range vectorContent {
+			binary.LittleEndian.PutUint32(vectorBlob[i*4:(i+1)*4], math.Float32bits(float32(v)))
 		}
 
-		_, err = stmt.ExecContext(ctx, id, content, vectorArg, string(metadataJSON))
+		_, err = stmt.ExecContext(ctx, vectorBlob, content, string(metadataJSON))
 		if err != nil {
 			return fmt.Errorf("[bulkUpsert] failed to execute statement: %w", err)
 		}

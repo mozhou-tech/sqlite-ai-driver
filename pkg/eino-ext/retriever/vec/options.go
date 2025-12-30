@@ -21,13 +21,18 @@ import (
 )
 
 type implOptions struct {
-	// FilterQuery currently not supported by vector search
-	FilterQuery string
+	// MetadataFilter filters documents by metadata fields.
+	// Each key-value pair in the map represents a filter condition.
+	// For example: map[string]any{"category": "tech", "author": "CloudWeGo"}
+	// will only return documents where metadata.category = "tech" AND metadata.author = "CloudWeGo"
+	MetadataFilter map[string]any
 }
 
-// WithFilterQuery filter query (currently noop).
-func WithFilterQuery(filter string) retriever.Option {
+// WithMetadataFilter sets metadata filter for vector search.
+// The filter is a map of key-value pairs that will be used to filter documents
+// based on their metadata JSON fields in DuckDB.
+func WithMetadataFilter(filter map[string]any) retriever.Option {
 	return retriever.WrapImplSpecificOptFn(func(o *implOptions) {
-		o.FilterQuery = filter
+		o.MetadataFilter = filter
 	})
 }

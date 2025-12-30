@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package duckdb
+package vss
 
 const (
 	defaultReturnFieldContent       = "content"
