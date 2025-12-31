@@ -109,6 +109,6 @@ replace github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext => ../../pkg/eino-e
 
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf => ../../pkg/eino-ext/document/parser/pdf
 
-replace github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ../../pkg/lightrag
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./../../pkg/lightragstore
 
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../../pkg/sego

@@ -124,7 +124,7 @@ replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext => ./pkg/eino-ext
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf => ./pkg/eino-ext/document/parser/pdf
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver => ./pkg/file-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./pkg/lightrag
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./pkg/lightragstore
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ./pkg/sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ./pkg/sqlite3-driver
 )

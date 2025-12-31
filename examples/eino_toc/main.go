@@ -14,7 +14,7 @@ import (
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/lightragstore"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
 )
 

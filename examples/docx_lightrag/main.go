@@ -13,7 +13,7 @@ import (
 	openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
 	"github.com/cloudwego/eino/schema"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/transformer/splitter/tfidf"
-	lightrag "github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag"
+	lightrag "github.com/mozhou-tech/sqlite-ai-driver/pkg/lightragstore"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
 )
 
