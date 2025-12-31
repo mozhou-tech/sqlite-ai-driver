@@ -35,7 +35,8 @@ type DocumentGetter func(ctx context.Context, docID string) (*schema.Document, e
 // RetrieverConfig defines the configuration for the Graph retriever.
 type RetrieverConfig struct {
 	// Graph is the GraphStore instance to use for retrieval.
-	Graph *graphstore.GraphStore
+	Graph     *graphstore.GraphStore
+	TableName string
 	// LLM is the language model to use for extracting keywords from queries.
 	LLM LLM
 	// DocumentGetter is an optional function to retrieve document content by ID.

@@ -45,7 +45,8 @@ type ExtractionResult struct {
 // IndexerConfig defines the configuration for the Graph indexer.
 type IndexerConfig struct {
 	// Graph is the GraphStore instance to use for indexing.
-	Graph *graphstore.GraphStore
+	Graph     *graphstore.GraphStore
+	TableName string
 	// LLM is the language model to use for extracting entities and relationships.
 	LLM LLM
 	// DocumentToMap optionally overrides the default conversion from eino document to map.
