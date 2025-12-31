@@ -7,3 +7,4 @@ testdata
 node_modules
 rag_storage
 main
+*.wal

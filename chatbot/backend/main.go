@@ -261,6 +261,26 @@ func initRAG() error {
 				return nil, err
 			}
 
+			// 打印召回的chunk
+			logrus.WithFields(logrus.Fields{
+				"query":       input,
+				"chunk_count": len(docs),
+			}).Info("召回的chunk信息")
+			for i, doc := range docs {
+				score := 0.0
+				if distance, ok := doc.MetaData["distance"].(float64); ok {
+					score = 1.0 - distance
+				}
+				logrus.WithFields(logrus.Fields{
+					"index":          i + 1,
+					"id":             doc.ID,
+					"score":          score,
+					"content":        doc.Content,
+					"metadata":       doc.MetaData,
+					"content_length": len(doc.Content),
+				}).Info("召回的chunk详情")
+			}
+
 			// 2. 格式化文档
 			formatted, err := formatDocs(ctx, docs)
 			if err != nil {
