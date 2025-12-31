@@ -12,7 +12,6 @@ require (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext v0.0.0-00010101000000-000000000000
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf v0.0.0
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver v0.0.0-00010101000000-000000000000
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag v0.0.0-00010101000000-000000000000
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
@@ -43,7 +42,6 @@ require (
 	github.com/eino-contrib/docx2md v0.0.1 // indirect
 	github.com/eino-contrib/jsonschema v1.0.3 // indirect
 	github.com/evanphx/json-patch v0.5.2 // indirect
-	github.com/go-errors/errors v1.4.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
@@ -93,7 +91,6 @@ require (
 	github.com/superfly/ltx v0.5.1 // indirect
 	github.com/tetratelabs/wazero v1.2.1 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
-	github.com/viant/afs v1.20.0 // indirect
 	github.com/wasilibs/go-re2 v1.3.0 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
 	github.com/yargevad/filepathx v1.0.0 // indirect
@@ -101,12 +98,12 @@ require (
 	go.opentelemetry.io/otel v1.37.0 // indirect
 	go.opentelemetry.io/otel/trace v1.37.0 // indirect
 	golang.org/x/arch v0.15.0 // indirect
-	golang.org/x/crypto v0.45.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/telemetry v0.0.0-20251008203120-078029d740a8 // indirect
+	golang.org/x/term v0.37.0 // indirect
 	golang.org/x/text v0.31.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
@@ -123,7 +120,6 @@ replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ./pkg/duckdb-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext => ./pkg/eino-ext
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf => ./pkg/eino-ext/document/parser/pdf
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver => ./pkg/file-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./pkg/lightrag
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ./pkg/sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ./pkg/sqlite3-driver

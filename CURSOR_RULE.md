@@ -9,7 +9,6 @@
 ### 可用包列表
 
 1. **数据库驱动包**（database/sql 驱动）：
-   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver` - 文件驱动（支持本地、S3、GCS）
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver` - DuckDB 驱动
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver` - SQLite3 驱动
 
@@ -32,20 +31,6 @@ go get github.com/mozhou-tech/sqlite-ai-driver
 go mod tidy
 ```
 
-### 2. 系统依赖要求
-
-#### Cayley Driver（需要 CGO）
-
-如果使用 `cayley-driver`，需要安装 SQLite3 开发库：
-
-- **macOS**: `brew install sqlite3`
-- **Linux (Ubuntu/Debian)**: `sudo apt-get install libsqlite3-dev`
-- **Linux (CentOS/RHEL)**: `sudo yum install sqlite-devel`
-
-确保 CGO 已启用：
-```bash
-export CGO_ENABLED=1
-```
 
 #### DuckDB Driver
 
@@ -63,7 +48,6 @@ DuckDB 驱动会自动安装所需的扩展（sqlite, vss, fts, excel），无�
 
 ```
 ./data/
-├── files/          # file-driver 的数据目录
 ├── graph/          # cayley-driver 的数据目录（通过 WorkingDir 参数指定）
 ├── indexing/       # duckdb-driver 的共享数据库目录
 └── db/             # sqlite3-driver 的数据目录
@@ -72,27 +56,6 @@ DuckDB 驱动会自动安装所需的扩展（sqlite, vss, fts, excel），无�
 ## 📝 使用示例
 
 ### 1. 数据库驱动使用（database/sql）
-
-#### File Driver
-
-```go
-import (
-    "database/sql"
-    _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver"
-)
-
-// 使用相对路径（推荐）- 自动存储到 ./data/files/files.db
-db, err := sql.Open("file", "files.db")
-
-// 使用完整路径
-db, err := sql.Open("file", "/path/to/database.db")
-
-// 使用 S3
-db, err := sql.Open("file", "s3://bucket-name/path/to/database.db")
-
-// 使用 GCS
-db, err := sql.Open("file", "gs://bucket-name/path/to/database.db")
-```
 
 #### DuckDB Driver
 
@@ -206,7 +169,6 @@ retriever, err := dockdb.NewRetriever(dockdb.RetrieverConfig{
 
 当路径**不包含路径分隔符**（`/` 或 `\`）时，驱动会将其视为相对路径，自动构建到对应的子目录：
 
-- `"files.db"` → `./data/files/files.db`
 - `"graph.db"` → `{workingDir}/graph/graph.db`（通过 WorkingDir 参数指定）
 - `"duck.db"` → `./data/indexing/all.db`（统一映射到共享数据库）
 - `"sqlite.db"` → `./data/db/sqlite.db`
@@ -266,10 +228,10 @@ path := dataDir + "/db/app.db"
 
 ```go
 // ✅ 正确：使用空白导入
-import _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver"
+import _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 
 // ❌ 错误：不要直接导入包（除非需要使用包内的其他函数）
-import "github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver"
+import "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 ```
 
 ### 2. 连接管理
@@ -284,15 +246,7 @@ import "github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver"
 - 使用 `database/sql` 包的连接池管理并发连接
 - Cayley Driver 的 Graph 实例不是并发安全的，需要在应用层加锁
 
-### 4. 文件驱动特殊说明
-
-File Driver 支持从远程存储（S3、GCS）读取文件：
-
-- 远程文件会被下载到临时目录
-- 连接关闭时临时文件会被自动清理
-- 需要配置相应的云存储凭证（AWS、GCP）
-
-### 5. DuckDB 扩展
+### 4. DuckDB 扩展
 
 DuckDB Driver 会自动安装以下扩展：
 
@@ -312,7 +266,7 @@ DuckDB Driver 会自动安装以下扩展：
 **解决方案**：
 ```go
 // 确保已导入驱动
-import _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver"
+import _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 ```
 
 ### 问题：CGO 相关错误（Cayley Driver）
@@ -350,7 +304,6 @@ export CGO_ENABLED=1
 ## 📚 相关文档
 
 - 项目 README: `pkg/README.md`
-- File Driver 文档: `pkg/file-driver/README.md`
 - Cayley Driver 文档: `pkg/cayley-driver/README.md`
 - Cayley Driver 安装说明: `pkg/cayley-driver/INSTALL.md`
 

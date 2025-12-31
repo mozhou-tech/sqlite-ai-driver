@@ -46,7 +46,7 @@ install:
 
 fix-deps:
 	@echo "修复所有子模块的依赖..."
-	@for dir in ./pkg/cayley-driver ./pkg/duckdb-driver ./pkg/eino-ext ./pkg/eino-ext/document/parser/pdf ./pkg/file-driver ./pkg/lightrag ./pkg/sego ./pkg/sqlite3-driver; do \
+	@for dir in ./pkg/cayley-driver ./pkg/duckdb-driver ./pkg/eino-ext ./pkg/eino-ext/document/parser/pdf ./pkg/lightrag ./pkg/sego ./pkg/sqlite3-driver; do \
 		if [ -f "$$dir/go.mod" ]; then \
 			echo "修复依赖: $$dir"; \
 			(cd $$dir && go mod tidy 2>&1 | grep -v "go: downloading" || true); \
@@ -60,7 +60,7 @@ fix-deps:
 test: 
 	@echo "运行所有模块的测试用例..."
 	@failed=0; \
-	for dir in ./pkg/cayley-driver ./pkg/duckdb-driver ./pkg/eino-ext ./pkg/eino-ext/document/parser/pdf ./pkg/file-driver ./pkg/lightrag ./pkg/sego ./pkg/sqlite3-driver; do \
+	for dir in ./pkg/cayley-driver ./pkg/duckdb-driver ./pkg/eino-ext ./pkg/eino-ext/document/parser/pdf ./pkg/lightrag ./pkg/sego ./pkg/sqlite3-driver; do \
 		if [ -f "$$dir/go.mod" ]; then \
 			echo ""; \
 			echo "测试模块: $$dir"; \
