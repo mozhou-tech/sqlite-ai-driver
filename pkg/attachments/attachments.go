@@ -28,7 +28,7 @@ type FileInfo struct {
 	Name         string                 // 文件名
 	Size         int64                  // 文件大小（字节）
 	ModTime      time.Time              // 修改时间
-	DateDir      string                 // 日期目录（YYYY-MM-DD）
+	DateDir      string                 // 日期目录（YYYYMMDD）
 	RelativePath string                 // 相对路径（相对于attachments目录）
 	AbsolutePath string                 // 绝对路径
 	MimeType     string                 // MIME类型
@@ -131,7 +131,7 @@ func (m *Manager) Close() error {
 // Store 存储文件
 // filename: 文件名（不包含路径）
 // data: 文件内容
-// 返回: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+// 返回: 文件ID（相对路径，格式：YYYYMMDD/filename）
 func (m *Manager) Store(filename string, data []byte) (string, error) {
 	return m.StoreWithMetadata(filename, data, nil, nil)
 }
@@ -141,7 +141,7 @@ func (m *Manager) Store(filename string, data []byte) (string, error) {
 // data: 文件内容
 // mimeType: MIME类型（可选）
 // metadata: 扩展元数据（可选）
-// 返回: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+// 返回: 文件ID（相对路径，格式：YYYYMMDD/filename）
 func (m *Manager) StoreWithMetadata(filename string, data []byte, mimeType *string, metadata map[string]interface{}) (string, error) {
 	log.Printf("[attachments] StoreWithMetadata called: filename=%s, size=%d bytes", filename, len(data))
 
@@ -150,8 +150,8 @@ func (m *Manager) StoreWithMetadata(filename string, data []byte, mimeType *stri
 		return "", fmt.Errorf("文件名不能为空")
 	}
 
-	// 按日期创建子目录（格式：YYYY-MM-DD）
-	dateDir := time.Now().Format("2006-01-02")
+	// 按日期创建子目录（格式：YYYYMMDD）
+	dateDir := time.Now().Format("20060102")
 	datePath := filepath.Join(m.baseDir, dateDir)
 	log.Printf("[attachments] Date directory: %s", dateDir)
 
@@ -226,7 +226,7 @@ func (m *Manager) StoreWithMetadata(filename string, data []byte, mimeType *stri
 
 // StoreFromFile 从文件路径存储文件
 // filePath: 源文件路径
-// 返回: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+// 返回: 文件ID（相对路径，格式：YYYYMMDD/filename）
 func (m *Manager) StoreFromFile(filePath string) (string, error) {
 	return m.StoreFromFileWithMetadata(filePath, nil, nil)
 }
@@ -235,7 +235,7 @@ func (m *Manager) StoreFromFile(filePath string) (string, error) {
 // filePath: 源文件路径
 // mimeType: MIME类型（可选）
 // metadata: 扩展元数据（可选）
-// 返回: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+// 返回: 文件ID（相对路径，格式：YYYYMMDD/filename）
 func (m *Manager) StoreFromFileWithMetadata(filePath string, mimeType *string, metadata map[string]interface{}) (string, error) {
 	log.Printf("[attachments] StoreFromFileWithMetadata called: filePath=%s", filePath)
 
@@ -259,8 +259,8 @@ func (m *Manager) StoreFromFileWithMetadata(filePath string, mimeType *string, m
 		return "", fmt.Errorf("无法从路径提取文件名: %s", filePath)
 	}
 
-	// 按日期创建子目录（格式：YYYY-MM-DD）
-	dateDir := time.Now().Format("2006-01-02")
+	// 按日期创建子目录（格式：YYYYMMDD）
+	dateDir := time.Now().Format("20060102")
 	datePath := filepath.Join(m.baseDir, dateDir)
 	log.Printf("[attachments] Date directory: %s", dateDir)
 
@@ -353,7 +353,7 @@ func (m *Manager) StoreFromFileWithMetadata(filePath string, mimeType *string, m
 }
 
 // Delete 删除文件
-// fileID: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+// fileID: 文件ID（相对路径，格式：YYYYMMDD/filename）
 func (m *Manager) Delete(fileID string) error {
 	log.Printf("[attachments] Delete called: fileID=%s", fileID)
 
@@ -397,7 +397,7 @@ func (m *Manager) Delete(fileID string) error {
 }
 
 // GetInfo 获取文件基本信息（优先从数据库读取，如果不存在则从文件系统读取）
-// fileID: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+// fileID: 文件ID（相对路径，格式：YYYYMMDD/filename）
 func (m *Manager) GetInfo(fileID string) (*FileInfo, error) {
 	log.Printf("[attachments] GetInfo called: fileID=%s", fileID)
 
@@ -509,7 +509,7 @@ func (m *Manager) GetInfo(fileID string) (*FileInfo, error) {
 }
 
 // GetAbsolutePath 获取文件的绝对路径
-// fileID: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+// fileID: 文件ID（相对路径，格式：YYYYMMDD/filename）
 func (m *Manager) GetAbsolutePath(fileID string) (string, error) {
 	if fileID == "" {
 		return "", fmt.Errorf("文件ID不能为空")
@@ -530,7 +530,7 @@ func (m *Manager) GetAbsolutePath(fileID string) (string, error) {
 }
 
 // Read 读取文件内容
-// fileID: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+// fileID: 文件ID（相对路径，格式：YYYYMMDD/filename）
 func (m *Manager) Read(fileID string) ([]byte, error) {
 	log.Printf("[attachments] Read called: fileID=%s", fileID)
 	if fileID == "" {
@@ -559,7 +559,7 @@ func (m *Manager) Read(fileID string) ([]byte, error) {
 }
 
 // List 列出指定日期目录下的所有文件（从文件系统读取）
-// dateDir: 日期目录（格式：YYYY-MM-DD），如果为空则列出所有日期目录
+// dateDir: 日期目录（格式：YYYYMMDD），如果为空则列出所有日期目录
 // 返回: 文件ID列表
 func (m *Manager) List(dateDir string) ([]string, error) {
 	var fileIDs []string
@@ -611,7 +611,7 @@ func (m *Manager) List(dateDir string) ([]string, error) {
 }
 
 // ListAll 列出所有文件信息（从文件系统读取）
-// dateDir: 日期目录（格式：YYYY-MM-DD），如果为空则列出所有日期目录
+// dateDir: 日期目录（格式：YYYYMMDD），如果为空则列出所有日期目录
 // 返回: 文件信息列表
 func (m *Manager) ListAll(dateDir string) ([]*FileInfo, error) {
 	var files []*FileInfo

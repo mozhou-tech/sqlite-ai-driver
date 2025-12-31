@@ -77,7 +77,7 @@ func TestStore(t *testing.T) {
 	data := []byte("Hello, World!")
 
 	// 清理可能存在的旧文件，避免文件重命名导致测试失败
-	expectedDateDir := time.Now().Format("2006-01-02")
+	expectedDateDir := time.Now().Format("20060102")
 	expectedFileID := filepath.Join(expectedDateDir, filename)
 	expectedFilePath := filepath.Join(mgr.GetBaseDir(), expectedFileID)
 	// 直接删除文件系统中的文件（如果存在）
@@ -183,7 +183,7 @@ func TestGetInfo(t *testing.T) {
 		t.Errorf("相对路径不匹配: 期望 %s, 实际 %s", fileID, info.RelativePath)
 	}
 
-	expectedDateDir := time.Now().Format("2006-01-02")
+	expectedDateDir := time.Now().Format("20060102")
 	if info.DateDir != expectedDateDir {
 		t.Errorf("日期目录不匹配: 期望 %s, 实际 %s", expectedDateDir, info.DateDir)
 	}
@@ -323,7 +323,7 @@ func TestListByDate(t *testing.T) {
 	}
 
 	// 获取日期目录
-	dateDir := time.Now().Format("2006-01-02")
+	dateDir := time.Now().Format("20060102")
 
 	// 列出指定日期的文件
 	files, err := mgr.List(dateDir)
