@@ -12,26 +12,6 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// getDataDir 获取基础数据目录
-// 优先从环境变量 DATA_DIR 获取，如果未设置则使用默认值 ./data
-// 返回的路径会被转换为绝对路径
-func getDataDir() string {
-	var dataDir string
-	if envDataDir := os.Getenv("DATA_DIR"); envDataDir != "" {
-		dataDir = envDataDir
-	} else {
-		dataDir = "./data"
-	}
-
-	// 转换为绝对路径
-	absDataDir, err := filepath.Abs(dataDir)
-	if err != nil {
-		// 如果转换失败，返回原始路径
-		return dataDir
-	}
-	return absDataDir
-}
-
 // ensureDataPath 确保数据路径存在，如果是相对路径则自动构建到 db 子目录
 func ensureDataPath(path string) (string, error) {
 	// 如果路径包含路径分隔符（绝对路径或相对路径），直接使用
@@ -53,7 +33,14 @@ func ensureDataPath(path string) (string, error) {
 	}
 
 	// 如果是相对路径（不包含路径分隔符），自动构建到 db 子目录
-	dataDir := getDataDir()
+	dataDir := "./data"
+	// 转换为绝对路径
+	absDataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		// 如果转换失败，使用原始路径
+		absDataDir = dataDir
+	}
+	dataDir = absDataDir
 	fullPath := filepath.Join(dataDir, "db", path)
 
 	// 转换为绝对路径
@@ -122,7 +109,6 @@ type sqliteDriverWrapper struct{}
 
 func (w *sqliteDriverWrapper) Open(name string) (driver.Conn, error) {
 	// 自动构建路径并创建目录
-	// ensureDataPath 会读取环境变量 DATA_DIR，所以环境变量必须在调用 Open 之前设置
 	finalPath, err := ensureDataPath(name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ensure data path: %w", err)

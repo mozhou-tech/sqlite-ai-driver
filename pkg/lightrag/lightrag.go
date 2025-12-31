@@ -81,12 +81,12 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 	}
 
 	// 创建数据库
-	// 注意：路径会被 duckdb-driver 统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
 	// 不同的业务模块通过表名前缀来区分（如 lightrag_documents）
+	// duckdb-driver 会自动创建目录并处理路径映射，无需手动创建目录
 	db, err := CreateDatabase(ctx, DatabaseOptions{
 		Name:       "lightrag",
 		WorkingDir: r.workingDir,
-		Path:       "lightrag", // 任意标识符，都会被映射到共享数据库
+		Path:       "lightrag", // 任意标识符，都会被 duckdb-driver 映射到共享数据库
 		GraphOptions: &GraphOptions{
 			Enabled: true,
 			Backend: "cayley",

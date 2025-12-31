@@ -276,7 +276,7 @@ func (e *OpenAIEmbedder) Dimensions() int {
    - `limit` 越大，返回结果越多，但计算时间越长
    - `maxDepth` 越大，子图越大，但能提供更完整的上下文
 4. **向量维度**：确保所有实体的 embedding 维度一致
-5. **数据库位置**：向量数据存储在 `{DATA_DIR}/indexing/all.db`，由 `duckdb-driver` 自动管理
+5. **数据库位置**：向量数据存储在 `./data/indexing/all.db`，由 `duckdb-driver` 自动管理
 
 ## 完整示例
 

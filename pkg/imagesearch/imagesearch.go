@@ -65,7 +65,7 @@ func (r *ImageSearch) InitializeStorages(ctx context.Context) error {
 	}
 
 	// 打开DuckDB数据库
-	// 注意：无论传入什么路径，都会被 duckdb-driver 统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
+	// 注意：无论传入什么路径，都会被 duckdb-driver 统一映射到共享数据库文件 ./data/indexing/all.db
 	// 目录创建由 duckdb-driver 自动处理，无需在此处创建
 	// 使用简单的路径标识即可，实际路径会被映射到共享数据库
 	// 所有表使用 tablePrefix 前缀以区分不同的业务模块

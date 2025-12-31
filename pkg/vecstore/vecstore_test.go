@@ -3,7 +3,6 @@ package vecstore
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -59,17 +58,6 @@ func TestNew(t *testing.T) {
 }
 
 func TestInitialize(t *testing.T) {
-	// 使用临时目录
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	embedder := newMockEmbedder(128)
 	store := New(Options{
@@ -113,16 +101,6 @@ func TestInsert_WithoutInitialization(t *testing.T) {
 }
 
 func TestInsert_EmptyText(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	embedder := newMockEmbedder(128)
 	store := New(Options{
@@ -146,16 +124,6 @@ func TestInsert_EmptyText(t *testing.T) {
 }
 
 func TestInsert_WithMetadata(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	embedder := newMockEmbedder(128)
 	store := New(Options{
@@ -185,16 +153,6 @@ func TestInsert_WithMetadata(t *testing.T) {
 }
 
 func TestInsert_WithoutEmbedder(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	store := New(Options{
 		Embedder: nil,
@@ -230,16 +188,6 @@ func TestSearch_WithoutInitialization(t *testing.T) {
 }
 
 func TestSearch_WithoutEmbedder(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	store := New(Options{
 		Embedder: nil,
@@ -265,16 +213,6 @@ func TestSearch_WithoutEmbedder(t *testing.T) {
 }
 
 func TestSearch_Basic(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	embedder := newMockEmbedder(128)
 	store := New(Options{
@@ -327,16 +265,6 @@ func TestSearch_Basic(t *testing.T) {
 }
 
 func TestSearch_WithMetadataFilter(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	embedder := newMockEmbedder(128)
 	store := New(Options{
@@ -394,16 +322,6 @@ func TestSearch_WithMetadataFilter(t *testing.T) {
 }
 
 func TestSearch_Limit(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	embedder := newMockEmbedder(128)
 	store := New(Options{
@@ -450,16 +368,6 @@ func TestSearch_Limit(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	embedder := newMockEmbedder(128)
 	store := New(Options{
@@ -485,16 +393,6 @@ func TestClose(t *testing.T) {
 }
 
 func TestProcessPendingEmbeddings(t *testing.T) {
-	tmpDir := t.TempDir()
-	oldDataDir := os.Getenv("DATA_DIR")
-	defer func() {
-		if oldDataDir != "" {
-			os.Setenv("DATA_DIR", oldDataDir)
-		} else {
-			os.Unsetenv("DATA_DIR")
-		}
-	}()
-	os.Setenv("DATA_DIR", tmpDir)
 
 	embedder := newMockEmbedder(128)
 	store := New(Options{

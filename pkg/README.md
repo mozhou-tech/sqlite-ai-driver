@@ -4,13 +4,13 @@
 
 ## 目录结构
 
-假设配置的基础数据目录为 `{data_dir}`，则目录结构如下：
+默认基础数据目录为 `./data`，目录结构如下：
 
 ```
-{data_dir}/
+./data/
 ├── files/          # file-driver 的数据目录
 ├── cayley/         # cayley-driver 的数据目录
-├── duck/           # duckdb-driver 的数据目录
+├── indexing/       # duckdb-driver 的共享数据库目录
 └── db/             # sqlite3-driver 的数据目录
 ```
 
@@ -18,22 +18,22 @@
 
 1. **file-driver**: 文件驱动
    - 后端: SQLite3
-   - 数据目录: `{data_dir}/files`
+   - 数据目录: `./data/files`
    - 用途: 文件存储
 
 2. **cayley-driver**: 图数据库驱动
    - 后端: SQLite3
-   - 数据目录: `{data_dir}/cayley`
+   - 数据目录: `{workingDir}/graph`（通过 WorkingDir 参数指定）
    - 用途: 图数据库存储
 
 3. **duckdb-driver**: DuckDB扩展
-   - 后端: SQLite3
-   - 数据目录: `{data_dir}/duck`
+   - 后端: DuckDB
+   - 数据目录: `./data/indexing/all.db`（所有路径统一映射到此共享数据库）
    - 用途: DuckDB存储
 
 4. **sqlite3-driver**: SQLite3业务数据
    - 后端: SQLite3
-   - 数据目录: `{data_dir}/db`
+   - 数据目录: `./data/db`
    - 用途: SQLite3存储
 
 ## 自动目录设置
@@ -42,21 +42,14 @@
 
 ### 自动目录行为
 
-- **file-driver**: 相对路径（如 `"files.db"`）自动存储到 `{DATA_DIR}/files/`
-- **cayley-driver**: 相对路径（如 `"graph.db"`）自动存储到 `{DATA_DIR}/cayley/`
-- **duckdb-driver**: 相对路径（如 `"duck.db"`）自动存储到 `{DATA_DIR}/duck/`
-- **sqlite3-driver**: 相对路径（如 `"sqlite.db"`）自动存储到 `{DATA_DIR}/db/`
+- **file-driver**: 相对路径（如 `"files.db"`）自动存储到 `./data/files/`
+- **cayley-driver**: 相对路径（如 `"graph.db"`）自动存储到 `{workingDir}/graph/`（通过 WorkingDir 参数指定）
+- **duckdb-driver**: 所有路径统一映射到共享数据库 `./data/indexing/all.db`
+- **sqlite3-driver**: 相对路径（如 `"sqlite.db"`）自动存储到 `./data/db/`
 
 ### 数据目录配置
 
-基础数据目录 `{DATA_DIR}` 可以通过环境变量 `DATA_DIR` 设置，默认值为 `./data`。
-
-```bash
-# 设置数据目录
-export DATA_DIR=/var/lib/myapp/data
-```
-
-如果未设置 `DATA_DIR` 环境变量，默认使用 `./data` 作为基础目录。
+基础数据目录默认为 `./data`。对于需要自定义工作目录的场景（如 cayley-driver），可以通过 `WorkingDir` 参数指定。
 
 ## 使用示例
 
@@ -77,10 +70,7 @@ import (
 )
 
 func main() {
-    // 设置数据目录（可选，默认使用 ./data）
-    // os.Setenv("DATA_DIR", "/var/lib/myapp/data")
-    
-    // 1. 使用 file-driver - 自动存储到 {DATA_DIR}/files/files.db
+    // 1. 使用 file-driver - 自动存储到 ./data/files/files.db
     fileDB, _ := sql.Open("file", "files.db")
     defer fileDB.Close()
     
@@ -89,11 +79,11 @@ func main() {
     graph, _ := cayley_driver.NewGraphWithNamespace(workingDir, "graph.db", "")
     defer graph.Close()
     
-    // 3. 使用 duckdb-driver - 自动存储到 {DATA_DIR}/duck/duck.db
+    // 3. 使用 duckdb-driver - 所有路径统一映射到 ./data/indexing/all.db
     duckDB, _ := sql.Open("duckdb", "duck.db")
     defer duckDB.Close()
     
-    // 4. 使用 sqlite3-driver - 自动存储到 {DATA_DIR}/db/sqlite.db
+    // 4. 使用 sqlite3-driver - 自动存储到 ./data/db/sqlite.db
     sqliteDB, _ := sql.Open("sqlite3", "sqlite.db")
     defer sqliteDB.Close()
 }
@@ -127,33 +117,16 @@ func main() {
 }
 ```
 
-### 方式三：通过环境变量配置
-
-```bash
-# 设置数据目录
-export DATA_DIR=/var/lib/myapp/data
-
-# 运行程序
-go run main.go
-```
-
-在代码中直接使用相对路径，驱动会自动使用 `DATA_DIR` 环境变量：
-
-```go
-// 无需手动设置路径，驱动会自动从环境变量读取 DATA_DIR
-db, _ := sql.Open("file", "files.db")  // 自动存储到 $DATA_DIR/files/files.db
-```
-
 ## 路径处理规则
 
 ### 相对路径（自动目录设置）
 
 当路径不包含路径分隔符（`/` 或 `\`）时，驱动会将其视为相对路径，自动构建到对应的子目录：
 
-- `"files.db"` → `{DATA_DIR}/files/files.db`
-- `"graph.db"` → `{DATA_DIR}/cayley/graph.db`
-- `"duck.db"` → `{DATA_DIR}/duck/duck.db`
-- `"sqlite.db"` → `{DATA_DIR}/db/sqlite.db`
+- `"files.db"` → `./data/files/files.db`
+- `"graph.db"` → `{workingDir}/graph/graph.db`（通过 WorkingDir 参数指定）
+- `"duck.db"` → `./data/indexing/all.db`（统一映射到共享数据库）
+- `"sqlite.db"` → `./data/db/sqlite.db`
 
 ### 完整路径（手动控制）
 
@@ -165,7 +138,9 @@ db, _ := sql.Open("file", "files.db")  // 自动存储到 $DATA_DIR/files/files.
 ## 注意事项
 
 1. **自动目录创建**: 所有驱动都会自动创建必要的目录，无需手动创建
-2. **环境变量**: 通过 `DATA_DIR` 环境变量可以统一配置基础数据目录
-3. **路径分隔符**: 使用 `filepath.Join()` 构建路径，确保跨平台兼容性
-4. **权限设置**: 确保应用有读写数据目录的权限
-5. **子目录约定**: 子目录名称（`files`、`cayley`、`duck`、`db`）是自动目录设置的约定，使用完整路径时可以自定义
+2. **默认目录**: 默认使用 `./data` 作为基础数据目录
+3. **WorkingDir 参数**: cayley-driver 通过 `WorkingDir` 参数指定工作目录，相对路径会构建到 `{workingDir}/graph/` 目录
+4. **路径分隔符**: 使用 `filepath.Join()` 构建路径，确保跨平台兼容性
+5. **权限设置**: 确保应用有读写数据目录的权限
+6. **子目录约定**: 子目录名称（`files`、`graph`、`indexing`、`db`）是自动目录设置的约定，使用完整路径时可以自定义
+7. **DuckDB 共享数据库**: duckdb-driver 将所有路径统一映射到 `./data/indexing/all.db` 共享数据库，不同业务模块通过表名前缀区分

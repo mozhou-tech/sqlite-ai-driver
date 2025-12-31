@@ -72,15 +72,8 @@ func TestSQLite3Driver_RelativePath(t *testing.T) {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 
-	// 设置环境变量指向工程根目录的 testdata
-	originalDataDir := os.Getenv("DATA_DIR")
-	os.Setenv("DATA_DIR", testdataDir)
+	// 清理测试文件
 	defer func() {
-		if originalDataDir == "" {
-			os.Unsetenv("DATA_DIR")
-		} else {
-			os.Setenv("DATA_DIR", originalDataDir)
-		}
 		_ = os.RemoveAll(filepath.Join(testdataDir, "db"))
 	}()
 
@@ -115,7 +108,7 @@ func TestSQLite3Driver_RelativePath(t *testing.T) {
 		defaultPath := filepath.Join("data", "db", relativeDbPath)
 		if absDefaultPath, err := filepath.Abs(defaultPath); err == nil {
 			if _, err := os.Stat(absDefaultPath); err == nil {
-				t.Errorf("Database file was created at %s instead of expected %s. DATA_DIR was set to %s", absDefaultPath, expectedPath, testdataDir)
+				t.Errorf("Database file was created at %s instead of expected %s", absDefaultPath, expectedPath)
 				return
 			}
 		}
@@ -125,7 +118,7 @@ func TestSQLite3Driver_RelativePath(t *testing.T) {
 			t.Errorf("Database file was created at %s instead of expected %s. The driver wrapper may not be working correctly.", directPath, expectedPath)
 			return
 		}
-		t.Errorf("Database file should be created at %s, but it doesn't exist. DATA_DIR=%s", expectedPath, os.Getenv("DATA_DIR"))
+		t.Errorf("Database file should be created at %s, but it doesn't exist", expectedPath)
 	}
 }
 

@@ -51,28 +51,21 @@ export CGO_ENABLED=1
 
 DuckDB 驱动会自动安装所需的扩展（sqlite, vss, fts, excel），无需额外配置。
 
-## ⚙️ 环境变量配置
+## ⚙️ 数据目录配置
 
-### DATA_DIR 环境变量
+### 默认数据目录
 
-所有驱动都支持通过 `DATA_DIR` 环境变量统一配置基础数据目录：
-
-```bash
-# 设置数据目录
-export DATA_DIR=/var/lib/myapp/data
-```
-
-**默认值**：如果未设置 `DATA_DIR`，默认使用 `./data`
+所有驱动默认使用 `./data` 作为基础数据目录。
 
 ### 数据目录结构
 
 当使用相对路径时，驱动会自动将数据文件存储到对应的子目录：
 
 ```
-{DATA_DIR}/
+./data/
 ├── files/          # file-driver 的数据目录
-├── cayley/         # cayley-driver 的数据目录
-├── duck/           # duckdb-driver 的数据目录
+├── graph/          # cayley-driver 的数据目录（通过 WorkingDir 参数指定）
+├── indexing/       # duckdb-driver 的共享数据库目录
 └── db/             # sqlite3-driver 的数据目录
 ```
 
@@ -88,7 +81,7 @@ import (
     _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/file-driver"
 )
 
-// 使用相对路径（推荐）- 自动存储到 {DATA_DIR}/files/files.db
+// 使用相对路径（推荐）- 自动存储到 ./data/files/files.db
 db, err := sql.Open("file", "files.db")
 
 // 使用完整路径
@@ -109,7 +102,7 @@ import (
     _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 )
 
-// 使用相对路径（推荐）- 自动存储到 {DATA_DIR}/duck/duck.db
+// 使用相对路径（推荐）- 所有路径统一映射到 ./data/indexing/all.db
 db, err := sql.Open("duckdb", "duck.db")
 
 // 使用完整路径
@@ -124,7 +117,7 @@ import (
     _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 )
 
-// 使用相对路径（推荐）- 自动存储到 {DATA_DIR}/db/sqlite.db
+// 使用相对路径（推荐）- 自动存储到 ./data/db/sqlite.db
 db, err := sql.Open("sqlite3", "sqlite.db")
 
 // 使用完整路径
@@ -213,10 +206,10 @@ retriever, err := dockdb.NewRetriever(dockdb.RetrieverConfig{
 
 当路径**不包含路径分隔符**（`/` 或 `\`）时，驱动会将其视为相对路径，自动构建到对应的子目录：
 
-- `"files.db"` → `{DATA_DIR}/files/files.db`
-- `"graph.db"` → `{DATA_DIR}/cayley/graph.db`
-- `"duck.db"` → `{DATA_DIR}/duck/duck.db`
-- `"sqlite.db"` → `{DATA_DIR}/db/sqlite.db`
+- `"files.db"` → `./data/files/files.db`
+- `"graph.db"` → `{workingDir}/graph/graph.db`（通过 WorkingDir 参数指定）
+- `"duck.db"` → `./data/indexing/all.db`（统一映射到共享数据库）
+- `"sqlite.db"` → `./data/db/sqlite.db`
 
 ### 完整路径（手动控制）
 
@@ -227,16 +220,7 @@ retriever, err := dockdb.NewRetriever(dockdb.RetrieverConfig{
 
 ## ✅ 最佳实践
 
-### 1. 使用环境变量配置数据目录
-
-```go
-// 在应用启动时设置
-os.Setenv("DATA_DIR", "/var/lib/myapp/data")
-
-// 或通过配置文件/命令行参数设置
-```
-
-### 2. 使用相对路径（推荐）
+### 1. 使用相对路径（推荐）
 
 使用相对路径可以让驱动自动管理目录结构，代码更简洁：
 
@@ -245,25 +229,22 @@ os.Setenv("DATA_DIR", "/var/lib/myapp/data")
 db, _ := sql.Open("sqlite3", "app.db")
 
 // ❌ 不推荐：手动构建路径（除非有特殊需求）
-db, _ := sql.Open("sqlite3", filepath.Join(os.Getenv("DATA_DIR"), "db", "app.db"))
+db, _ := sql.Open("sqlite3", filepath.Join("./data", "db", "app.db"))
 ```
 
-### 3. 确保目录权限
+### 2. 确保目录权限
 
 确保应用有读写数据目录的权限：
 
 ```go
 // 在应用启动时检查并创建目录
-dataDir := os.Getenv("DATA_DIR")
-if dataDir == "" {
-    dataDir = "./data"
-}
+dataDir := "./data"
 if err := os.MkdirAll(dataDir, 0755); err != nil {
     log.Fatal(err)
 }
 ```
 
-### 4. 跨平台路径处理
+### 3. 跨平台路径处理
 
 使用 `filepath.Join()` 构建路径，确保跨平台兼容性：
 
@@ -362,7 +343,7 @@ export CGO_ENABLED=1
 **症状**：文件未存储到预期位置
 
 **解决方案**：
-- 检查 `DATA_DIR` 环境变量是否正确设置
+- 检查数据目录权限和路径是否正确
 - 确认路径格式（相对路径 vs 完整路径）
 - 查看驱动日志（如果启用）
 

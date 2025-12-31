@@ -178,8 +178,14 @@ type duckdbDatabase struct {
 }
 
 // CreateDatabase 创建数据库实例
-// 注意：数据库路径会被 duckdb-driver 统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
+// 注意：数据库路径会被 duckdb-driver 统一映射到共享数据库文件 {WorkingDir}/indexing/all.db
 // 目录创建由 duckdb-driver 自动处理，无需在此处创建
+//
+// 数据库文件行为：
+// - 如果数据库文件已存在：会打开现有数据库，保留所有现有数据和表结构
+// - 如果数据库文件不存在：DuckDB 会自动创建新的数据库文件
+// - 表创建：使用 CREATE TABLE IF NOT EXISTS，如果表已存在则不会重新创建
+// - 列添加：如果表存在但缺少某些列（如 content_tokens、embedding_status），会自动添加（向后兼容）
 func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error) {
 	if opts.Path == "" {
 		opts.Path = "./lightrag"
@@ -187,6 +193,7 @@ func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error)
 
 	// 打开DuckDB数据库
 	// 路径会被 duckdb-driver 统一映射到共享数据库，目录会自动创建
+	// 如果数据库文件已存在，会打开现有数据库；如果不存在，会自动创建
 	db, err := sql.Open("duckdb", opts.Path)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)

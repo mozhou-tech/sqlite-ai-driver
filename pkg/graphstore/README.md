@@ -167,7 +167,7 @@ type Embedder interface {
 - **图谱数据**：存储在 SQLite 数据库中（通过 `cayley-driver`）
 - **实体 Embedding（向量检索）**：存储在 DuckDB 数据库中（通过 `duckdb-driver`）
   - 向量检索使用 `duckdb-driver` 的 `all.db` 共享数据库
-  - 所有 DuckDB 数据统一映射到 `{DATA_DIR}/indexing/all.db`
+  - 所有 DuckDB 数据统一映射到 `./data/indexing/all.db`
   - 不同的业务模块通过表名区分（如 `graphstore_entities`）
 
 ## 注意事项

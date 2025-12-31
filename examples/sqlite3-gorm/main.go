@@ -148,7 +148,7 @@ func printSQLiteExtensions(db *gorm.DB) {
 func main() {
 	// 数据库路径（支持相对路径，会自动构建到 data/db/ 目录）
 	// 也可以使用绝对路径，如："/path/to/sqlite.db"
-	// 或者使用环境变量 DATA_DIR 指定数据目录
+	// 默认使用 ./data/db/ 目录存储数据
 	dbPath := "gorm_example.db"
 
 	// 使用 sqlite3-driver 打开数据库连接

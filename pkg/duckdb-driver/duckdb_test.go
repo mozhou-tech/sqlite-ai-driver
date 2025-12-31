@@ -68,15 +68,8 @@ func TestDuckDBDriver_RelativePath(t *testing.T) {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 
-	// 设置环境变量指向工程根目录的 testdata
-	originalDataDir := os.Getenv("DATA_DIR")
-	os.Setenv("DATA_DIR", testdataDir)
+	// 清理测试文件（共享数据库文件）
 	defer func() {
-		if originalDataDir == "" {
-			os.Unsetenv("DATA_DIR")
-		} else {
-			os.Setenv("DATA_DIR", originalDataDir)
-		}
 		_ = os.RemoveAll(filepath.Join(testdataDir, "indexing"))
 	}()
 
@@ -308,15 +301,8 @@ func TestDuckDBDriver_SharedDatabase(t *testing.T) {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 
-	// 设置环境变量指向工程根目录的 testdata
-	originalDataDir := os.Getenv("DATA_DIR")
-	os.Setenv("DATA_DIR", testdataDir)
+	// 清理测试文件（共享数据库文件）
 	defer func() {
-		if originalDataDir == "" {
-			os.Unsetenv("DATA_DIR")
-		} else {
-			os.Setenv("DATA_DIR", originalDataDir)
-		}
 		sharedDBPath := filepath.Join(testdataDir, "indexing", "all.db")
 		_ = os.Remove(sharedDBPath)
 		_ = os.RemoveAll(filepath.Join(testdataDir, "indexing"))
