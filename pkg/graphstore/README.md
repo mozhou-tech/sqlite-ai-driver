@@ -58,24 +58,59 @@ err := store.Link(ctx, "entity1", "knows", "entity2")
 err = store.Link(ctx, "entity2", "works_at", "company1")
 ```
 
-### 4. 语义检索
+### 4. 向量检索图谱实体（语义检索）
+
+向量检索是 GraphStore 的核心功能，它通过以下步骤工作：
+
+1. **生成查询向量**：使用 Embedder 将查询文本转换为向量
+2. **向量相似度搜索**：在 DuckDB 的 `all.db` 数据库中，使用 `list_cosine_similarity` 函数查找最相似的实体
+3. **获取图谱关系**：为每个找到的实体获取其在图谱中的关系（子图）
 
 ```go
 // 语义检索图谱
-// 通过查询文本找到相似的实体，然后返回这些实体在图谱中的关系
+// 参数说明：
+//   - query: 查询文本（会被转换为向量进行搜索）
+//   - limit: 返回的实体数量限制（默认 10）
+//   - maxDepth: 图谱遍历的最大深度，用于获取每个实体的子图（默认 2）
 results, err := store.SemanticSearch(ctx, "查询文本", 10, 2)
 if err != nil {
     log.Fatal(err)
 }
 
 for _, result := range results {
-    fmt.Printf("实体: %s (相似度: %.4f)\n", result.EntityName, result.Score)
+    fmt.Printf("实体: %s (ID: %s)\n", result.EntityName, result.EntityID)
+    fmt.Printf("相似度分数: %.4f\n", result.Score)  // 余弦相似度，范围 [0, 1]
     fmt.Printf("元数据: %v\n", result.Metadata)
     fmt.Printf("相关三元组数量: %d\n", len(result.Triples))
+    
+    // 显示该实体在图谱中的所有关系
     for _, triple := range result.Triples {
         fmt.Printf("  %s --[%s]--> %s\n", triple.Subject, triple.Predicate, triple.Object)
     }
 }
+```
+
+**向量检索的工作原理**：
+
+1. **向量存储**：实体添加时，`AddEntity` 会自动调用 Embedder 生成 embedding 并存储到 DuckDB
+2. **向量搜索**：`SemanticSearch` 使用 DuckDB 的 `list_cosine_similarity` 函数计算查询向量与所有实体向量的相似度
+3. **结果排序**：按相似度从高到低排序，返回 top-K 个实体
+4. **图谱扩展**：为每个找到的实体，获取其在图谱中深度为 `maxDepth` 的子图关系
+
+**示例场景**：
+
+```go
+// 场景1: 查找"软件工程师"相关的人员
+results, _ := store.SemanticSearch(ctx, "软件工程师", 5, 2)
+// 返回：所有实体名称或元数据中包含"软件工程师"语义的实体及其关系
+
+// 场景2: 查找特定公司的人员
+results, _ := store.SemanticSearch(ctx, "科技公司A的员工", 10, 1)
+// 返回：与"科技公司A"语义相似的实体，以及它们的一度关系
+
+// 场景3: 查找项目相关的人员和公司
+results, _ := store.SemanticSearch(ctx, "AI项目", 5, 3)
+// 返回：与"AI项目"相关的实体，以及它们的三度关系（更完整的上下文）
 ```
 
 ### 5. 获取子图
@@ -129,9 +164,10 @@ type Embedder interface {
 ## 数据存储
 
 - **图谱数据**：存储在 SQLite 数据库中（通过 `cayley-driver`）
-- **实体 Embedding**：存储在 DuckDB 数据库中（通过 `duckdb-driver`）
+- **实体 Embedding（向量检索）**：存储在 DuckDB 数据库中（通过 `duckdb-driver`）
+  - 向量检索使用 `duckdb-driver` 的 `all.db` 共享数据库
   - 所有 DuckDB 数据统一映射到 `{DATA_DIR}/indexing/all.db`
-  - 使用表名区分不同的业务模块
+  - 不同的业务模块通过表名区分（如 `graphstore_entities`）
 
 ## 注意事项
 

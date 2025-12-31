@@ -118,6 +118,10 @@ func (v *VecStore) Insert(ctx context.Context, text string, metadata map[string]
 			metadataJSON = string(metadataBytes)
 		}
 	}
+	// 如果metadataJSON为空，使用空JSON对象
+	if metadataJSON == "" {
+		metadataJSON = "{}"
+	}
 
 	// 将doc序列化为content字段（存储所有数据）
 	contentJSON, _ := json.Marshal(doc)
