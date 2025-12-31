@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -81,14 +80,12 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 		return nil
 	}
 
-	if r.workingDir == "" {
-		r.workingDir = "./rag_storage"
-	}
-
 	// 创建数据库
+	// 注意：路径会被 duckdb-driver 统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
+	// 不同的业务模块通过表名前缀来区分（如 lightrag_documents）
 	db, err := CreateDatabase(ctx, DatabaseOptions{
 		Name: "lightrag",
-		Path: filepath.Join(r.workingDir, "lightrag.db"),
+		Path: "lightrag", // 任意标识符，都会被映射到共享数据库
 		GraphOptions: &GraphOptions{
 			Enabled: true,
 			Backend: "cayley",
@@ -105,7 +102,7 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 		PrimaryKey: "id",
 		RevField:   "_rev",
 	}
-	docs, err := db.Collection(ctx, "documents", docSchema)
+	docs, err := db.Collection(ctx, "lightrag_documents", docSchema)
 	if err != nil {
 		return fmt.Errorf("failed to create documents collection: %w", err)
 	}
