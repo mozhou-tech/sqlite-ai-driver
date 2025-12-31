@@ -157,6 +157,7 @@ func TestNew(t *testing.T) {
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
+		WorkingDir:    "./testdata",
 	})
 
 	if search == nil {
@@ -207,6 +208,7 @@ func TestInitializeStorages(t *testing.T) {
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
+		WorkingDir:    "./testdata",
 	})
 
 	ctx := context.Background()
@@ -243,6 +245,7 @@ func TestInitializeStorages(t *testing.T) {
 
 func TestInitializeStorages_WithoutEmbedders(t *testing.T) {
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  nil,
 		ImageEmbedder: nil,
 		OCR:           nil,
@@ -270,6 +273,7 @@ func TestInsertImage_WithoutInitialization(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -291,6 +295,7 @@ func TestInsertImage_Basic(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -324,6 +329,7 @@ func TestInsertImage_WithMetadata(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -344,7 +350,7 @@ func TestInsertImage_WithMetadata(t *testing.T) {
 	metadata := map[string]any{
 		"source":   "test",
 		"category": "example",
-		"id":       123,
+		"id":       uuid.New().String(),
 	}
 
 	err = search.InsertImage(ctx, imagePath, metadata)
@@ -363,6 +369,7 @@ func TestInsertImage_WithOCRError(t *testing.T) {
 	ocr.err = fmt.Errorf("OCR error")
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -396,6 +403,7 @@ func TestInsertImage_InvalidPath(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -421,6 +429,7 @@ func TestInsertText_WithoutInitialization(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -442,6 +451,7 @@ func TestInsertText_Basic(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -469,6 +479,7 @@ func TestInsertText_TooShort(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -494,6 +505,7 @@ func TestInsertText_WithMetadata(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -527,6 +539,7 @@ func TestSearch_WithoutInitialization(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -544,6 +557,7 @@ func TestSearch_WithoutInitialization(t *testing.T) {
 
 func TestSearch_WithoutEmbedder(t *testing.T) {
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  nil,
 		ImageEmbedder: nil,
 		OCR:           nil,
@@ -574,6 +588,7 @@ func TestSearch_Basic(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -630,6 +645,7 @@ func TestSearch_WithMetadataFilter(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -691,6 +707,7 @@ func TestSearch_Limit(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -740,6 +757,7 @@ func TestSearch_WithImageEmbedderOnly(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  nil,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -788,6 +806,7 @@ func TestHybridSearch_WithoutInitialization(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -808,6 +827,7 @@ func TestHybridSearch_WithoutTextEmbedder(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  nil,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -837,6 +857,7 @@ func TestHybridSearch_WithoutImageEmbedder(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: nil,
 		OCR:           ocr,
@@ -867,6 +888,7 @@ func TestHybridSearch_Basic(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -927,6 +949,7 @@ func TestHybridSearch_WithMetadataFilter(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -993,6 +1016,7 @@ func TestHybridSearch_Limit(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -1043,6 +1067,7 @@ func TestClose(t *testing.T) {
 	ocr := newMockOCR()
 
 	search := New(Options{
+		WorkingDir:    "./testdata",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,

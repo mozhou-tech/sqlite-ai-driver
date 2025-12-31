@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -65,12 +67,15 @@ func (r *ImageSearch) InitializeStorages(ctx context.Context) error {
 		return nil
 	}
 
+	// 确保工作目录存在
+	if err := os.MkdirAll(r.workingDir, 0755); err != nil {
+		return fmt.Errorf("failed to create working directory: %w", err)
+	}
+
 	// 打开DuckDB数据库
-	// 注意：无论传入什么路径，都会被 duckdb-driver 统一映射到共享数据库文件 ./data/indexing/index.db
-	// 目录创建由 duckdb-driver 自动处理，无需在此处创建
 	// 使用简单的路径标识即可，实际路径会被映射到共享数据库
 	// 所有表使用 tablePrefix 前缀以区分不同的业务模块
-	db, err := sql.Open("duckdb", "imagesearch.db")
+	db, err := sql.Open("duckdb", filepath.Join(r.workingDir, "index.db"))
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
