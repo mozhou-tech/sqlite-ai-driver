@@ -24,9 +24,10 @@ embedder := &YourEmbedder{}
 
 // 创建 GraphStore
 store, err := graphstore.New(graphstore.Options{
-    Embedder:  embedder,
-    GraphDB:   "graphstore.db",  // 图谱数据库路径（可选，默认 "graphstore.db"）
-    TableName: "graphstore_entities", // DuckDB 表名（可选，默认 "graphstore_entities"）
+    Embedder:   embedder,
+    WorkingDir: "./data",         // 工作目录，作为基础目录（必填）
+    GraphDB:    "graphstore.db",  // 图谱数据库路径（可选，默认 "graphstore.db"）
+    TableName:  "graphstore_entities", // DuckDB 表名（可选，默认 "graphstore_entities"）
 })
 if err != nil {
     log.Fatal(err)

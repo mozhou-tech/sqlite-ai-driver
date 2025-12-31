@@ -27,7 +27,8 @@ func main() {
     
     // 2. 创建并初始化 GraphStore
     store, err := graphstore.New(graphstore.Options{
-        Embedder: embedder,
+        Embedder:   embedder,
+        WorkingDir: "./data", // 工作目录，作为基础目录
     })
     if err != nil {
         log.Fatal(err)

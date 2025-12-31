@@ -73,6 +73,8 @@ type LightRAG struct {
 
 // Options for creating a new LightRAG instance
 type Options struct {
+	// WorkingDir is the working directory, used as base directory
+	WorkingDir string
 	// DuckDBPath is the path to the DuckDB database file
 	DuckDBPath string
 	// GraphPath is the path to the Cayley graph database file
@@ -102,7 +104,11 @@ func New(opts Options) (*LightRAG, error) {
 	}
 
 	// Create graph instance
-	graph, err := cayley_driver.NewGraph(opts.GraphPath)
+	if opts.WorkingDir == "" {
+		db.Close()
+		return nil, fmt.Errorf("[New] WorkingDir is required")
+	}
+	graph, err := cayley_driver.NewGraphWithPrefix(opts.WorkingDir, opts.GraphPath, "")
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("[New] failed to create graph: %w", err)

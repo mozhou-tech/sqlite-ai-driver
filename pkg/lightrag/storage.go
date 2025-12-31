@@ -142,6 +142,7 @@ type GraphQueryResult struct {
 // DatabaseOptions 数据库选项
 type DatabaseOptions struct {
 	Name         string
+	WorkingDir   string // 工作目录，作为基础目录
 	Path         string
 	GraphOptions *GraphOptions
 }
@@ -195,10 +196,14 @@ func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error)
 	// 使用 graphstore 中约定的数据库文件路径，只需要创建新的连接
 	var graph cayley_driver.Graph
 	if opts.GraphOptions != nil && opts.GraphOptions.Enabled {
+		if opts.WorkingDir == "" {
+			db.Close()
+			return nil, fmt.Errorf("WorkingDir is required when GraphOptions.Enabled is true")
+		}
 		// 使用 graphstore 约定的数据库文件路径 "graphstore.db"
-		// cayley-driver 会自动将其映射到 {DATA_DIR}/cayley/graphstore.db
+		// cayley-driver 会自动将其映射到 {workingDir}/graph/graphstore.db
 		// 使用表前缀 "lightrag_" 以区分不同的数据
-		graph, err = cayley_driver.NewGraphWithPrefix("graphstore.db", "lightrag_")
+		graph, err = cayley_driver.NewGraphWithPrefix(opts.WorkingDir, "graphstore.db", "lightrag_")
 		if err != nil {
 			db.Close()
 			return nil, fmt.Errorf("failed to create graph database: %w", err)

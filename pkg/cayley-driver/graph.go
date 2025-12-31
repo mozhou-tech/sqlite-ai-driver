@@ -77,17 +77,10 @@ type cayleyGraph struct {
 	tablePrefix string
 }
 
-// getDataDir 获取基础数据目录
-// 优先从环境变量 DATA_DIR 获取，如果未设置则使用默认值 ./data
-func getDataDir() string {
-	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
-		return dataDir
-	}
-	return "./testdata"
-}
-
-// ensureDataPath 确保数据路径存在，如果是相对路径则自动构建到 cayley 子目录
-func ensureDataPath(path string) (string, error) {
+// ensureDataPath 确保数据路径存在，如果是相对路径则自动构建到 graph 子目录
+// workingDir: 工作目录，作为基础目录
+// path: SQLite3 数据库文件路径
+func ensureDataPath(workingDir, path string) (string, error) {
 	// 如果路径包含路径分隔符（绝对路径或相对路径），直接使用
 	if strings.Contains(path, string(filepath.Separator)) || strings.Contains(path, "/") || strings.Contains(path, "\\") {
 		// 确保目录存在
@@ -100,9 +93,8 @@ func ensureDataPath(path string) (string, error) {
 		return path, nil
 	}
 
-	// 如果是相对路径（不包含路径分隔符），自动构建到 cayley 子目录
-	dataDir := getDataDir()
-	fullPath := filepath.Join(dataDir, "cayley", path)
+	// 如果是相对路径（不包含路径分隔符），自动构建到 graph 子目录
+	fullPath := filepath.Join(workingDir, "graph", path)
 
 	// 确保目录存在
 	dir := filepath.Dir(fullPath)
@@ -113,20 +105,16 @@ func ensureDataPath(path string) (string, error) {
 	return fullPath, nil
 }
 
-// NewGraph 创建新的图数据库实例
-// path: SQLite3 数据库文件路径
-// - 完整路径：/path/to/graph.db 或 ./path/to/graph.db
-// - 相对路径（如 "graph.db"）：自动构建到 {DATA_DIR}/cayley/ 目录
-func NewGraph(path string) (Graph, error) {
-	return NewGraphWithPrefix(path, "")
-}
-
 // NewGraphWithPrefix 创建新的图数据库实例（支持表前缀）
+// workingDir: 工作目录，作为基础目录，相对路径会构建到 {workingDir}/graph/ 目录
 // path: SQLite3 数据库文件路径
+//   - 完整路径：/path/to/graph.db 或 ./path/to/graph.db
+//   - 相对路径（如 "graph.db"）：自动构建到 {workingDir}/graph/ 目录
+//
 // prefix: 表前缀，如果为空则使用默认的 "quads" 表名
-func NewGraphWithPrefix(path, prefix string) (Graph, error) {
+func NewGraphWithPrefix(workingDir, path, prefix string) (Graph, error) {
 	// 自动构建路径并创建目录
-	finalPath, err := ensureDataPath(path)
+	finalPath, err := ensureDataPath(workingDir, path)
 	if err != nil {
 		return nil, err
 	}

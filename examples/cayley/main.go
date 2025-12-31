@@ -12,10 +12,10 @@ func main() {
 	ctx := context.Background()
 
 	// 创建图数据库实例
-	// 数据库路径支持相对路径（会自动构建到 data/cayley/ 目录）
+	// 使用 WorkingDir 参数指定工作目录，相对路径会自动构建到 {workingDir}/graph/ 目录
 	// 也可以使用绝对路径，如："/path/to/graph.db"
-	// 或者使用环境变量 DATA_DIR 指定数据目录
-	graph, err := cayley_driver.NewGraph("cayley_example.db")
+	workingDir := "./testdata"
+	graph, err := cayley_driver.NewGraphWithPrefix(workingDir, "cayley_example.db", "")
 	if err != nil {
 		log.Fatalf("创建图数据库失败: %v", err)
 	}

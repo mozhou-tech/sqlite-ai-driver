@@ -84,8 +84,9 @@ func main() {
     fileDB, _ := sql.Open("file", "files.db")
     defer fileDB.Close()
     
-    // 2. 使用 cayley-driver - 自动存储到 {DATA_DIR}/cayley/graph.db
-    graph, _ := cayley_driver.NewGraph("graph.db")
+    // 2. 使用 cayley-driver - 自动存储到 {workingDir}/graph/graph.db
+    workingDir := "./data"
+    graph, _ := cayley_driver.NewGraphWithPrefix(workingDir, "graph.db", "")
     defer graph.Close()
     
     // 3. 使用 duckdb-driver - 自动存储到 {DATA_DIR}/duck/duck.db
@@ -120,7 +121,8 @@ func main() {
     fileDB, _ := sql.Open("file", filepath.Join(dataDir, "files", "files.db"))
     defer fileDB.Close()
     
-    graph, _ := cayley_driver.NewGraph(filepath.Join(dataDir, "cayley", "graph.db"))
+    // 使用 workingDir 和相对路径，会自动构建到 {dataDir}/graph/graph.db
+    graph, _ := cayley_driver.NewGraphWithPrefix(dataDir, "graph.db", "")
     defer graph.Close()
 }
 ```

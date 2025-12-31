@@ -8,19 +8,21 @@ import (
 )
 
 func TestGraphBasic(t *testing.T) {
-	// 使用 testdata 目录
-	dbPath := filepath.Join("testdata", "graph_basic.db")
+	// 使用 testdata 目录作为 workingDir
+	workingDir := "testdata"
+	dbPath := "graph_basic.db"
 
 	// 确保 testdata 目录存在
-	if err := os.MkdirAll("testdata", 0755); err != nil {
+	if err := os.MkdirAll(workingDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
-		_ = os.Remove(dbPath)
+		fullPath := filepath.Join(workingDir, "graph", dbPath)
+		_ = os.Remove(fullPath)
 	}()
 
 	// 创建图数据库
-	graph, err := NewGraph(dbPath)
+	graph, err := NewGraphWithPrefix(workingDir, dbPath, "")
 	if err != nil {
 		t.Fatalf("Failed to create graph: %v", err)
 	}
@@ -104,16 +106,18 @@ func TestGraphBasic(t *testing.T) {
 }
 
 func TestGraphMultiplePredicates(t *testing.T) {
-	dbPath := filepath.Join("testdata", "graph_predicates.db")
+	workingDir := "testdata"
+	dbPath := "graph_predicates.db"
 
-	if err := os.MkdirAll("testdata", 0755); err != nil {
+	if err := os.MkdirAll(workingDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
-		_ = os.Remove(dbPath)
+		fullPath := filepath.Join(workingDir, "graph", dbPath)
+		_ = os.Remove(fullPath)
 	}()
 
-	graph, err := NewGraph(dbPath)
+	graph, err := NewGraphWithPrefix(workingDir, dbPath, "")
 	if err != nil {
 		t.Fatalf("Failed to create graph: %v", err)
 	}
@@ -154,16 +158,18 @@ func TestGraphMultiplePredicates(t *testing.T) {
 }
 
 func TestGraphQueryChain(t *testing.T) {
-	dbPath := filepath.Join("testdata", "graph_query.db")
+	workingDir := "testdata"
+	dbPath := "graph_query.db"
 
-	if err := os.MkdirAll("testdata", 0755); err != nil {
+	if err := os.MkdirAll(workingDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
-		_ = os.Remove(dbPath)
+		fullPath := filepath.Join(workingDir, "graph", dbPath)
+		_ = os.Remove(fullPath)
 	}()
 
-	graph, err := NewGraph(dbPath)
+	graph, err := NewGraphWithPrefix(workingDir, dbPath, "")
 	if err != nil {
 		t.Fatalf("Failed to create graph: %v", err)
 	}

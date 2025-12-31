@@ -45,7 +45,9 @@ func main() {
     ctx := context.Background()
     
     // 创建图数据库实例
-    graph, err := cayley_driver.NewGraph("./graph.db")
+    // workingDir 作为基础目录，相对路径会构建到 {workingDir}/graph/ 目录
+    workingDir := "./data"
+    graph, err := cayley_driver.NewGraphWithPrefix(workingDir, "graph.db", "")
     if err != nil {
         log.Fatal(err)
     }
@@ -74,11 +76,15 @@ func main() {
 
 ### Graph 接口
 
-#### NewGraph(path string) (Graph, error)
+#### NewGraphWithPrefix(workingDir, path, prefix string) (Graph, error)
 
-创建新的图数据库实例。
+创建新的图数据库实例（支持表前缀）。
 
+- `workingDir`: 工作目录，作为基础目录，相对路径会构建到 {workingDir}/graph/ 目录
 - `path`: SQLite3 数据库文件路径
+  - 完整路径：/path/to/graph.db 或 ./path/to/graph.db
+  - 相对路径（如 "graph.db"）：自动构建到 {workingDir}/graph/ 目录
+- `prefix`: 表前缀，如果为空则使用默认的 "quads" 表名
 - 返回: Graph 实例和错误
 
 #### Link(ctx, subject, predicate, object string) error
