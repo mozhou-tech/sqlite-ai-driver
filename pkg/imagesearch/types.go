@@ -10,7 +10,7 @@ type Embedder interface {
 
 // Options ImageSearch配置选项
 type Options struct {
-	WorkingDir    string
+	WorkingDir    string // 工作目录，默认为 "./testdata"
 	TextEmbedder  Embedder
 	ImageEmbedder Embedder
 	OCR           OCR

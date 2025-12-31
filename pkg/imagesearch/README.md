@@ -38,7 +38,7 @@ imageEmbedder := &MyEmbedder{} // 用于图片embedding（基于OCR文本）
 ocr := imagesearch.NewSimpleOCR() // 注意：需要实现真实的OCR
 
 rag := imagesearch.New(imagesearch.Options{
-    WorkingDir:    "./imagesearch_storage",
+    WorkingDir:    "./testdata", // 可选，默认为 "./testdata"
     TextEmbedder:  textEmbedder,
     ImageEmbedder: imageEmbedder,
     OCR:           ocr,

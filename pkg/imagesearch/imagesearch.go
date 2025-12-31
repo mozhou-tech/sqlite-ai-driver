@@ -41,8 +41,13 @@ func New(opts Options) *ImageSearch {
 		tablePrefix = "imagesearch_"
 	}
 
+	workingDir := opts.WorkingDir
+	if workingDir == "" {
+		workingDir = "./testdata"
+	}
+
 	return &ImageSearch{
-		workingDir:    opts.WorkingDir,
+		workingDir:    workingDir,
 		textEmbedder:  opts.TextEmbedder,
 		imageEmbedder: opts.ImageEmbedder,
 		ocr:           opts.OCR,

@@ -92,8 +92,9 @@ func ExampleImageSearch() {
 	ocr := imagesearch.NewSimpleOCR()
 
 	// 4. 创建 ImageSearch 实例
+	// WorkingDir 默认为 "./testdata"，可以不指定
 	rag := imagesearch.New(imagesearch.Options{
-		WorkingDir:    "./imagesearch_storage",
+		WorkingDir:    "./imagesearch_storage", // 可选，默认为 "./testdata"
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
