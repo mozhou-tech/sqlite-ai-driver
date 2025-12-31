@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -27,15 +28,18 @@ import (
 	"github.com/gin-gonic/gin"
 	pdfparser "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/transformer/splitter/tfidf"
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag"
+	vssindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/vec"
+	duckdbretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore"
 	"github.com/sirupsen/logrus"
 )
 
 var (
-	lightRAGInstance *lightrag.LightRAG
+	vecStoreInstance *vecstore.VecStore
 	ragGraph         compose.Runnable[string, *schema.Message]
 	einoIndexer      indexer.Indexer
+	einoRetriever    retriever.Retriever
 
 	// 文档解析器
 	parsers     map[string]interface{}
@@ -43,9 +47,9 @@ var (
 )
 
 func main() {
-	// 初始化 LightRAG
-	if err := initLightRAG(); err != nil {
-		log.Fatalf("Failed to initialize LightRAG: %v", err)
+	// 初始化 VecStore 和 RAG 组件
+	if err := initRAG(); err != nil {
+		log.Fatalf("Failed to initialize RAG: %v", err)
 	}
 
 	// 创建 Gin 路由
@@ -62,7 +66,6 @@ func main() {
 		api.POST("/upload", handleUploadDocument)
 		api.GET("/documents", handleListDocuments)
 		api.DELETE("/documents/:id", handleDeleteDocument)
-		api.GET("/graph/full", handleGetFullGraph)
 	}
 
 	// 启动服务器
@@ -97,16 +100,16 @@ func main() {
 		log.Fatal("Server forced to shutdown:", err)
 	}
 
-	if lightRAGInstance != nil {
-		if err := lightRAGInstance.FinalizeStorages(ctx); err != nil {
-			log.Printf("Failed to finalize storages: %v", err)
+	if vecStoreInstance != nil {
+		if err := vecStoreInstance.Close(); err != nil {
+			log.Printf("Failed to close vecstore: %v", err)
 		}
 	}
 
 	log.Println("Server exiting")
 }
 
-func initLightRAG() error {
+func initRAG() error {
 	ctx := context.Background()
 
 	// 预加载 sego 词典
@@ -136,44 +139,31 @@ func initLightRAG() error {
 		openaiBaseURL = "https://api.openai.com/v1"
 	}
 
-	// 创建工作目录
-	workingDir := os.Getenv("RAG_WORKING_DIR")
-	if workingDir == "" {
-		workingDir = "./rag_storage"
-	}
-	if err := os.MkdirAll(workingDir, 0755); err != nil {
-		return fmt.Errorf("failed to create working directory: %w", err)
-	}
-
-	// 初始化 Embedder
+	// 初始化 Embedder (用于 eino)
 	embedderConfig := &openaiembedding.EmbeddingConfig{
 		APIKey:  openaiAPIKey,
 		BaseURL: openaiBaseURL,
 		Model:   "text-embedding-v4",
 	}
-	embedderInstance, err := lightrag.NewOpenAIEmbedder(ctx, embedderConfig)
+	einoEmbedder, err := openaiembedding.NewEmbedder(ctx, embedderConfig)
 	if err != nil {
-		return fmt.Errorf("failed to create embedder: %w", err)
+		return fmt.Errorf("failed to create eino embedder: %w", err)
 	}
 
-	// 初始化 LLM
-	llmConfig := &lightrag.OpenAIConfig{
-		APIKey:  openaiAPIKey,
-		BaseURL: openaiBaseURL,
-		Model:   openaiModel,
+	// 确定向量维度
+	vectorDimensions := 1024 // text-embedding-v4 默认维度为 1024
+	if embedderConfig.Dimensions != nil {
+		vectorDimensions = *embedderConfig.Dimensions
 	}
-	llmInstance := lightrag.NewOpenAILLM(llmConfig)
 
-	// 创建 LightRAG 实例
-	lightRAGInstance = lightrag.New(lightrag.Options{
-		WorkingDir: workingDir,
-		Embedder:   embedderInstance,
-		LLM:        llmInstance,
+	// 创建 VecStore 实例
+	vecStoreInstance = vecstore.New(vecstore.Options{
+		Embedder: nil, // VecStore 不需要 embedder，由 indexer 处理
 	})
 
-	// 初始化存储
-	if err := lightRAGInstance.InitializeStorages(ctx); err != nil {
-		return fmt.Errorf("failed to initialize storages: %w", err)
+	// 初始化 VecStore
+	if err := vecStoreInstance.Initialize(ctx); err != nil {
+		return fmt.Errorf("failed to initialize vecstore: %w", err)
 	}
 
 	// 初始化 Eino 组件
@@ -201,10 +191,33 @@ func initLightRAG() error {
 		return fmt.Errorf("failed to create TFIDF splitter: %w", err)
 	}
 
-	retrieverInstance := &LightRAGRetriever{rag: lightRAGInstance}
-	einoIndexer = &LightRAGIndexer{
-		rag:      lightRAGInstance,
+	// 创建 Vec Indexer
+	vecIndexer, err := vssindexer.NewIndexer(ctx, &vssindexer.IndexerConfig{
+		VecStore:         vecStoreInstance,
+		TableName:        "documents",
+		VectorDimensions: vectorDimensions,
+		Embedding:        einoEmbedder,
+		BatchSize:        10,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create vec indexer: %w", err)
+	}
+
+	// 创建包装 Indexer，集成 TFIDF Splitter
+	einoIndexer = &VecIndexerWrapper{
+		indexer:  vecIndexer,
 		splitter: splitter,
+	}
+
+	// 创建 Vec Retriever
+	einoRetriever, err = duckdbretriever.NewRetriever(ctx, &duckdbretriever.RetrieverConfig{
+		VecStore:  vecStoreInstance,
+		TableName: "documents",
+		Embedding: einoEmbedder,
+		TopK:      5,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create vec retriever: %w", err)
 	}
 
 	// 构建 RAG Graph
@@ -220,60 +233,21 @@ func initLightRAG() error {
 	)
 
 	formatDocs := func(ctx context.Context, docs []*schema.Document) (map[string]any, error) {
-		mode, _ := ctx.Value("rag_mode").(lightrag.QueryMode)
-
 		if len(docs) == 0 {
 			logrus.Warn("No documents retrieved for context")
-			if mode == lightrag.ModeGraph {
-				return map[string]any{"format_docs": "在知识图谱中未找到相关实体或关系。"}, nil
-			}
 			return map[string]any{"format_docs": "未找到相关知识内容。"}, nil
 		}
 
-		uniqueTriples := make(map[string]bool)
-		var graphLines []string
-
-		// 1. 提取并去重知识图谱三元组
-		for _, doc := range docs {
-			if triples, ok := doc.MetaData["recalled_triples"].([]lightrag.Relationship); ok {
-				for _, t := range triples {
-					key := fmt.Sprintf("%s-%s-%s", t.Source, t.Relation, t.Target)
-					if !uniqueTriples[key] {
-						uniqueTriples[key] = true
-						graphLines = append(graphLines, fmt.Sprintf("%s -[%s]-> %s", t.Source, t.Relation, t.Target))
-					}
-				}
-			}
-		}
-
 		var contextText string
-		if len(graphLines) > 0 {
-			// 如果召回了图谱，优先使用图谱作为上下文
-			contextText += "### 知识图谱召回信息 (Knowledge Graph):\n"
-			for i, line := range graphLines {
-				contextText += fmt.Sprintf("[%d] %s\n", i+1, line)
+		contextText += "### 相关参考文档 (Reference Documents):\n"
+		for i, doc := range docs {
+			// 尝试获取相似度分数（从 distance 转换）
+			score := 0.0
+			if distance, ok := doc.MetaData["distance"].(float64); ok {
+				// distance = 1 - similarity，所以 similarity = 1 - distance
+				score = 1.0 - distance
 			}
-			logrus.WithField("triple_count", len(graphLines)).Info("Using Knowledge Graph as primary context")
-
-			// 在 graph 模式下，我们也提供关联的文档摘要，但强调是以图谱为主
-			if mode == lightrag.ModeGraph {
-				contextText += "\n### 关联文档参考 (Reference Documents):\n"
-				for i, doc := range docs {
-					contextText += fmt.Sprintf("[%d] %s\n", i+1, doc.Content)
-				}
-			}
-		} else {
-			// 如果没有召回图谱
-			if mode == lightrag.ModeGraph {
-				return map[string]any{"format_docs": "知识图谱中没有找到直接相关的三元组。"}, nil
-			}
-
-			contextText += "### 相关参考文档 (Reference Documents):\n"
-			for i, doc := range docs {
-				score, _ := doc.MetaData["score"].(float64)
-				contextText += fmt.Sprintf("[%d] (Score: %.4f) %s\n", i+1, score, doc.Content)
-			}
-			logrus.Warn("No graph data found, falling back to document content")
+			contextText += fmt.Sprintf("[%d] (Score: %.4f) %s\n", i+1, score, doc.Content)
 		}
 
 		return map[string]any{"format_docs": contextText}, nil
@@ -282,7 +256,7 @@ func initLightRAG() error {
 	chain, err := compose.NewChain[string, *schema.Message]().
 		AppendLambda(compose.InvokableLambda(func(ctx context.Context, input string) (map[string]any, error) {
 			// 1. 检索文档
-			docs, err := retrieverInstance.Retrieve(ctx, input)
+			docs, err := einoRetriever.Retrieve(ctx, input)
 			if err != nil {
 				return nil, err
 			}
@@ -306,96 +280,18 @@ func initLightRAG() error {
 
 	ragGraph = chain
 
-	log.Println("LightRAG and Eino initialized successfully")
+	log.Println("VecStore and Eino initialized successfully")
 	return nil
 }
 
-func Ptr[T any](v T) *T {
-	return &v
-}
-
-// Eino Retriever 包装
-type LightRAGRetriever struct {
-	rag *lightrag.LightRAG
-}
-
-func (r *LightRAGRetriever) Retrieve(ctx context.Context, query string, opts ...retriever.Option) ([]*schema.Document, error) {
-	options := retriever.GetCommonOptions(&retriever.Options{
-		TopK: Ptr(5),
-	}, opts...)
-
-	mode, _ := ctx.Value("rag_mode").(lightrag.QueryMode)
-	if mode == "" {
-		mode = lightrag.ModeGlobal
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"query": query,
-		"top_k": *options.TopK,
-		"mode":  mode,
-	}).Info("Retrieving documents from LightRAG")
-
-	param := lightrag.QueryParam{
-		Mode:  mode,
-		Limit: *options.TopK,
-	}
-
-	results, err := r.rag.Retrieve(ctx, query, param)
-	if err != nil {
-		logrus.WithError(err).Error("LightRAG retrieval failed")
-		return nil, err
-	}
-
-	logrus.WithField("count", len(results)).Info("Retrieved documents from LightRAG")
-
-	docs := make([]*schema.Document, 0, len(results))
-	for i, res := range results {
-		logrus.WithFields(logrus.Fields{
-			"index": i + 1,
-			"id":    res.ID,
-			"score": res.Score,
-			"content_preview": func() string {
-				if len(res.Content) > 200 {
-					return res.Content[:200] + "..."
-				}
-				return res.Content
-			}(),
-			"recalled_triples_count": len(res.RecalledTriples),
-		}).Info("LightRAG Recalled Document")
-
-		if res.Metadata == nil {
-			res.Metadata = make(map[string]any)
-		}
-		res.Metadata["score"] = res.Score
-		if len(res.RecalledTriples) > 0 {
-			res.Metadata["recalled_triples"] = res.RecalledTriples
-		}
-
-		docs = append(docs, &schema.Document{
-			ID:       res.ID,
-			Content:  res.Content,
-			MetaData: res.Metadata,
-		})
-	}
-	return docs, nil
-}
-
-func (r *LightRAGRetriever) GetType() string {
-	return "lightrag"
-}
-
-func (r *LightRAGRetriever) IsCallbacksEnabled() bool {
-	return false
-}
-
-// Eino Indexer 包装
-type LightRAGIndexer struct {
-	rag      *lightrag.LightRAG
+// Vec Indexer 包装，集成 TFIDF Splitter
+type VecIndexerWrapper struct {
+	indexer  *vssindexer.Indexer
 	splitter document.Transformer
 }
 
-func (i *LightRAGIndexer) Store(ctx context.Context, docs []*schema.Document, opts ...indexer.Option) ([]string, error) {
-	logrus.WithField("count", len(docs)).Info("Indexing documents into LightRAG")
+func (i *VecIndexerWrapper) Store(ctx context.Context, docs []*schema.Document, opts ...indexer.Option) ([]string, error) {
+	logrus.WithField("count", len(docs)).Info("Indexing documents into VecStore")
 
 	// 使用 TFIDF Splitter 分割文档
 	var transformedDocs []*schema.Document
@@ -415,7 +311,7 @@ func (i *LightRAGIndexer) Store(ctx context.Context, docs []*schema.Document, op
 	}
 
 	// 过滤掉空内容的文档
-	toStore := make([]map[string]any, 0, len(transformedDocs))
+	validDocs := make([]*schema.Document, 0, len(transformedDocs))
 	skippedEmpty := 0
 	for _, doc := range transformedDocs {
 		// 跳过空内容或只包含空白字符的文档
@@ -428,51 +324,45 @@ func (i *LightRAGIndexer) Store(ctx context.Context, docs []*schema.Document, op
 			}).Debug("Skipping document with empty content")
 			continue
 		}
-
-		m := map[string]any{
-			"id":      doc.ID,
-			"content": content, // 使用清理后的内容
-		}
-		for k, v := range doc.MetaData {
-			m[k] = v
-		}
-		toStore = append(toStore, m)
+		// 更新文档内容为清理后的内容
+		doc.Content = content
+		validDocs = append(validDocs, doc)
 	}
 
 	if skippedEmpty > 0 {
 		logrus.WithField("skipped_empty_count", skippedEmpty).Info("Filtered out documents with empty content")
 	}
 
-	if len(toStore) == 0 {
+	if len(validDocs) == 0 {
 		logrus.Warn("No valid documents to index after filtering")
 		return []string{}, nil
 	}
 
 	logrus.WithFields(logrus.Fields{
-		"total_docs":    len(toStore),
+		"total_docs":    len(validDocs),
 		"skipped_empty": skippedEmpty,
 	}).Info("Starting batch insertion with embedding generation")
 
-	// InsertBatch 会同步执行 embedding（在 BulkUpsert 中）
-	ids, err := i.rag.InsertBatch(ctx, toStore)
+	// 使用 Vec Indexer 存储文档
+	ids, err := i.indexer.Store(ctx, validDocs, opts...)
 	if err != nil {
-		logrus.WithError(err).Error("LightRAG indexing failed")
+		logrus.WithError(err).Error("VecStore indexing failed")
 		return nil, err
 	}
 
 	logrus.WithFields(logrus.Fields{
 		"indexed_count": len(ids),
-		"total_docs":    len(toStore),
-	}).Info("Indexed documents into LightRAG successfully with embeddings")
+		"total_docs":    len(validDocs),
+	}).Info("Indexed documents into VecStore successfully with embeddings")
 	return ids, nil
 }
 
-func (i *LightRAGIndexer) GetType() string {
-	return "lightrag"
+func (i *VecIndexerWrapper) GetType() string {
+	return i.indexer.GetType()
 }
 
-func (i *LightRAGIndexer) IsCallbacksEnabled() bool {
-	return false
+func (i *VecIndexerWrapper) IsCallbacksEnabled() bool {
+	return i.indexer.IsCallbacksEnabled()
 }
 
 func corsMiddleware() gin.HandlerFunc {
@@ -492,9 +382,8 @@ func corsMiddleware() gin.HandlerFunc {
 }
 
 type ChatRequest struct {
-	Message string             `json:"message"`
-	History []string           `json:"history,omitempty"`
-	Mode    lightrag.QueryMode `json:"mode,omitempty"`
+	Message string   `json:"message"`
+	History []string `json:"history,omitempty"`
 }
 
 type ChatResponse struct {
@@ -510,18 +399,12 @@ func handleChat(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	mode := req.Mode
-	if mode == "" {
-		mode = lightrag.ModeGlobal
-	}
-
 	// 使用 Eino Graph 进行查询
 	logrus.WithFields(logrus.Fields{
 		"message": req.Message,
-		"mode":    mode,
 	}).Info("Starting chat query via Eino Graph (streaming)")
 
-	sr, err := ragGraph.Stream(context.WithValue(ctx, "rag_mode", mode), req.Message)
+	sr, err := ragGraph.Stream(ctx, req.Message)
 	if err != nil {
 		logrus.WithError(err).Error("Chat query failed")
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to query via Eino: %v", err)})
@@ -794,10 +677,64 @@ func handleUploadDocument(c *gin.Context) {
 func handleListDocuments(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	docs, err := lightRAGInstance.ListDocuments(ctx, 100, 0)
+	if vecStoreInstance == nil {
+		c.JSON(500, gin.H{"error": "VecStore not initialized"})
+		return
+	}
+
+	db := vecStoreInstance.GetDB()
+	tableName := vecStoreInstance.GetTableName()
+
+	// 查询文档列表
+	query := fmt.Sprintf(`
+		SELECT id, content, metadata, created_at, embedding_status
+		FROM %s
+		ORDER BY created_at DESC
+		LIMIT 100
+	`, tableName)
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to list documents: %v", err)})
 		return
+	}
+	defer rows.Close()
+
+	var docs []map[string]any
+	for rows.Next() {
+		var id, content string
+		var metadataRaw interface{}
+		var createdAt time.Time
+		var embeddingStatus string
+
+		if err := rows.Scan(&id, &content, &metadataRaw, &createdAt, &embeddingStatus); err != nil {
+			continue
+		}
+
+		// 解析 content JSON
+		var contentDoc map[string]any
+		if err := json.Unmarshal([]byte(content), &contentDoc); err != nil {
+			contentDoc = map[string]any{"id": id, "content": content}
+		}
+
+		doc := map[string]any{
+			"id":               id,
+			"content":          contentDoc["content"],
+			"created_at":       createdAt,
+			"embedding_status": embeddingStatus,
+		}
+
+		// 解析 metadata
+		if metadataRaw != nil {
+			if metadataStr, ok := metadataRaw.(string); ok {
+				var metadata map[string]any
+				if err := json.Unmarshal([]byte(metadataStr), &metadata); err == nil {
+					doc["metadata"] = metadata
+				}
+			}
+		}
+
+		docs = append(docs, doc)
 	}
 
 	c.JSON(200, gin.H{"documents": docs})
@@ -812,23 +749,32 @@ func handleDeleteDocument(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	if err := lightRAGInstance.DeleteDocument(ctx, id); err != nil {
+	if vecStoreInstance == nil {
+		c.JSON(500, gin.H{"error": "VecStore not initialized"})
+		return
+	}
+
+	db := vecStoreInstance.GetDB()
+	tableName := vecStoreInstance.GetTableName()
+
+	// 删除文档
+	query := fmt.Sprintf("DELETE FROM %s WHERE id = ?", tableName)
+	result, err := db.ExecContext(ctx, query, id)
+	if err != nil {
 		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to delete document: %v", err)})
 		return
 	}
 
-	c.JSON(200, gin.H{"message": "Document deleted successfully"})
-}
-
-func handleGetFullGraph(c *gin.Context) {
-	ctx := c.Request.Context()
-	docID := c.Query("doc_id")
-
-	graph, err := lightRAGInstance.ExportGraph(ctx, docID)
+	rowsAffected, err := result.RowsAffected()
 	if err != nil {
-		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to export graph: %v", err)})
+		c.JSON(500, gin.H{"error": fmt.Sprintf("Failed to get rows affected: %v", err)})
 		return
 	}
 
-	c.JSON(200, graph)
+	if rowsAffected == 0 {
+		c.JSON(404, gin.H{"error": "Document not found"})
+		return
+	}
+
+	c.JSON(200, gin.H{"message": "Document deleted successfully"})
 }

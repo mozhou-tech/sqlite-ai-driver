@@ -11,8 +11,8 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf v0.0.0
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.9.3
 )
 
@@ -66,14 +66,11 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0 // indirect
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0 // indirect
-	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rioloc/tfidf-go v0.0.0-20250724175239-3a8f9fe7e629 // indirect
 	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
@@ -97,10 +94,6 @@ require (
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.66.3 // indirect
-	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.38.2 // indirect
 )
 
 replace github.com/mozhou-tech/sqlite-ai-driver => ../../
@@ -116,3 +109,5 @@ replace github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./../../pkg/lightrag
 
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../../pkg/sego
+
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ../../pkg/vecstore
