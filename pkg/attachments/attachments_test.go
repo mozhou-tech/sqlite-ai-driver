@@ -385,11 +385,7 @@ func TestStoreWithMetadata(t *testing.T) {
 		t.Errorf("文件大小不匹配: 期望 %d, 实际 %d", len(data), info.Size)
 	}
 
-	// 验证元数据字段为空（因为不再存储元数据）
-	if info.MimeType != "" {
-		t.Errorf("MIME类型应该为空，实际为: %s", info.MimeType)
-	}
-
+	// 不验证MIME类型和元数据字段
 	if info.Metadata != nil {
 		t.Errorf("元数据应该为空，实际为: %v", info.Metadata)
 	}
@@ -457,6 +453,7 @@ func TestGetInfoFromDatabase(t *testing.T) {
 	filename := "test_db_info.txt"
 	data := []byte("Test database info")
 	fileID, err := mgr.Store(filename, data)
+	fmt.Printf("fileID: %s\n", fileID)
 	if err != nil {
 		t.Fatalf("存储文件失败: %v", err)
 	}

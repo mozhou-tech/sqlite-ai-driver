@@ -1,17 +1,24 @@
 package attachments
 
 import (
+	"context"
+	"crypto/md5"
+	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"time"
+
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 )
 
 // Manager 附件管理器
 type Manager struct {
 	workingDir string
 	baseDir    string
+	db         *sql.DB
 }
 
 // FileInfo 文件基本信息
@@ -24,6 +31,7 @@ type FileInfo struct {
 	RelativePath string                 // 相对路径（相对于attachments目录）
 	AbsolutePath string                 // 绝对路径
 	MimeType     string                 // MIME类型
+	MD5          string                 // 文件MD5值
 	Metadata     map[string]interface{} // 扩展元数据（JSON）
 	CreatedAt    time.Time              // 创建时间
 	UpdatedAt    time.Time              // 更新时间
@@ -51,16 +59,71 @@ func New(workingDir string) (*Manager, error) {
 	}
 	log.Printf("[attachments] Attachments directory created/verified")
 
+	// 初始化数据库连接
+	dbPath := "attachments.db"
+	dsn := fmt.Sprintf("%s?workingDir=%s", dbPath, absWorkingDir)
+	log.Printf("[attachments] Opening database: %s", dsn)
+
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to open database: %v", err)
+		return nil, fmt.Errorf("打开数据库失败: %w", err)
+	}
+
+	// 设置连接池参数
+	db.SetMaxIdleConns(1)
+	db.SetMaxOpenConns(1)
+	db.SetConnMaxLifetime(0)
+
+	// 测试连接
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		log.Printf("[attachments] ERROR: failed to ping database: %v", err)
+		db.Close()
+		return nil, fmt.Errorf("数据库连接失败: %w", err)
+	}
+
+	// 创建表
+	if err := createTable(ctx, db); err != nil {
+		log.Printf("[attachments] ERROR: failed to create table: %v", err)
+		db.Close()
+		return nil, fmt.Errorf("创建表失败: %w", err)
+	}
+	log.Printf("[attachments] Database table created/verified")
+
 	log.Printf("[attachments] Manager created successfully")
 	return &Manager{
 		workingDir: absWorkingDir,
 		baseDir:    baseDir,
+		db:         db,
 	}, nil
 }
 
-// Close 关闭管理器（当前无需操作，保留接口以保持兼容性）
+// createTable 创建文件元数据表
+func createTable(ctx context.Context, db *sql.DB) error {
+	createTableSQL := `
+		CREATE TABLE IF NOT EXISTS attachments_metadata (
+			file_id TEXT PRIMARY KEY,
+			relative_path TEXT NOT NULL,
+			absolute_path TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			mime_type TEXT,
+			md5 TEXT NOT NULL,
+			created_at TIMESTAMP NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)
+	`
+	_, err := db.ExecContext(ctx, createTableSQL)
+	return err
+}
+
+// Close 关闭管理器
 func (m *Manager) Close() error {
 	log.Printf("[attachments] Close called")
+	if m.db != nil {
+		return m.db.Close()
+	}
 	return nil
 }
 
@@ -113,6 +176,17 @@ func (m *Manager) StoreWithMetadata(filename string, data []byte, mimeType *stri
 	// 返回文件ID（相对路径）
 	fileID := filepath.Join(dateDir, filename)
 
+	// 计算文件绝对路径
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to get absolute path: %v", err)
+		return "", fmt.Errorf("获取绝对路径失败: %w", err)
+	}
+
+	// 计算MD5
+	md5Hash := md5.Sum(data)
+	md5Str := hex.EncodeToString(md5Hash[:])
+
 	// 写入文件
 	writeStart := time.Now()
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
@@ -120,6 +194,30 @@ func (m *Manager) StoreWithMetadata(filename string, data []byte, mimeType *stri
 		return "", fmt.Errorf("写入文件失败: %w", err)
 	}
 	log.Printf("[attachments] File written successfully (took %v)", time.Since(writeStart))
+
+	// 存储元数据到数据库
+	now := time.Now()
+	mimeTypeStr := ""
+	if mimeType != nil {
+		mimeTypeStr = *mimeType
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	insertSQL := `
+		INSERT OR REPLACE INTO attachments_metadata 
+		(file_id, relative_path, absolute_path, file_size, mime_type, md5, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err = m.db.ExecContext(ctx, insertSQL, fileID, fileID, absPath, len(data), mimeTypeStr, md5Str, now, now)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to insert metadata: %v", err)
+		// 如果数据库插入失败，删除已写入的文件
+		os.Remove(filePath)
+		return "", fmt.Errorf("存储元数据失败: %w", err)
+	}
+	log.Printf("[attachments] Metadata stored successfully")
 
 	log.Printf("[attachments] StoreWithMetadata completed successfully: fileID=%s", fileID)
 	return fileID, nil
@@ -138,6 +236,20 @@ func (m *Manager) Delete(fileID string) error {
 	filePath := filepath.Join(m.baseDir, fileID)
 	log.Printf("[attachments] File path: %s", filePath)
 
+	// 从数据库删除元数据
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	deleteSQL := `DELETE FROM attachments_metadata WHERE file_id = ?`
+	dbStart := time.Now()
+	_, err := m.db.ExecContext(ctx, deleteSQL, fileID)
+	if err != nil {
+		log.Printf("[attachments] WARNING: failed to delete metadata from database: %v (took %v)", err, time.Since(dbStart))
+		// 继续删除文件，不因为数据库错误而失败
+	} else {
+		log.Printf("[attachments] Metadata deleted from database (took %v)", time.Since(dbStart))
+	}
+
 	// 删除文件
 	fileStart := time.Now()
 	removeErr := os.Remove(filePath)
@@ -155,7 +267,7 @@ func (m *Manager) Delete(fileID string) error {
 	return nil
 }
 
-// GetInfo 获取文件基本信息（从文件系统读取）
+// GetInfo 获取文件基本信息（优先从数据库读取，如果不存在则从文件系统读取）
 // fileID: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
 func (m *Manager) GetInfo(fileID string) (*FileInfo, error) {
 	log.Printf("[attachments] GetInfo called: fileID=%s", fileID)
@@ -165,7 +277,66 @@ func (m *Manager) GetInfo(fileID string) (*FileInfo, error) {
 		return nil, fmt.Errorf("文件ID不能为空")
 	}
 
-	// 从文件系统读取
+	// 先从数据库读取
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	querySQL := `
+		SELECT relative_path, absolute_path, file_size, mime_type, md5, created_at, updated_at
+		FROM attachments_metadata
+		WHERE file_id = ?
+	`
+
+	var relativePath, absolutePath, mimeType, md5Str string
+	var fileSize int64
+	var createdAt, updatedAt time.Time
+
+	dbStart := time.Now()
+	err := m.db.QueryRowContext(ctx, querySQL, fileID).Scan(
+		&relativePath, &absolutePath, &fileSize, &mimeType, &md5Str, &createdAt, &updatedAt,
+	)
+
+	if err == nil {
+		// 从数据库读取成功
+		log.Printf("[attachments] Found in database (took %v)", time.Since(dbStart))
+
+		// 解析日期目录和文件名
+		dateDir := filepath.Dir(fileID)
+		filename := filepath.Base(fileID)
+
+		// 获取文件系统信息以获取 ModTime
+		filePath := filepath.Join(m.baseDir, fileID)
+		fileInfo, err := os.Stat(filePath)
+		modTime := createdAt
+		if err == nil {
+			modTime = fileInfo.ModTime()
+		}
+
+		info := &FileInfo{
+			ID:           fileID,
+			Name:         filename,
+			Size:         fileSize,
+			ModTime:      modTime,
+			DateDir:      dateDir,
+			RelativePath: relativePath,
+			AbsolutePath: absolutePath,
+			MimeType:     mimeType,
+			MD5:          md5Str,
+			CreatedAt:    createdAt,
+			UpdatedAt:    updatedAt,
+		}
+
+		log.Printf("[attachments] GetInfo completed from database: name=%s, size=%d, md5=%s", info.Name, info.Size, info.MD5)
+		return info, nil
+	}
+
+	if err != sql.ErrNoRows {
+		log.Printf("[attachments] ERROR: failed to query database: %v (took %v)", err, time.Since(dbStart))
+		// 数据库查询出错，继续尝试从文件系统读取
+	}
+
+	// 数据库中没有记录，从文件系统读取
+	log.Printf("[attachments] Not found in database, reading from filesystem")
 	filePath := filepath.Join(m.baseDir, fileID)
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
@@ -201,7 +372,7 @@ func (m *Manager) GetInfo(fileID string) (*FileInfo, error) {
 		AbsolutePath: absPath,
 		CreatedAt:    fileInfo.ModTime(),
 		UpdatedAt:    fileInfo.ModTime(),
-		// MimeType 和 Metadata 不再存储，保持为空
+		// MimeType 和 MD5 从文件系统无法获取，保持为空
 	}
 
 	log.Printf("[attachments] GetInfo completed from filesystem: name=%s, size=%d", info.Name, info.Size)
