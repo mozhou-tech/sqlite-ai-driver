@@ -8,8 +8,48 @@ import (
 
 	openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/imagerag"
-	lightrag "github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag"
 )
+
+// OpenAIEmbedderWrapper 包装OpenAI embedder以符合imagerag.Embedder接口
+type OpenAIEmbedderWrapper struct {
+	embedder *openaiembedding.Embedder
+	dims     int
+}
+
+func NewOpenAIEmbedderWrapper(ctx context.Context, config *openaiembedding.EmbeddingConfig) (*OpenAIEmbedderWrapper, error) {
+	emb, err := openaiembedding.NewEmbedder(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+
+	dims := 1536 // 默认维度
+	if config.Model == "text-embedding-3-large" {
+		dims = 3072
+	}
+	if config.Dimensions != nil {
+		dims = *config.Dimensions
+	}
+
+	return &OpenAIEmbedderWrapper{
+		embedder: emb,
+		dims:     dims,
+	}, nil
+}
+
+func (e *OpenAIEmbedderWrapper) Embed(ctx context.Context, text string) ([]float64, error) {
+	res, err := e.embedder.EmbedStrings(ctx, []string{text})
+	if err != nil {
+		return nil, err
+	}
+	if len(res) == 0 {
+		return nil, fmt.Errorf("no embedding returned")
+	}
+	return res[0], nil
+}
+
+func (e *OpenAIEmbedderWrapper) Dimensions() int {
+	return e.dims
+}
 
 // ExampleImageRAG 展示如何使用ImageRAG
 func ExampleImageRAG() {
@@ -27,13 +67,25 @@ func ExampleImageRAG() {
 	}
 
 	// 2. 初始化 Embedder
-	embedder, err := lightrag.NewOpenAIEmbedder(ctx, &openaiembedding.EmbeddingConfig{
+	// 可以使用同一个embedder作为textEmbedder和imageEmbedder
+	// 或者使用不同的embedder（例如，图片使用视觉模型，文本使用文本模型）
+	textEmbedder, err := NewOpenAIEmbedderWrapper(ctx, &openaiembedding.EmbeddingConfig{
 		APIKey:  apiKey,
 		BaseURL: baseURL,
 		Model:   "text-embedding-v4",
 	})
 	if err != nil {
-		log.Fatalf("创建 embedder 失败: %v", err)
+		log.Fatalf("创建 text embedder 失败: %v", err)
+	}
+
+	// 图片embedder可以使用相同的或不同的模型
+	imageEmbedder, err := NewOpenAIEmbedderWrapper(ctx, &openaiembedding.EmbeddingConfig{
+		APIKey:  apiKey,
+		BaseURL: baseURL,
+		Model:   "text-embedding-v4", // 可以使用不同的模型
+	})
+	if err != nil {
+		log.Fatalf("创建 image embedder 失败: %v", err)
 	}
 
 	// 3. 初始化 OCR（这里使用SimpleOCR作为示例，实际应该使用真实的OCR实现）
@@ -41,9 +93,10 @@ func ExampleImageRAG() {
 
 	// 4. 创建 ImageRAG 实例
 	rag := imagerag.New(imagerag.Options{
-		WorkingDir: "./imagerag_storage",
-		Embedder:   embedder,
-		OCR:        ocr,
+		WorkingDir:    "./imagerag_storage",
+		TextEmbedder:  textEmbedder,
+		ImageEmbedder: imageEmbedder,
+		OCR:           ocr,
 	})
 
 	// 5. 初始化存储

@@ -3,10 +3,10 @@ module github.com/mozhou-tech/sqlite-ai-driver/pkg/imagerag
 go 1.24.2
 
 require (
-	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251226123311-1d93d527c144
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag v0.0.0
+	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251229121631-716047332ba5
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0
 	github.com/sirupsen/logrus v1.9.3
-	golang.org/x/sync v0.18.0
+	golang.org/x/time v0.5.0
 )
 
 require (
@@ -42,19 +42,14 @@ require (
 	github.com/marcboeker/go-duckdb/arrowmapping v0.0.2 // indirect
 	github.com/marcboeker/go-duckdb/mapping v0.0.2 // indirect
 	github.com/marcboeker/go-duckdb/v2 v2.0.0 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/meguminnnnnnnnn/go-openai v0.1.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0 // indirect
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0 // indirect
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0 // indirect
-	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/wk8/go-ordered-map/v2 v2.1.8 // indirect
@@ -63,20 +58,14 @@ require (
 	golang.org/x/arch v0.15.0 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/mod v0.25.0 // indirect
+	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
-	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.34.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	modernc.org/libc v1.66.3 // indirect
-	modernc.org/mathutil v1.7.1 // indirect
-	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.38.2 // indirect
 )
 
 replace (
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ../cayley-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ../duckdb-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ../lightrag
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
 )

@@ -4,17 +4,18 @@ ImageRAG 是一个基于 DuckDB 的图片和文本 RAG（检索增强生成）�
 
 ## 功能特性
 
-1. **底层基于duckdb-driver** - 使用 DuckDB 作为存储后端，支持高效的向量搜索和全文搜索
+1. **底层基于duckdb-driver** - 直接使用 DuckDB 作为存储后端，支持高效的向量搜索
 2. **图片、文本embedding存储** - 支持图片和文本的向量化存储和检索
-3. **存储图片OCR文本结果** - 自动提取图片中的文本并存储，支持基于OCR文本的搜索
-4. **参考lightrag的实现** - 借鉴 LightRAG 的架构设计，提供类似的接口和功能
+3. **存储图片OCR文本结果** - 自动提取图片中的文本并存储，用于生成embedding
+4. **向量检索** - 仅使用向量相似度搜索，不依赖全文搜索
+5. **独立实现** - 不依赖 lightrag，直接使用 duckdb-driver 实现所有功能
 
 ## 主要组件
 
 - **ImageRAG**: 主结构，管理图片和文本的存储与检索
 - **OCR**: OCR接口，用于从图片中提取文本（需要实现具体的OCR库）
 - **Embedding**: 支持图片和文本的向量化
-- **Search**: 支持向量搜索和全文搜索
+- **VectorSearch**: 基于向量相似度的检索
 
 ## 使用示例
 
@@ -22,23 +23,25 @@ ImageRAG 是一个基于 DuckDB 的图片和文本 RAG（检索增强生成）�
 import (
     "context"
     openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
-    lightrag "github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag"
     "github.com/mozhou-tech/sqlite-ai-driver/pkg/imagerag"
 )
 
-// 创建 ImageRAG 实例
-embedder, _ := lightrag.NewOpenAIEmbedder(ctx, &openaiembedding.EmbeddingConfig{
-    APIKey:  apiKey,
-    BaseURL: baseURL,
-    Model:   "text-embedding-v4",
-})
+// 实现 Embedder 接口（可以使用任何embedding库）
+type MyEmbedder struct {
+    // ... 实现 Embedder 接口
+}
 
+// 创建 ImageRAG 实例
+// 可以分别设置文本和图片的embedder，或使用同一个embedder
+textEmbedder := &MyEmbedder{} // 用于文本embedding
+imageEmbedder := &MyEmbedder{} // 用于图片embedding（基于OCR文本）
 ocr := imagerag.NewSimpleOCR() // 注意：需要实现真实的OCR
 
 rag := imagerag.New(imagerag.Options{
-    WorkingDir: "./imagerag_storage",
-    Embedder:   embedder,
-    OCR:        ocr,
+    WorkingDir:    "./imagerag_storage",
+    TextEmbedder:  textEmbedder,
+    ImageEmbedder: imageEmbedder,
+    OCR:           ocr,
 })
 
 // 初始化存储
@@ -56,6 +59,8 @@ results, _ := rag.Search(ctx, "查询文本", 10)
 
 ## 注意事项
 
-- OCR功能需要实现具体的OCR库（如Tesseract、云OCR服务等）
-- 当前提供的 `SimpleOCR` 只是一个占位符实现，实际使用时需要替换为真实的OCR实现
-- 需要运行 `go mod tidy` 来初始化依赖
+- **OCR功能**：需要实现具体的OCR库（如Tesseract、云OCR服务等）。当前提供的 `SimpleOCR` 只是一个占位符实现
+- **Embedder接口**：需要实现 `Embedder` 接口，可以使用任何embedding库（如OpenAI、DashScope等）。支持分别设置 `TextEmbedder` 和 `ImageEmbedder`，可以针对文本和图片使用不同的embedding模型。**必须提供至少一个Embedder才能使用搜索功能**
+- **仅向量检索**：只支持向量相似度搜索，不支持全文搜索
+- **依赖管理**：需要运行 `go mod tidy` 来初始化依赖
+- **独立实现**：已完全移除对 lightrag 的依赖，直接使用 duckdb-driver 实现所有功能
