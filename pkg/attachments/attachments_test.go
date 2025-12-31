@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -76,25 +77,21 @@ func TestStore(t *testing.T) {
 	filename := "test.txt"
 	data := []byte("Hello, World!")
 
-	// 清理可能存在的旧文件，避免文件重命名导致测试失败
-	expectedDateDir := time.Now().Format("20060102")
-	expectedFileID := filepath.Join(expectedDateDir, filename)
-	expectedFilePath := filepath.Join(mgr.GetBaseDir(), expectedFileID)
-	// 直接删除文件系统中的文件（如果存在）
-	if err := os.Remove(expectedFilePath); err != nil && !os.IsNotExist(err) {
-		t.Fatalf("清理旧文件失败: %v", err)
-	}
-	// 同时尝试从数据库删除（如果存在）
-	_ = mgr.Delete(expectedFileID)
-
 	fileID, err := mgr.Store(filename, data)
 	if err != nil {
 		t.Fatalf("存储文件失败: %v", err)
 	}
 
-	// 检查文件ID格式（应该是日期目录/文件名）
-	if fileID != expectedFileID {
-		t.Errorf("文件ID不匹配: 期望 %s, 实际 %s", expectedFileID, fileID)
+	// 检查文件ID格式（应该是日期目录/随机字符串_文件名）
+	expectedDateDir := time.Now().Format("20060102")
+	if !strings.HasPrefix(fileID, expectedDateDir+"/") {
+		t.Errorf("文件ID格式不正确: 应该以日期目录 %s/ 开头, 实际 %s", expectedDateDir, fileID)
+	}
+
+	// 检查文件名是否包含随机前缀和原始文件名
+	actualFilename := filepath.Base(fileID)
+	if !strings.HasSuffix(actualFilename, filename) || !strings.Contains(actualFilename, "_") {
+		t.Errorf("文件名格式不正确: 应该以 %s 结尾且包含下划线, 实际 %s", filename, actualFilename)
 	}
 
 	// 检查文件是否存在
@@ -170,9 +167,9 @@ func TestGetInfo(t *testing.T) {
 		t.Fatalf("获取文件信息失败: %v", err)
 	}
 
-	// 验证信息
-	if info.Name != filename {
-		t.Errorf("文件名不匹配: 期望 %s, 实际 %s", filename, info.Name)
+	// 验证信息（文件名现在包含随机前缀，格式：随机字符串_原始文件名）
+	if !strings.HasSuffix(info.Name, filename) || !strings.Contains(info.Name, "_") {
+		t.Errorf("文件名格式不正确: 期望以 %s 结尾且包含下划线, 实际 %s", filename, info.Name)
 	}
 
 	if info.Size != int64(len(data)) {
@@ -376,9 +373,9 @@ func TestStoreWithMetadata(t *testing.T) {
 		t.Fatalf("获取文件信息失败: %v", err)
 	}
 
-	// 验证文件基本信息（元数据不再存储）
-	if info.Name != filename {
-		t.Errorf("文件名不匹配: 期望 %s, 实际 %s", filename, info.Name)
+	// 验证文件基本信息（文件名现在包含随机前缀，格式：随机字符串_原始文件名）
+	if !strings.HasSuffix(info.Name, filename) || !strings.Contains(info.Name, "_") {
+		t.Errorf("文件名格式不正确: 期望以 %s 结尾且包含下划线, 实际 %s", filename, info.Name)
 	}
 
 	if info.Size != int64(len(data)) {
@@ -469,8 +466,9 @@ func TestGetInfoFromDatabase(t *testing.T) {
 		t.Errorf("文件ID不匹配: 期望 %s, 实际 %s", fileID, info.ID)
 	}
 
-	if info.Name != filename {
-		t.Errorf("文件名不匹配: 期望 %s, 实际 %s", filename, info.Name)
+	// 验证文件名（文件名现在包含随机前缀，格式：随机字符串_原始文件名）
+	if !strings.HasSuffix(info.Name, filename) || !strings.Contains(info.Name, "_") {
+		t.Errorf("文件名格式不正确: 期望以 %s 结尾且包含下划线, 实际 %s", filename, info.Name)
 	}
 
 	// 验证创建时间和更新时间

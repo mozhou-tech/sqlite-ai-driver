@@ -3,6 +3,7 @@ package attachments
 import (
 	"context"
 	"crypto/md5"
+	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -36,6 +37,19 @@ type FileInfo struct {
 	Metadata     map[string]interface{} // 扩展元数据（JSON）
 	CreatedAt    time.Time              // 创建时间
 	UpdatedAt    time.Time              // 更新时间
+}
+
+// generateRandomString 生成指定长度的随机字符串（使用小写字母和数字）
+func generateRandomString(length int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	for i := range bytes {
+		bytes[i] = charset[bytes[i]%byte(len(charset))]
+	}
+	return string(bytes), nil
 }
 
 // New 创建附件管理器
@@ -161,18 +175,17 @@ func (m *Manager) StoreWithMetadata(filename string, data []byte, mimeType *stri
 		return "", fmt.Errorf("创建日期目录失败: %w", err)
 	}
 
+	// 生成6位随机字符串并添加到文件名前面
+	randomStr, err := generateRandomString(6)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to generate random string: %v", err)
+		return "", fmt.Errorf("生成随机字符串失败: %w", err)
+	}
+	filename = fmt.Sprintf("%s_%s", randomStr, filename)
+	log.Printf("[attachments] Filename with random prefix: %s", filename)
+
 	// 构建文件路径
 	filePath := filepath.Join(datePath, filename)
-
-	// 如果文件已存在，添加时间戳后缀避免覆盖
-	if _, err := os.Stat(filePath); err == nil {
-		timestamp := time.Now().Format("150405")
-		ext := filepath.Ext(filename)
-		nameWithoutExt := filename[:len(filename)-len(ext)]
-		filename = fmt.Sprintf("%s_%s%s", nameWithoutExt, timestamp, ext)
-		filePath = filepath.Join(datePath, filename)
-		log.Printf("[attachments] File exists, renamed to: %s", filename)
-	}
 
 	// 返回文件ID（相对路径）
 	fileID := filepath.Join(dateDir, filename)
@@ -270,18 +283,17 @@ func (m *Manager) StoreFromFileWithMetadata(filePath string, mimeType *string, m
 		return "", fmt.Errorf("创建日期目录失败: %w", err)
 	}
 
+	// 生成6位随机字符串并添加到文件名前面
+	randomStr, err := generateRandomString(6)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to generate random string: %v", err)
+		return "", fmt.Errorf("生成随机字符串失败: %w", err)
+	}
+	filename = fmt.Sprintf("%s_%s", randomStr, filename)
+	log.Printf("[attachments] Filename with random prefix: %s", filename)
+
 	// 构建目标文件路径
 	dstFilePath := filepath.Join(datePath, filename)
-
-	// 如果文件已存在，添加时间戳后缀避免覆盖
-	if _, err := os.Stat(dstFilePath); err == nil {
-		timestamp := time.Now().Format("150405")
-		ext := filepath.Ext(filename)
-		nameWithoutExt := filename[:len(filename)-len(ext)]
-		filename = fmt.Sprintf("%s_%s%s", nameWithoutExt, timestamp, ext)
-		dstFilePath = filepath.Join(datePath, filename)
-		log.Printf("[attachments] File exists, renamed to: %s", filename)
-	}
 
 	// 返回文件ID（相对路径）
 	fileID := filepath.Join(dateDir, filename)
