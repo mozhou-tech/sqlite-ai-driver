@@ -4,6 +4,7 @@ go 1.24.2
 
 require (
 	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251229121631-716047332ba5
+	github.com/google/uuid v1.6.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/time v0.5.0
@@ -32,7 +33,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/google/flatbuffers v25.1.24+incompatible // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/huichen/sego v0.0.0-20210824061530-c87651ea5c76 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect

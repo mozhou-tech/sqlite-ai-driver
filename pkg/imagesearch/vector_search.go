@@ -209,8 +209,8 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 				}
 				vectorStr += "]"
 
-				// 更新向量列（只更新对应的 embedding 字段，不改变 embedding_status）
-				updateVectorSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, v.tableName, v.vectorColumn)
+				// 更新向量列和状态为completed
+				updateVectorSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[], embedding_status = 'completed' WHERE id = ?`, v.tableName, v.vectorColumn)
 				_, _ = v.db.ExecContext(ctx, updateVectorSQL, vectorStr, id)
 			} else {
 				// 更新状态为failed

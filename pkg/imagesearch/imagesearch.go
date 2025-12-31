@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	"github.com/sirupsen/logrus"
 )
@@ -153,7 +154,7 @@ func (r *ImageSearch) InsertImage(ctx context.Context, imagePath string, metadat
 
 	// 构建文档
 	doc := map[string]any{
-		"id":         fmt.Sprintf("%d", time.Now().UnixNano()),
+		"id":         uuid.New().String(),
 		"image_path": imagePath,
 		"ocr_text":   ocrText,
 		"width":      imageInfo.Width,
@@ -171,7 +172,7 @@ func (r *ImageSearch) InsertImage(ctx context.Context, imagePath string, metadat
 	}
 
 	// 将metadata字段序列化为JSON
-	var metadataJSON string
+	var metadataJSON string = "{}" // 默认为空JSON对象
 	if metadata != nil {
 		metadataBytes, err := json.Marshal(metadata)
 		if err == nil {
@@ -221,7 +222,7 @@ func (r *ImageSearch) InsertText(ctx context.Context, text string, metadata map[
 	}
 
 	doc := map[string]any{
-		"id":         fmt.Sprintf("%d", time.Now().UnixNano()),
+		"id":         uuid.New().String(),
 		"content":    text,
 		"created_at": time.Now().Unix(),
 	}
@@ -234,7 +235,7 @@ func (r *ImageSearch) InsertText(ctx context.Context, text string, metadata map[
 	}
 
 	// 将metadata字段序列化为JSON
-	var metadataJSON string
+	var metadataJSON string = "{}" // 默认为空JSON对象
 	if metadata != nil {
 		metadataBytes, err := json.Marshal(metadata)
 		if err == nil {
