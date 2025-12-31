@@ -878,6 +878,7 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 	}
 
 	// 使用DuckDB的list_cosine_similarity进行向量搜索
+	// 只查询 embedding_status = 'completed' 的文档，确保只返回已成功生成 embedding 的文档
 	sqlQuery := fmt.Sprintf(`
 		SELECT 
 			id,
@@ -885,19 +886,31 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 			metadata,
 			1 - list_cosine_similarity(%s, ?::FLOAT[]) as distance
 		FROM %s
-		WHERE %s IS NOT NULL
+		WHERE %s IS NOT NULL AND embedding_status = 'completed'
 		ORDER BY list_cosine_similarity(%s, ?::FLOAT[]) DESC
 		LIMIT ?
 	`, vectorColumn, v.tableName, vectorColumn, vectorColumn)
 
+	logrus.WithFields(logrus.Fields{
+		"table_name":    v.tableName,
+		"vector_column": vectorColumn,
+		"limit":         limit * 2,
+	}).Debug("Executing vector search query")
+
 	rows, err := v.db.QueryContext(ctx, sqlQuery, vectorArg, vectorArg, limit*2) // 获取更多结果以便过滤
 	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"table_name":    v.tableName,
+			"vector_column": vectorColumn,
+		}).Error("Vector search query failed")
 		return nil, fmt.Errorf("failed to search vectors: %w", err)
 	}
 	defer rows.Close()
 
 	var results []VectorSearchResult
+	resultCount := 0
 	for rows.Next() {
+		resultCount++
 		var id, content string
 		var metadataVal any
 		var distance float64
@@ -966,6 +979,14 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 			break
 		}
 	}
+
+	logrus.WithFields(logrus.Fields{
+		"table_name":       v.tableName,
+		"vector_column":    vectorColumn,
+		"total_rows":       resultCount,
+		"filtered_results": len(results),
+		"limit":            limit,
+	}).Info("Vector search completed")
 
 	return results, nil
 }
