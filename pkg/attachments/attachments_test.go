@@ -3,28 +3,39 @@ package attachments
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
 
-func TestNew(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
+// getTestDataDir 获取测试数据目录路径
+func getTestDataDir(t *testing.T) string {
+	// 获取当前测试文件的目录
+	_, filename, _, _ := runtime.Caller(1)
+	testDir := filepath.Dir(filename)
+	testDataDir := filepath.Join(testDir, "testdata")
+
+	// 确保 testdata 目录存在
+	if err := os.MkdirAll(testDataDir, 0755); err != nil {
+		t.Fatalf("创建 testdata 目录失败: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+
+	return testDataDir
+}
+
+func TestNew(t *testing.T) {
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
 	defer mgr.Close()
-	defer mgr.Close()
 
 	// 检查attachments目录是否创建
-	attachmentsDir := filepath.Join(tmpDir, "attachments")
+	attachmentsDir := filepath.Join(testDataDir, "attachments")
 	if _, err := os.Stat(attachmentsDir); os.IsNotExist(err) {
 		t.Errorf("attachments目录未创建")
 	}
@@ -35,22 +46,18 @@ func TestNew(t *testing.T) {
 	}
 
 	// 检查数据库是否创建
-	dbPath := filepath.Join(tmpDir, "attachments.db")
+	dbPath := filepath.Join(testDataDir, "attachments.db")
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
 		t.Errorf("数据库文件未创建")
 	}
 }
 
 func TestStore(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -89,15 +96,11 @@ func TestStore(t *testing.T) {
 }
 
 func TestStoreFromReader(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -125,15 +128,11 @@ func TestStoreFromReader(t *testing.T) {
 }
 
 func TestDelete(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -160,15 +159,11 @@ func TestDelete(t *testing.T) {
 }
 
 func TestGetInfo(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -208,15 +203,11 @@ func TestGetInfo(t *testing.T) {
 }
 
 func TestGetAbsolutePath(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -248,15 +239,11 @@ func TestGetAbsolutePath(t *testing.T) {
 }
 
 func TestRead(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -283,15 +270,11 @@ func TestRead(t *testing.T) {
 }
 
 func TestList(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -334,15 +317,11 @@ func TestList(t *testing.T) {
 }
 
 func TestListByDate(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -380,15 +359,11 @@ func TestListByDate(t *testing.T) {
 }
 
 func TestStoreWithMetadata(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -429,15 +404,11 @@ func TestStoreWithMetadata(t *testing.T) {
 }
 
 func TestListAll(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}
@@ -480,15 +451,11 @@ func TestListAll(t *testing.T) {
 }
 
 func TestGetInfoFromDatabase(t *testing.T) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "attachments_test")
-	if err != nil {
-		t.Fatalf("创建临时目录失败: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	// 使用 testdata 目录
+	testDataDir := getTestDataDir(t)
 
 	// 创建管理器
-	mgr, err := New(tmpDir)
+	mgr, err := New(testDataDir)
 	if err != nil {
 		t.Fatalf("创建管理器失败: %v", err)
 	}

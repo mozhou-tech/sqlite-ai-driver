@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -105,6 +107,8 @@ func init() {
 type sqliteDriverWrapper struct{}
 
 func (w *sqliteDriverWrapper) Open(name string) (driver.Conn, error) {
+	log.Printf("[sqlite3-driver] Open called with name: %s", name)
+
 	// 解析连接字符串，提取 workingDir 参数和其他参数
 	var workingDir string
 	var dbPath string
@@ -119,6 +123,7 @@ func (w *sqliteDriverWrapper) Open(name string) (driver.Conn, error) {
 		queryParams, _ = url.ParseQuery(queryStr)
 		if wd := queryParams.Get("workingDir"); wd != "" {
 			workingDir = wd
+			log.Printf("[sqlite3-driver] Found workingDir parameter: %s", workingDir)
 			// 从查询参数中移除 workingDir，因为它不是 SQLite 的参数
 			queryParams.Del("workingDir")
 		}
@@ -127,16 +132,22 @@ func (w *sqliteDriverWrapper) Open(name string) (driver.Conn, error) {
 		queryParams = make(url.Values)
 	}
 
+	log.Printf("[sqlite3-driver] Parsed dbPath: %s, workingDir: %s", dbPath, workingDir)
+
 	// 自动构建路径并创建目录
 	finalPath, err := ensureDataPath(workingDir, dbPath)
 	if err != nil {
+		log.Printf("[sqlite3-driver] ERROR: failed to ensure data path: %v", err)
 		return nil, fmt.Errorf("failed to ensure data path: %w", err)
 	}
+
+	log.Printf("[sqlite3-driver] Final database path: %s", finalPath)
 
 	// 构建 DSN，保留原有的查询参数（如 _pragma）
 	// 如果没有 _pragma 参数，默认添加 journal_mode(WAL)
 	if queryParams.Get("_pragma") == "" {
 		queryParams.Set("_pragma", "journal_mode(WAL)")
+		log.Printf("[sqlite3-driver] Added default _pragma: journal_mode(WAL)")
 	}
 
 	dsn := finalPath
@@ -144,25 +155,53 @@ func (w *sqliteDriverWrapper) Open(name string) (driver.Conn, error) {
 		dsn += "?" + queryParams.Encode()
 	}
 
+	log.Printf("[sqlite3-driver] Opening database with DSN: %s", dsn)
+
 	// 使用已注册的 "sqlite" 驱动打开连接
-	// 由于我们不能直接访问已注册的驱动，我们使用 sql.Open 然后获取底层连接
-	// 这是一个 workaround，但可以工作
-	db, err := sql.Open("sqlite", dsn)
+	// 注意：由于 Go 的 database/sql 包设计，我们无法直接访问已注册的驱动实例
+	// 因此我们使用 sql.Open 创建临时 DB，然后立即获取连接
+	// 这样可以避免连接池管理问题
+	startTime := time.Now()
+	tempDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
+		log.Printf("[sqlite3-driver] ERROR: failed to open database: %v (took %v)", err, time.Since(startTime))
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+	log.Printf("[sqlite3-driver] Database opened successfully (took %v)", time.Since(startTime))
 
-	// 获取底层连接
-	// 注意：sql.DB 内部维护连接池，我们需要获取一个连接
-	// 使用 Conn() 方法获取一个连接
-	conn, err := db.Conn(context.Background())
+	// 设置连接池参数以避免死锁
+	tempDB.SetMaxIdleConns(1)
+	tempDB.SetMaxOpenConns(1)
+	tempDB.SetConnMaxLifetime(0)
+	log.Printf("[sqlite3-driver] Connection pool configured: MaxIdle=1, MaxOpen=1, MaxLifetime=0")
+
+	// 先 Ping 测试连接，确保数据库可以正常访问
+	pingStart := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err = tempDB.PingContext(ctx)
+	cancel()
 	if err != nil {
-		db.Close()
+		log.Printf("[sqlite3-driver] ERROR: failed to ping database: %v (took %v)", err, time.Since(pingStart))
+		tempDB.Close()
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+	log.Printf("[sqlite3-driver] Database ping successful (took %v)", time.Since(pingStart))
+
+	// 获取底层连接，使用超时上下文避免死锁
+	connStart := time.Now()
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	conn, err := tempDB.Conn(ctx)
+	cancel()
+	if err != nil {
+		log.Printf("[sqlite3-driver] ERROR: failed to get connection: %v (took %v)", err, time.Since(connStart))
+		tempDB.Close()
 		return nil, fmt.Errorf("failed to get connection: %w", err)
 	}
+	log.Printf("[sqlite3-driver] Connection acquired successfully (took %v)", time.Since(connStart))
 
 	// 返回包装的连接，在关闭时同时关闭 db 和 conn
-	return &sqliteConnWrapper{db: db, conn: conn}, nil
+	log.Printf("[sqlite3-driver] Open completed successfully, total time: %v", time.Since(startTime))
+	return &sqliteConnWrapper{db: tempDB, conn: conn}, nil
 }
 
 // sqliteConnWrapper 包装 sql.DB 和 sql.Conn 以实现 driver.Conn 接口
@@ -180,12 +219,19 @@ func (c *sqliteConnWrapper) Prepare(query string) (driver.Stmt, error) {
 }
 
 func (c *sqliteConnWrapper) Close() error {
+	log.Printf("[sqlite3-driver] Closing connection")
 	err1 := c.conn.Close()
 	err2 := c.db.Close()
 	if err1 != nil {
+		log.Printf("[sqlite3-driver] ERROR: failed to close connection: %v", err1)
 		return err1
 	}
-	return err2
+	if err2 != nil {
+		log.Printf("[sqlite3-driver] ERROR: failed to close database: %v", err2)
+		return err2
+	}
+	log.Printf("[sqlite3-driver] Connection closed successfully")
+	return nil
 }
 
 func (c *sqliteConnWrapper) Begin() (driver.Tx, error) {

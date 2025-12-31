@@ -19,4 +19,3 @@ require (
 )
 
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ../../pkg/sqlite3-driver
-
