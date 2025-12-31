@@ -1417,3 +1417,28 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 		logrus.WithError(err).Error("Error processing pending embeddings")
 	}
 }
+
+// countPendingEmbeddings 统计 pending 或 processing 状态的嵌入数量
+func (c *duckdbCollection) countPendingEmbeddings(ctx context.Context) (int, error) {
+	if len(c.vectorSearches) == 0 {
+		return 0, nil
+	}
+
+	selectSQL := fmt.Sprintf(`
+		SELECT COUNT(*) 
+		FROM %s
+		WHERE embedding_status IN ('pending', 'processing')
+	`, c.tableName)
+
+	var count int
+	err := c.db.QueryRowContext(ctx, selectSQL).Scan(&count)
+	if err != nil {
+		// 如果数据库已关闭，这是预期的行为
+		if err.Error() == "sql: database is closed" {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to count pending embeddings: %w", err)
+	}
+
+	return count, nil
+}

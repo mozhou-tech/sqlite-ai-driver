@@ -192,7 +192,9 @@ func TestLightRAG_NoEmbedder(t *testing.T) {
 
 func TestLightRAG_Retrieve_NoGraph(t *testing.T) {
 	ctx := context.Background()
-	rag := &LightRAG{initialized: true} // Fake initialization without graph
+	rag := &LightRAG{initialized: true,
+		workingDir: "./testdata",
+	} // Fake initialization without graph
 	_, err := rag.Retrieve(ctx, "query", QueryParam{Mode: ModeLocal})
 	if err == nil || !strings.Contains(err.Error(), "graph search not available") {
 		t.Errorf("expected error for missing graph, got: %v", err)
@@ -499,7 +501,7 @@ func TestLightRAG_InsertBatch(t *testing.T) {
 
 func TestLightRAG_GraphSearchAndSubgraph(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test/data/test_rag_graph_extra"
+	workingDir := "./testdata/test_rag_graph_extra"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{

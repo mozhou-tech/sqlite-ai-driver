@@ -1,0 +1,380 @@
+package attachments
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestNew(t *testing.T) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "attachments_test")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 创建管理器
+	mgr, err := New(tmpDir)
+	if err != nil {
+		t.Fatalf("创建管理器失败: %v", err)
+	}
+
+	// 检查attachments目录是否创建
+	attachmentsDir := filepath.Join(tmpDir, "attachments")
+	if _, err := os.Stat(attachmentsDir); os.IsNotExist(err) {
+		t.Errorf("attachments目录未创建")
+	}
+
+	// 检查baseDir
+	if mgr.GetBaseDir() != attachmentsDir {
+		t.Errorf("baseDir不匹配: 期望 %s, 实际 %s", attachmentsDir, mgr.GetBaseDir())
+	}
+}
+
+func TestStore(t *testing.T) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "attachments_test")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 创建管理器
+	mgr, err := New(tmpDir)
+	if err != nil {
+		t.Fatalf("创建管理器失败: %v", err)
+	}
+
+	// 存储文件
+	filename := "test.txt"
+	data := []byte("Hello, World!")
+	fileID, err := mgr.Store(filename, data)
+	if err != nil {
+		t.Fatalf("存储文件失败: %v", err)
+	}
+
+	// 检查文件ID格式（应该是日期目录/文件名）
+	expectedDateDir := time.Now().Format("2006-01-02")
+	expectedFileID := filepath.Join(expectedDateDir, filename)
+	if fileID != expectedFileID {
+		t.Errorf("文件ID不匹配: 期望 %s, 实际 %s", expectedFileID, fileID)
+	}
+
+	// 检查文件是否存在
+	absPath, err := mgr.GetAbsolutePath(fileID)
+	if err != nil {
+		t.Fatalf("获取绝对路径失败: %v", err)
+	}
+
+	// 读取文件内容
+	readData, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("读取文件失败: %v", err)
+	}
+
+	if string(readData) != string(data) {
+		t.Errorf("文件内容不匹配: 期望 %s, 实际 %s", string(data), string(readData))
+	}
+}
+
+func TestStoreFromReader(t *testing.T) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "attachments_test")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 创建管理器
+	mgr, err := New(tmpDir)
+	if err != nil {
+		t.Fatalf("创建管理器失败: %v", err)
+	}
+
+	// 从Reader存储文件
+	filename := "test_reader.txt"
+	data := []byte("Hello from Reader!")
+	reader := &testReader{data: data}
+
+	fileID, err := mgr.StoreFromReader(filename, reader)
+	if err != nil {
+		t.Fatalf("从Reader存储文件失败: %v", err)
+	}
+
+	// 读取文件内容验证
+	readData, err := mgr.Read(fileID)
+	if err != nil {
+		t.Fatalf("读取文件失败: %v", err)
+	}
+
+	if string(readData) != string(data) {
+		t.Errorf("文件内容不匹配: 期望 %s, 实际 %s", string(data), string(readData))
+	}
+}
+
+func TestDelete(t *testing.T) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "attachments_test")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 创建管理器
+	mgr, err := New(tmpDir)
+	if err != nil {
+		t.Fatalf("创建管理器失败: %v", err)
+	}
+
+	// 存储文件
+	filename := "test_delete.txt"
+	data := []byte("Test delete")
+	fileID, err := mgr.Store(filename, data)
+	if err != nil {
+		t.Fatalf("存储文件失败: %v", err)
+	}
+
+	// 删除文件
+	if err := mgr.Delete(fileID); err != nil {
+		t.Fatalf("删除文件失败: %v", err)
+	}
+
+	// 验证文件已删除
+	_, err = mgr.GetAbsolutePath(fileID)
+	if err == nil {
+		t.Errorf("文件应该已被删除")
+	}
+}
+
+func TestGetInfo(t *testing.T) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "attachments_test")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 创建管理器
+	mgr, err := New(tmpDir)
+	if err != nil {
+		t.Fatalf("创建管理器失败: %v", err)
+	}
+
+	// 存储文件
+	filename := "test_info.txt"
+	data := []byte("Test info")
+	fileID, err := mgr.Store(filename, data)
+	if err != nil {
+		t.Fatalf("存储文件失败: %v", err)
+	}
+
+	// 获取文件信息
+	info, err := mgr.GetInfo(fileID)
+	if err != nil {
+		t.Fatalf("获取文件信息失败: %v", err)
+	}
+
+	// 验证信息
+	if info.Name != filename {
+		t.Errorf("文件名不匹配: 期望 %s, 实际 %s", filename, info.Name)
+	}
+
+	if info.Size != int64(len(data)) {
+		t.Errorf("文件大小不匹配: 期望 %d, 实际 %d", len(data), info.Size)
+	}
+
+	if info.RelativePath != fileID {
+		t.Errorf("相对路径不匹配: 期望 %s, 实际 %s", fileID, info.RelativePath)
+	}
+
+	expectedDateDir := time.Now().Format("2006-01-02")
+	if info.DateDir != expectedDateDir {
+		t.Errorf("日期目录不匹配: 期望 %s, 实际 %s", expectedDateDir, info.DateDir)
+	}
+}
+
+func TestGetAbsolutePath(t *testing.T) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "attachments_test")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 创建管理器
+	mgr, err := New(tmpDir)
+	if err != nil {
+		t.Fatalf("创建管理器失败: %v", err)
+	}
+
+	// 存储文件
+	filename := "test_path.txt"
+	data := []byte("Test path")
+	fileID, err := mgr.Store(filename, data)
+	if err != nil {
+		t.Fatalf("存储文件失败: %v", err)
+	}
+
+	// 获取绝对路径
+	absPath, err := mgr.GetAbsolutePath(fileID)
+	if err != nil {
+		t.Fatalf("获取绝对路径失败: %v", err)
+	}
+
+	// 验证路径是绝对的
+	if !filepath.IsAbs(absPath) {
+		t.Errorf("路径不是绝对路径: %s", absPath)
+	}
+
+	// 验证文件存在
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		t.Errorf("文件不存在: %s", absPath)
+	}
+}
+
+func TestRead(t *testing.T) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "attachments_test")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 创建管理器
+	mgr, err := New(tmpDir)
+	if err != nil {
+		t.Fatalf("创建管理器失败: %v", err)
+	}
+
+	// 存储文件
+	filename := "test_read.txt"
+	data := []byte("Test read content")
+	fileID, err := mgr.Store(filename, data)
+	if err != nil {
+		t.Fatalf("存储文件失败: %v", err)
+	}
+
+	// 读取文件
+	readData, err := mgr.Read(fileID)
+	if err != nil {
+		t.Fatalf("读取文件失败: %v", err)
+	}
+
+	// 验证内容
+	if string(readData) != string(data) {
+		t.Errorf("文件内容不匹配: 期望 %s, 实际 %s", string(data), string(readData))
+	}
+}
+
+func TestList(t *testing.T) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "attachments_test")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 创建管理器
+	mgr, err := New(tmpDir)
+	if err != nil {
+		t.Fatalf("创建管理器失败: %v", err)
+	}
+
+	// 存储多个文件
+	files := []string{"file1.txt", "file2.txt", "file3.txt"}
+	var fileIDs []string
+	for _, filename := range files {
+		data := []byte("Content: " + filename)
+		fileID, err := mgr.Store(filename, data)
+		if err != nil {
+			t.Fatalf("存储文件失败: %v", err)
+		}
+		fileIDs = append(fileIDs, fileID)
+	}
+
+	// 列出所有文件
+	allFiles, err := mgr.List("")
+	if err != nil {
+		t.Fatalf("列出文件失败: %v", err)
+	}
+
+	// 验证文件数量
+	if len(allFiles) < len(files) {
+		t.Errorf("文件数量不匹配: 期望至少 %d, 实际 %d", len(files), len(allFiles))
+	}
+
+	// 验证文件ID都在列表中
+	fileMap := make(map[string]bool)
+	for _, f := range allFiles {
+		fileMap[f] = true
+	}
+
+	for _, fileID := range fileIDs {
+		if !fileMap[fileID] {
+			t.Errorf("文件ID不在列表中: %s", fileID)
+		}
+	}
+}
+
+func TestListByDate(t *testing.T) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "attachments_test")
+	if err != nil {
+		t.Fatalf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 创建管理器
+	mgr, err := New(tmpDir)
+	if err != nil {
+		t.Fatalf("创建管理器失败: %v", err)
+	}
+
+	// 存储文件
+	filename := "test_date.txt"
+	data := []byte("Test date")
+	fileID, err := mgr.Store(filename, data)
+	if err != nil {
+		t.Fatalf("存储文件失败: %v", err)
+	}
+
+	// 获取日期目录
+	dateDir := time.Now().Format("2006-01-02")
+
+	// 列出指定日期的文件
+	files, err := mgr.List(dateDir)
+	if err != nil {
+		t.Fatalf("列出文件失败: %v", err)
+	}
+
+	// 验证文件在列表中
+	found := false
+	for _, f := range files {
+		if f == fileID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Errorf("文件不在指定日期的列表中: %s", fileID)
+	}
+}
+
+// testReader 用于测试的Reader实现
+type testReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *testReader) Read(p []byte) (n int, err error) {
+	if r.pos >= len(r.data) {
+		return 0, nil
+	}
+
+	n = copy(p, r.data[r.pos:])
+	r.pos += n
+	return n, nil
+}

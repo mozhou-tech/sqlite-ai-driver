@@ -1254,7 +1254,7 @@ func (r *LightRAG) Wait() {
 }
 
 // WaitForEmbeddings 等待所有向量嵌入完成（最多等待 maxWait 时间）
-// embedding worker 每 2 秒检查一次，每次最多处理 10 个文档，速率限制是每秒 5 次
+// embedding worker 每 2 秒检查一次，每次最多处理 100 个文档，速率限制是每秒 5 次
 func (r *LightRAG) WaitForEmbeddings(ctx context.Context, maxWait time.Duration) error {
 	if r == nil || !r.initialized || r.docs == nil {
 		return nil
@@ -1263,13 +1263,38 @@ func (r *LightRAG) WaitForEmbeddings(ctx context.Context, maxWait time.Duration)
 		return nil // 没有向量搜索，不需要等待
 	}
 
-	// 简单实现：等待足够的时间让 embedding worker 处理完所有文档
-	// 对于少量文档（<10），通常需要 2-4 秒
-	// 我们使用轮询方式，每 500ms 检查一次，最多等待 maxWait 时间
+	// 使用类型断言访问底层的 duckdbCollection
+	type pendingCounter interface {
+		countPendingEmbeddings(ctx context.Context) (int, error)
+	}
+
+	collection, ok := r.docs.(pendingCounter)
+	if !ok {
+		// 如果不是 duckdbCollection，使用简单的超时等待
+		logrus.Warn("Cannot check embedding status, using timeout-based wait")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(maxWait):
+			return nil
+		}
+	}
+
 	deadline := time.Now().Add(maxWait)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
+	// 首先等待至少 2 秒，让 worker 有机会运行一次
+	initialWait := time.NewTimer(2 * time.Second)
+	select {
+	case <-ctx.Done():
+		initialWait.Stop()
+		return ctx.Err()
+	case <-initialWait.C:
+		// 继续
+	}
+
+	// 然后轮询检查，直到没有 pending 文档或超时
 	for {
 		select {
 		case <-ctx.Done():
@@ -1277,9 +1302,26 @@ func (r *LightRAG) WaitForEmbeddings(ctx context.Context, maxWait time.Duration)
 		case <-ticker.C:
 			// 检查是否超时
 			if time.Now().After(deadline) {
+				pendingCount, _ := collection.countPendingEmbeddings(ctx)
+				if pendingCount > 0 {
+					logrus.WithField("pending_count", pendingCount).Warn("WaitForEmbeddings timed out, some embeddings are still pending")
+				}
 				return nil // 超时了，返回 nil（不是错误）
 			}
-			// 继续等待
+
+			// 检查是否还有 pending 的嵌入
+			pendingCount, err := collection.countPendingEmbeddings(ctx)
+			if err != nil {
+				logrus.WithError(err).Debug("Failed to check pending embeddings, continuing to wait")
+				continue
+			}
+
+			if pendingCount == 0 {
+				logrus.Debug("All embeddings completed")
+				return nil
+			}
+
+			logrus.WithField("pending_count", pendingCount).Debug("Still waiting for embeddings to complete")
 		}
 	}
 }

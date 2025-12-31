@@ -35,7 +35,7 @@ func setupRAG(t *testing.T, workingDir string) (*LightRAG, func()) {
 }
 
 func TestEvaluateModes(t *testing.T) {
-	workingDir := "./test_modes_eval"
+	workingDir := "./testdata/test_modes_eval"
 	rag, cleanup := setupRAG(t, workingDir)
 	defer cleanup()
 
@@ -139,7 +139,7 @@ func TestEvaluateModes(t *testing.T) {
 }
 
 func TestEvaluateAdvancedModes(t *testing.T) {
-	workingDir := "./test_modes_eval_advanced"
+	workingDir := "./testdata/test_modes_eval_advanced"
 	rag, cleanup := setupRAG(t, workingDir)
 	defer cleanup()
 
@@ -232,7 +232,7 @@ func TestEvaluateAdvancedModes(t *testing.T) {
 }
 
 func TestHybridSearchRRF(t *testing.T) {
-	workingDir := "./test_modes_eval_rrf"
+	workingDir := "./testdata/test_modes_eval_rrf"
 	rag, cleanup := setupRAG(t, workingDir)
 	defer cleanup()
 
