@@ -189,7 +189,7 @@ func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error)
 	// 打开DuckDB数据库
 	// 路径会被 duckdb-driver 统一映射到共享数据库，目录会自动创建
 	// 如果数据库文件已存在，会打开现有数据库；如果不存在，会自动创建
-	db, err := sql.Open("duckdb", duckdb_driver.DB_FILE)
+	db, err := sql.Open("duckdb", duckdb_driver.INDEX_DB_FILE)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}

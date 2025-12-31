@@ -60,7 +60,7 @@ func TestSimpleLLM(t *testing.T) {
 
 func TestLightRAG_Flow(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_storage"
+	workingDir := "./testdata/test_rag_storage"
 	defer os.RemoveAll(workingDir)
 
 	embedder := NewSimpleEmbedder(768)
@@ -150,7 +150,7 @@ func TestLightRAG_Flow(t *testing.T) {
 
 func TestLightRAG_NoEmbedder(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_no_embed"
+	workingDir := "./testdata/test_rag_no_embed"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{
@@ -201,7 +201,7 @@ func TestLightRAG_Retrieve_NoGraph(t *testing.T) {
 
 func TestLightRAG_GraphMode(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_graph"
+	workingDir := "./testdata/test_rag_graph"
 	defer os.RemoveAll(workingDir)
 
 	embedder := NewSimpleEmbedder(768)
@@ -244,7 +244,7 @@ func TestLightRAG_GraphMode(t *testing.T) {
 
 func TestLightRAG_Persistence(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_persistence"
+	workingDir := "./testdata/test_rag_persistence"
 	defer os.RemoveAll(workingDir)
 
 	embedder := NewSimpleEmbedder(768)
@@ -291,7 +291,7 @@ func TestLightRAG_Persistence(t *testing.T) {
 
 func TestLightRAG_Initialize_Twice(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_init_twice"
+	workingDir := "./testdata/test_rag_init_twice"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{WorkingDir: workingDir})
@@ -308,7 +308,7 @@ func TestLightRAG_Initialize_Twice(t *testing.T) {
 
 func TestLightRAG_NoLLM(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_no_llm"
+	workingDir := "./testdata/test_rag_no_llm"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{WorkingDir: workingDir})
@@ -335,7 +335,7 @@ func TestLightRAG_NoLLM(t *testing.T) {
 
 func TestLightRAG_Query_Limit(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_limit"
+	workingDir := "./testdata/test_rag_limit"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{WorkingDir: workingDir})
@@ -365,7 +365,7 @@ func TestLightRAG_Query_Limit(t *testing.T) {
 
 func TestLightRAG_MetadataFiltering(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_filter"
+	workingDir := "./testdata/test_rag_filter"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{WorkingDir: workingDir})
@@ -429,7 +429,7 @@ func TestLightRAG_MetadataFiltering(t *testing.T) {
 
 func TestLightRAG_DefaultWorkingDir(t *testing.T) {
 	ctx := context.Background()
-	defaultDir := "./rag_storage"
+	defaultDir := "./testdata/rag_storage"
 	defer os.RemoveAll(defaultDir)
 
 	rag := New(Options{}) // No WorkingDir
@@ -456,7 +456,7 @@ func (l *FlexibleLLM) Complete(ctx context.Context, prompt string) (string, erro
 
 func TestLightRAG_InsertBatch(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_batch"
+	workingDir := "./testdata/test_rag_batch"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{
@@ -499,7 +499,7 @@ func TestLightRAG_InsertBatch(t *testing.T) {
 
 func TestLightRAG_GraphSearchAndSubgraph(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_graph_extra"
+	workingDir := "./test/data/test_rag_graph_extra"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{
@@ -556,7 +556,7 @@ func TestLightRAG_GraphSearchAndSubgraph(t *testing.T) {
 
 func TestLightRAG_Retrieve_Modes_Extra(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_modes_extra"
+	workingDir := "./testdata/test_rag_modes_extra"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{
@@ -609,7 +609,7 @@ func TestLightRAG_Retrieve_Modes_Extra(t *testing.T) {
 
 func TestLightRAG_Extract_JSON_Errors(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_json_errors"
+	workingDir := "./testdata/test_rag_json_errors"
 	defer os.RemoveAll(workingDir)
 
 	// Mock LLM that returns invalid JSON
@@ -658,7 +658,7 @@ func TestLightRAG_Extract_JSON_Errors(t *testing.T) {
 
 func TestLightRAG_ExtractAndStore_LinkError(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_link_err"
+	workingDir := "./testdata/test_rag_link_err"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{
@@ -707,7 +707,7 @@ func TestLightRAG_Initialize_Error(t *testing.T) {
 
 func TestLightRAG_Insert_Error(t *testing.T) {
 	ctx := context.Background()
-	workingDir := "./test_rag_insert_err"
+	workingDir := "./testdata/test_rag_insert_err"
 	defer os.RemoveAll(workingDir)
 
 	rag := New(Options{WorkingDir: workingDir})
