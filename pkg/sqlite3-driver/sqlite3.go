@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,8 +13,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// ensureDataPath 确保数据路径存在，如果是相对路径则自动构建到 db 子目录
-func ensureDataPath(path string) (string, error) {
+// ensureDataPath 确保数据路径存在
+// workingDir: 工作目录，如果提供则相对路径会构建到 {workingDir}/data.db
+// path: 数据库文件路径
+func ensureDataPath(workingDir, path string) (string, error) {
 	// 如果路径包含路径分隔符（绝对路径或相对路径），直接使用
 	if strings.Contains(path, string(filepath.Separator)) || strings.Contains(path, "/") || strings.Contains(path, "\\") {
 		// 转换为绝对路径（如果是相对路径）
@@ -32,7 +35,26 @@ func ensureDataPath(path string) (string, error) {
 		return absPath, nil
 	}
 
-	// 如果是相对路径（不包含路径分隔符），自动构建到 db 子目录
+	// 如果是相对路径（不包含路径分隔符）
+	if workingDir != "" {
+		// 如果提供了 workingDir，构建到 {workingDir}/data.db
+		// 将 workingDir 转换为绝对路径
+		absWorkingDir, err := filepath.Abs(workingDir)
+		if err != nil {
+			return "", fmt.Errorf("failed to get absolute path for workingDir: %w", err)
+		}
+		fullPath := filepath.Join(absWorkingDir, "data.db")
+
+		// 确保目录存在
+		dir := filepath.Dir(fullPath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", fmt.Errorf("failed to create directory: %w", err)
+		}
+
+		return fullPath, nil
+	}
+
+	// 如果没有提供 workingDir，保持原有行为：构建到 ./data/db/ 子目录
 	dataDir := "./data"
 	// 转换为绝对路径
 	absDataDir, err := filepath.Abs(dataDir)
@@ -83,16 +105,44 @@ func init() {
 type sqliteDriverWrapper struct{}
 
 func (w *sqliteDriverWrapper) Open(name string) (driver.Conn, error) {
+	// 解析连接字符串，提取 workingDir 参数和其他参数
+	var workingDir string
+	var dbPath string
+	var queryParams url.Values
+
+	// 检查是否包含查询参数
+	if idx := strings.Index(name, "?"); idx != -1 {
+		dbPath = name[:idx]
+		queryStr := name[idx+1:]
+
+		// 解析查询参数
+		queryParams, _ = url.ParseQuery(queryStr)
+		if wd := queryParams.Get("workingDir"); wd != "" {
+			workingDir = wd
+			// 从查询参数中移除 workingDir，因为它不是 SQLite 的参数
+			queryParams.Del("workingDir")
+		}
+	} else {
+		dbPath = name
+		queryParams = make(url.Values)
+	}
+
 	// 自动构建路径并创建目录
-	finalPath, err := ensureDataPath(name)
+	finalPath, err := ensureDataPath(workingDir, dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to ensure data path: %w", err)
 	}
 
-	// 使用 modernc.org/sqlite 驱动打开数据库
-	// 通过连接字符串参数设置 PRAGMA
-	// modernc.org/sqlite 支持通过 _pragma 参数设置 PRAGMA
-	dsn := finalPath + "?_pragma=journal_mode(WAL)"
+	// 构建 DSN，保留原有的查询参数（如 _pragma）
+	// 如果没有 _pragma 参数，默认添加 journal_mode(WAL)
+	if queryParams.Get("_pragma") == "" {
+		queryParams.Set("_pragma", "journal_mode(WAL)")
+	}
+
+	dsn := finalPath
+	if len(queryParams) > 0 {
+		dsn += "?" + queryParams.Encode()
+	}
 
 	// 使用已注册的 "sqlite" 驱动打开连接
 	// 由于我们不能直接访问已注册的驱动，我们使用 sql.Open 然后获取底层连接
