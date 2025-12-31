@@ -1,4 +1,4 @@
-module github.com/mozhou-tech/sqlite-ai-driver/pkg/imagerag
+module github.com/mozhou-tech/sqlite-ai-driver/pkg/imagesearch
 
 go 1.24.2
 

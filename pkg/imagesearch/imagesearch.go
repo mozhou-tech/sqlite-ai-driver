@@ -1,4 +1,4 @@
-package imagerag
+package imagesearch
 
 import (
 	"context"
@@ -13,8 +13,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// ImageRAG 基于DuckDB的图片和文本RAG系统
-type ImageRAG struct {
+// ImageSearch 基于DuckDB的图片和文本RAG系统
+type ImageSearch struct {
 	db            *sql.DB
 	workingDir    string
 	textEmbedder  Embedder
@@ -33,9 +33,9 @@ type ImageRAG struct {
 	mu          sync.Mutex
 }
 
-// New 创建ImageRAG实例
-func New(opts Options) *ImageRAG {
-	return &ImageRAG{
+// New 创建ImageSearch实例
+func New(opts Options) *ImageSearch {
+	return &ImageSearch{
 		workingDir:    opts.WorkingDir,
 		textEmbedder:  opts.TextEmbedder,
 		imageEmbedder: opts.ImageEmbedder,
@@ -44,7 +44,7 @@ func New(opts Options) *ImageRAG {
 }
 
 // InitializeStorages 初始化存储后端
-func (r *ImageRAG) InitializeStorages(ctx context.Context) error {
+func (r *ImageSearch) InitializeStorages(ctx context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -56,7 +56,7 @@ func (r *ImageRAG) InitializeStorages(ctx context.Context) error {
 	// 注意：无论传入什么路径，都会被 duckdb-driver 统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
 	// 目录创建由 duckdb-driver 自动处理，无需在此处创建
 	// 使用简单的路径标识即可，实际路径会被映射到共享数据库
-	db, err := sql.Open("duckdb", "imagerag.db")
+	db, err := sql.Open("duckdb", "imagesearch.db")
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -112,12 +112,12 @@ func (r *ImageRAG) InitializeStorages(ctx context.Context) error {
 	}
 
 	r.initialized = true
-	logrus.Info("ImageRAG storages initialized successfully")
+	logrus.Info("ImageSearch storages initialized successfully")
 	return nil
 }
 
 // InsertImage 插入图片
-func (r *ImageRAG) InsertImage(ctx context.Context, imagePath string, metadata map[string]any) error {
+func (r *ImageSearch) InsertImage(ctx context.Context, imagePath string, metadata map[string]any) error {
 	if !r.initialized {
 		return fmt.Errorf("storages not initialized")
 	}
@@ -194,7 +194,7 @@ func (r *ImageRAG) InsertImage(ctx context.Context, imagePath string, metadata m
 }
 
 // InsertText 插入文本
-func (r *ImageRAG) InsertText(ctx context.Context, text string, metadata map[string]any) error {
+func (r *ImageSearch) InsertText(ctx context.Context, text string, metadata map[string]any) error {
 	if !r.initialized {
 		return fmt.Errorf("storages not initialized")
 	}
@@ -251,7 +251,7 @@ func (r *ImageRAG) InsertText(ctx context.Context, text string, metadata map[str
 }
 
 // Search 执行搜索
-func (r *ImageRAG) Search(ctx context.Context, query string, limit int, metadataFilter MetadataFilter) ([]SearchResult, error) {
+func (r *ImageSearch) Search(ctx context.Context, query string, limit int, metadataFilter MetadataFilter) ([]SearchResult, error) {
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
 	}
@@ -314,7 +314,7 @@ func (r *ImageRAG) Search(ctx context.Context, query string, limit int, metadata
 }
 
 // HybridSearch 执行文本和图像混合搜索，权重分别为0.5
-func (r *ImageRAG) HybridSearch(ctx context.Context, query string, limit int, metadataFilter MetadataFilter) ([]SearchResult, error) {
+func (r *ImageSearch) HybridSearch(ctx context.Context, query string, limit int, metadataFilter MetadataFilter) ([]SearchResult, error) {
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
 	}
@@ -432,8 +432,8 @@ func getContentFromDoc(doc map[string]any) string {
 	return ""
 }
 
-// Close 关闭ImageRAG
-func (r *ImageRAG) Close(ctx context.Context) error {
+// Close 关闭ImageSearch
+func (r *ImageSearch) Close(ctx context.Context) error {
 	if r.db != nil {
 		return r.db.Close()
 	}

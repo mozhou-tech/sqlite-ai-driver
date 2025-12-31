@@ -1,4 +1,4 @@
-package imagerag
+package imagesearch
 
 import (
 	"context"

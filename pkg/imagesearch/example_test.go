@@ -1,4 +1,4 @@
-package imagerag_test
+package imagesearch_test
 
 import (
 	"context"
@@ -7,10 +7,10 @@ import (
 	"os"
 
 	openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/imagerag"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/imagesearch"
 )
 
-// OpenAIEmbedderWrapper 包装OpenAI embedder以符合imagerag.Embedder接口
+// OpenAIEmbedderWrapper 包装OpenAI embedder以符合imagesearch.Embedder接口
 type OpenAIEmbedderWrapper struct {
 	embedder *openaiembedding.Embedder
 	dims     int
@@ -51,8 +51,8 @@ func (e *OpenAIEmbedderWrapper) Dimensions() int {
 	return e.dims
 }
 
-// ExampleImageRAG 展示如何使用ImageRAG
-func ExampleImageRAG() {
+// ExampleImageSearch 展示如何使用ImageSearch
+func ExampleImageSearch() {
 	ctx := context.Background()
 
 	// 1. 设置环境变量和配置
@@ -89,11 +89,11 @@ func ExampleImageRAG() {
 	}
 
 	// 3. 初始化 OCR（这里使用SimpleOCR作为示例，实际应该使用真实的OCR实现）
-	ocr := imagerag.NewSimpleOCR()
+	ocr := imagesearch.NewSimpleOCR()
 
-	// 4. 创建 ImageRAG 实例
-	rag := imagerag.New(imagerag.Options{
-		WorkingDir:    "./imagerag_storage",
+	// 4. 创建 ImageSearch 实例
+	rag := imagesearch.New(imagesearch.Options{
+		WorkingDir:    "./imagesearch_storage",
 		TextEmbedder:  textEmbedder,
 		ImageEmbedder: imageEmbedder,
 		OCR:           ocr,
@@ -139,7 +139,7 @@ func ExampleImageRAG() {
 	}
 
 	// 9. 执行带metadata过滤的搜索
-	metadataFilter := imagerag.MetadataFilter{
+	metadataFilter := imagesearch.MetadataFilter{
 		"source": "example",
 	}
 	filteredResults, err := rag.Search(ctx, "测试", 10, metadataFilter)

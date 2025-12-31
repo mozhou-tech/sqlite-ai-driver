@@ -1,4 +1,4 @@
-package imagerag
+package imagesearch
 
 import "context"
 
@@ -8,7 +8,7 @@ type Embedder interface {
 	Dimensions() int
 }
 
-// Options ImageRAG配置选项
+// Options ImageSearch配置选项
 type Options struct {
 	WorkingDir    string
 	TextEmbedder  Embedder

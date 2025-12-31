@@ -56,7 +56,7 @@ func getDataDir() string {
 
 // ensureDataPath 确保数据路径存在，所有路径都统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
 // 无论输入是相对路径还是绝对路径，都会映射到同一个共享数据库文件
-// 不同的业务模块应使用不同的表名前缀来区分（如 lightrag_、imagerag_）
+// 不同的业务模块应使用不同的表名前缀来区分（如 lightrag_、imagesearch_）
 func ensureDataPath(dsn string) (string, error) {
 	dataDir := getDataDir()
 
@@ -105,7 +105,7 @@ func ensureReadWriteMode(dsn string) string {
 
 // Open 实现 driver.Driver 接口
 // name 参数可以是任意路径（相对或绝对），但都会被统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
-// 不同的业务模块应使用不同的表名前缀来区分（如 lightrag_、imagerag_）
+// 不同的业务模块应使用不同的表名前缀来区分（如 lightrag_、imagesearch_）
 // 查询参数会被保留（如 ?access_mode=read_write）
 func (d *duckdbDriver) Open(name string) (driver.Conn, error) {
 	// 自动构建路径并创建目录

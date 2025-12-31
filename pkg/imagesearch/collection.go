@@ -1,4 +1,4 @@
-package imagerag
+package imagesearch
 
 import (
 	"context"
@@ -13,9 +13,9 @@ type Collection struct {
 }
 
 // createCollection 创建集合（使用共享表，每行数据都有 text_embedding 和 image_embedding 字段）
-func (r *ImageRAG) createCollection(ctx context.Context, name string) (*Collection, error) {
+func (r *ImageSearch) createCollection(ctx context.Context, name string) (*Collection, error) {
 	// 使用统一的表名
-	tableName := "imagerag_documents"
+	tableName := "imagesearch_documents"
 
 	// 创建表（如果不存在）
 	createTableSQL := fmt.Sprintf(`

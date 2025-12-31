@@ -1,6 +1,6 @@
-# ImageRAG
+# ImageSearch
 
-ImageRAG 是一个基于 DuckDB 的图片和文本 RAG（检索增强生成）系统。
+ImageSearch 是一个基于 DuckDB 的图片和文本 RAG（检索增强生成）系统。
 
 ## 功能特性
 
@@ -12,7 +12,7 @@ ImageRAG 是一个基于 DuckDB 的图片和文本 RAG（检索增强生成）�
 
 ## 主要组件
 
-- **ImageRAG**: 主结构，管理图片和文本的存储与检索
+- **ImageSearch**: 主结构，管理图片和文本的存储与检索
 - **OCR**: OCR接口，用于从图片中提取文本（需要实现具体的OCR库）
 - **Embedding**: 支持图片和文本的向量化
 - **VectorSearch**: 基于向量相似度的检索
@@ -23,7 +23,7 @@ ImageRAG 是一个基于 DuckDB 的图片和文本 RAG（检索增强生成）�
 import (
     "context"
     openaiembedding "github.com/cloudwego/eino-ext/components/embedding/openai"
-    "github.com/mozhou-tech/sqlite-ai-driver/pkg/imagerag"
+    "github.com/mozhou-tech/sqlite-ai-driver/pkg/imagesearch"
 )
 
 // 实现 Embedder 接口（可以使用任何embedding库）
@@ -31,14 +31,14 @@ type MyEmbedder struct {
     // ... 实现 Embedder 接口
 }
 
-// 创建 ImageRAG 实例
+// 创建 ImageSearch 实例
 // 可以分别设置文本和图片的embedder，或使用同一个embedder
 textEmbedder := &MyEmbedder{} // 用于文本embedding
 imageEmbedder := &MyEmbedder{} // 用于图片embedding（基于OCR文本）
-ocr := imagerag.NewSimpleOCR() // 注意：需要实现真实的OCR
+ocr := imagesearch.NewSimpleOCR() // 注意：需要实现真实的OCR
 
-rag := imagerag.New(imagerag.Options{
-    WorkingDir:    "./imagerag_storage",
+rag := imagesearch.New(imagesearch.Options{
+    WorkingDir:    "./imagesearch_storage",
     TextEmbedder:  textEmbedder,
     ImageEmbedder: imageEmbedder,
     OCR:           ocr,

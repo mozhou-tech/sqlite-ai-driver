@@ -1,4 +1,4 @@
-package imagerag
+package imagesearch
 
 import (
 	"context"
@@ -24,7 +24,7 @@ type VectorSearch struct {
 
 // addVectorSearch 添加向量搜索
 // vectorColumn 应该是 'text_embedding' 或 'image_embedding'
-func (r *ImageRAG) addVectorSearch(collection *Collection, vectorColumn string, docToEmbedding func(map[string]any) ([]float64, error)) (*VectorSearch, error) {
+func (r *ImageSearch) addVectorSearch(collection *Collection, vectorColumn string, docToEmbedding func(map[string]any) ([]float64, error)) (*VectorSearch, error) {
 	// vectorColumn 已经是 'text_embedding' 或 'image_embedding'，不需要添加前缀
 	// 列已经在 createCollection 中创建了
 
