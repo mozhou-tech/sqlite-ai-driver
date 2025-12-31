@@ -18,7 +18,6 @@ package duckdb
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -27,7 +26,7 @@ import (
 
 	. "github.com/bytedance/mockey"
 	"github.com/cloudwego/eino/components/embedding"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore"
 	"github.com/smartystreets/goconvey/convey"
 )
 
@@ -50,43 +49,36 @@ func TestNewRetriever(t *testing.T) {
 	PatchConvey("test NewRetriever", t, func() {
 		ctx := context.Background()
 
-		// Create a temporary DuckDB database for testing
-		testdataDir := getProjectRootTestdata()
-		if err := os.MkdirAll(testdataDir, 0755); err != nil {
-			t.Fatalf("Failed to create testdata directory: %v", err)
+		// Create VecStore instance for testing
+		vecStore := vecstore.New(vecstore.Options{
+			Embedder: nil, // VecStore doesn't require embedder for initialization
+		})
+		if err := vecStore.Initialize(ctx); err != nil {
+			t.Fatalf("Failed to initialize vecstore: %v", err)
 		}
-		dbPath := filepath.Join(testdataDir, "test_retriever.db")
-		defer func() {
-			_ = os.Remove(dbPath)
-		}()
-
-		db, err := sql.Open("duckdb", dbPath)
-		if err != nil {
-			t.Fatalf("Failed to open database: %v", err)
-		}
-		defer db.Close()
+		defer vecStore.Close()
 
 		PatchConvey("test embedding not provided", func() {
 			r, err := NewRetriever(ctx, &RetrieverConfig{
-				DB:        db,
+				VecStore:  vecStore,
 				Embedding: nil,
 			})
 			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] embedding not provided for duckdb retriever"))
 			convey.So(r, convey.ShouldBeNil)
 		})
 
-		PatchConvey("test database not provided", func() {
+		PatchConvey("test vecstore not provided", func() {
 			r, err := NewRetriever(ctx, &RetrieverConfig{
-				DB:        nil,
+				VecStore:  nil,
 				Embedding: &mockEmbedding{},
 			})
-			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] duckdb database connection not provided, must pass an already opened *sql.DB instance"))
+			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] vecstore instance not provided, must pass a *vecstore.VecStore instance"))
 			convey.So(r, convey.ShouldBeNil)
 		})
 
 		PatchConvey("test success", func() {
 			r, err := NewRetriever(ctx, &RetrieverConfig{
-				DB:        db,
+				VecStore:  vecStore,
 				Embedding: &mockEmbedding{},
 			})
 			convey.So(err, convey.ShouldBeNil)
@@ -119,7 +111,8 @@ func TestRetrieve(t *testing.T) {
 			mockErr := fmt.Errorf("mock err")
 			r := &Retriever{config: &RetrieverConfig{Embedding: &mockEmbedding{err: mockErr}}}
 			resp, err := r.Retrieve(ctx, "test_query")
-			convey.So(err, convey.ShouldBeError, mockErr)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "mock err")
 			convey.So(resp, convey.ShouldBeNil)
 		})
 

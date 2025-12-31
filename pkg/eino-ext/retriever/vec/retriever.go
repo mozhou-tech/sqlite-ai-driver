@@ -1,19 +1,3 @@
-/*
- * Copyright 2025 CloudWeGo Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package duckdb
 
 import (
@@ -27,14 +11,13 @@ import (
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore"
 )
 
 type RetrieverConfig struct {
-	// DB is an already opened DuckDB database connection instance.
-	// This retriever does not open or close the database connection.
-	// The caller is responsible for managing the database connection lifecycle.
-	DB *sql.DB
+	// VecStore is a vecstore instance used as the underlying storage.
+	// This retriever uses vecstore as the backend storage.
+	VecStore *vecstore.VecStore
 	// TableName is the name of the table to retrieve documents from.
 	// Default "documents".
 	TableName string
@@ -50,7 +33,9 @@ type RetrieverConfig struct {
 }
 
 type Retriever struct {
-	config *RetrieverConfig
+	config    *RetrieverConfig
+	db        *sql.DB
+	tableName string
 }
 
 func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, error) {
@@ -58,8 +43,8 @@ func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, err
 		return nil, fmt.Errorf("[NewRetriever] embedding not provided for duckdb retriever")
 	}
 
-	if config.DB == nil {
-		return nil, fmt.Errorf("[NewRetriever] duckdb database connection not provided, must pass an already opened *sql.DB instance")
+	if config.VecStore == nil {
+		return nil, fmt.Errorf("[NewRetriever] vecstore instance not provided, must pass a *vecstore.VecStore instance")
 	}
 
 	if config.TableName == "" {
@@ -81,9 +66,32 @@ func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, err
 		config.DocumentConverter = defaultResultParser(config.ReturnFields)
 	}
 
+	// Initialize vecstore if not already initialized
+	if err := config.VecStore.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("[NewRetriever] failed to initialize vecstore: %w", err)
+	}
+
+	// Access vecstore's internal fields via public methods
+	db, tableName, err := getVecStoreInternalsForRetriever(config.VecStore)
+	if err != nil {
+		return nil, fmt.Errorf("[NewRetriever] failed to access vecstore internals: %w", err)
+	}
+
 	return &Retriever{
-		config: config,
+		config:    config,
+		db:        db,
+		tableName: tableName,
 	}, nil
+}
+
+// getVecStoreInternalsForRetriever gets vecstore's internal fields via public methods
+func getVecStoreInternalsForRetriever(vs *vecstore.VecStore) (*sql.DB, string, error) {
+	db := vs.GetDB()
+	if db == nil {
+		return nil, "", fmt.Errorf("vecstore db is nil")
+	}
+	tableName := vs.GetTableName()
+	return db, tableName, nil
 }
 
 func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retriever.Option) (docs []*schema.Document, err error) {
@@ -110,9 +118,10 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 		return nil, fmt.Errorf("[duckdb retriever] embedding not provided")
 	}
 
+	// Generate query vector using eino embedder
 	vectors, err := emb.EmbedStrings(r.makeEmbeddingCtx(ctx, emb), []string{query})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("[duckdb retriever] failed to embed query: %w", err)
 	}
 
 	if len(vectors) != 1 {
@@ -120,21 +129,6 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	}
 
 	queryVector := vectors[0]
-
-	// Build SQL query for vector search using DuckDB
-	// Use list_cosine_similarity for cosine similarity search
-	// Distance = 1 - similarity, so we order by similarity DESC
-	// DuckDB can accept FLOAT[] which can be passed as string representation
-	sqlQuery := fmt.Sprintf(`
-		SELECT 
-			id,
-			content,
-			vector_content,
-			metadata,
-			1 - list_cosine_similarity(vector_content, ?::FLOAT[]) as distance
-		FROM %s
-		WHERE vector_content IS NOT NULL
-	`, r.config.TableName)
 
 	// Convert []float64 to string format that DuckDB can parse
 	// Format: [1.0, 2.0, 3.0]
@@ -147,56 +141,61 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	}
 	vectorStr += "]"
 
+	// Build SQL query for vector search using vecstore's table structure
+	// Use list_cosine_similarity for cosine similarity search
+	// vecstore stores vectors in 'embedding' column and content in 'content' column (as JSON)
+	sqlQuery := fmt.Sprintf(`
+		SELECT 
+			id,
+			content,
+			metadata,
+			list_cosine_similarity(embedding, ?::FLOAT[]) as similarity
+		FROM %s
+		WHERE embedding IS NOT NULL AND embedding_status = 'completed'
+	`, r.tableName)
+
 	args := []interface{}{vectorStr}
 
 	// Add metadata filters if provided
 	if io.MetadataFilter != nil && len(io.MetadataFilter) > 0 {
 		for key, value := range io.MetadataFilter {
-			// Use json_extract with JSONPath syntax to extract JSON field
-			// JSONPath format: $.key for top-level fields
-			jsonPath := fmt.Sprintf("$.%s", key)
-			switch v := value.(type) {
+			// Use json_extract_path_text similar to vecstore's implementation
+			escapedKey := key // Simple escaping, could be improved
+			condition := fmt.Sprintf(
+				"(json_extract_path_text(COALESCE(metadata, '{}'), '%s') = ? OR json_extract_path_text(content, '$.%s') = ?)",
+				escapedKey, escapedKey,
+			)
+			sqlQuery += " AND (" + condition + ")"
+
+			// Convert value to string for comparison
+			var valueStr string
+			switch val := value.(type) {
 			case string:
-				// For strings, json_extract returns JSON string (with quotes), so we compare as JSON
-				// Convert the filter value to JSON string format for comparison
-				valueJSON, _ := json.Marshal(v)
-				sqlQuery += fmt.Sprintf(" AND json_extract(metadata, '%s') = ?::JSON", jsonPath)
-				args = append(args, string(valueJSON))
-			case int, int8, int16, int32, int64:
-				sqlQuery += fmt.Sprintf(" AND CAST(json_extract(metadata, '%s') AS BIGINT) = ?", jsonPath)
-				args = append(args, v)
-			case float32, float64:
-				sqlQuery += fmt.Sprintf(" AND CAST(json_extract(metadata, '%s') AS DOUBLE) = ?", jsonPath)
-				args = append(args, v)
-			case bool:
-				sqlQuery += fmt.Sprintf(" AND CAST(json_extract(metadata, '%s') AS BOOLEAN) = ?", jsonPath)
-				args = append(args, v)
+				valueStr = val
+			case []byte:
+				valueStr = string(val)
 			default:
-				// For other types, convert to JSON string and compare as JSON
-				valueJSON, err := json.Marshal(v)
-				if err != nil {
-					return nil, fmt.Errorf("[duckdb retriever] failed to marshal filter value for key %s: %w", key, err)
+				valueBytes, _ := json.Marshal(val)
+				valueStr = string(valueBytes)
+				if len(valueStr) >= 2 && valueStr[0] == '"' && valueStr[len(valueStr)-1] == '"' {
+					valueStr = valueStr[1 : len(valueStr)-1]
 				}
-				// Compare JSON values directly (json_extract returns JSON type)
-				sqlQuery += fmt.Sprintf(" AND json_extract(metadata, '%s') = ?::JSON", jsonPath)
-				args = append(args, string(valueJSON))
 			}
+			args = append(args, valueStr, valueStr)
 		}
 	}
 
+	// Add score threshold if provided
 	if co.ScoreThreshold != nil {
-		// For cosine similarity: similarity = 1 - distance
-		// So distance threshold = 1 - scoreThreshold
-		distanceThreshold := 1.0 - *co.ScoreThreshold
-		sqlQuery += " AND (1 - list_cosine_similarity(vector_content, ?::FLOAT[])) <= ?"
-		args = append(args, vectorStr, distanceThreshold)
+		sqlQuery += " AND list_cosine_similarity(embedding, ?::FLOAT[]) >= ?"
+		args = append(args, vectorStr, *co.ScoreThreshold)
 	}
 
-	sqlQuery += " ORDER BY list_cosine_similarity(vector_content, ?::FLOAT[]) DESC LIMIT ?"
+	sqlQuery += " ORDER BY list_cosine_similarity(embedding, ?::FLOAT[]) DESC LIMIT ?"
 	args = append(args, vectorStr, *co.TopK)
 
-	// Execute query
-	rows, err := r.config.DB.QueryContext(ctx, sqlQuery, args...)
+	// Execute query using vecstore's database connection
+	rows, err := r.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("[duckdb retriever] search failed: %w", err)
 	}
@@ -204,43 +203,32 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 
 	for rows.Next() {
 		var id, content string
-		var vectorContentRaw interface{}
 		var metadataRaw interface{}
-		var distance float64
+		var similarity float64
 
-		err := rows.Scan(&id, &content, &vectorContentRaw, &metadataRaw, &distance)
+		err := rows.Scan(&id, &content, &metadataRaw, &similarity)
 		if err != nil {
 			return nil, fmt.Errorf("[duckdb retriever] failed to scan row: %w", err)
 		}
 
-		// Convert vector content from interface{} ([]interface{} for DuckDB FLOAT[])
-		var vectorContent []float64
-		// ... existing vector conversion code ...
-		if vectorContentRaw != nil {
-			if slice, ok := vectorContentRaw.([]interface{}); ok {
-				vectorContent = make([]float64, len(slice))
-				for i, v := range slice {
-					if f, ok := v.(float64); ok {
-						vectorContent[i] = f
-					} else if f32, ok := v.(float32); ok {
-						vectorContent[i] = float64(f32)
-					}
-				}
-			} else if slice, ok := vectorContentRaw.([]float64); ok {
-				vectorContent = slice
-			}
+		// Parse content JSON (vecstore stores all document data in content field as JSON)
+		var contentDoc map[string]any
+		if err := json.Unmarshal([]byte(content), &contentDoc); err != nil {
+			// If content is not JSON, treat it as plain text
+			contentDoc = map[string]any{"id": id, "content": content}
+		}
+
+		// Extract text content from contentDoc
+		textContent := ""
+		if text, ok := contentDoc["content"].(string); ok {
+			textContent = text
 		}
 
 		// Create document
 		doc := &schema.Document{
 			ID:       id,
-			Content:  content,
+			Content:  textContent,
 			MetaData: make(map[string]any),
-		}
-
-		// Set vector content if available
-		if len(vectorContent) > 0 {
-			doc.WithDenseVector(vectorContent)
 		}
 
 		// Parse metadata if available
@@ -267,7 +255,16 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 			}
 		}
 
-		// Set distance
+		// Also add fields from contentDoc to metadata (excluding id and content)
+		for k, v := range contentDoc {
+			if k != "id" && k != "content" {
+				doc.MetaData[k] = v
+			}
+		}
+
+		// Set distance (vecstore returns similarity, convert to distance)
+		// Distance = 1 - similarity
+		distance := 1.0 - similarity
 		doc.MetaData[SortByDistanceAttributeName] = distance
 
 		docs = append(docs, doc)

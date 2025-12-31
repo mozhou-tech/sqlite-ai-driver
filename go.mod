@@ -15,6 +15,7 @@ require (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag v0.0.0-00010101000000-000000000000
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore v0.0.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
 	modernc.org/sqlite v1.38.2
@@ -124,4 +125,5 @@ replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./pkg/lightrag
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ./pkg/sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ./pkg/sqlite3-driver
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ./pkg/vecstore
 )

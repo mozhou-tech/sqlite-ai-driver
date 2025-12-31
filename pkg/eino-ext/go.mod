@@ -14,6 +14,7 @@ require (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore v0.0.0-00010101000000-000000000000
 	github.com/smartystreets/goconvey v1.8.1
 )
 
@@ -73,6 +74,7 @@ require (
 	golang.org/x/sync v0.18.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/telemetry v0.0.0-20251008203120-078029d740a8 // indirect
+	golang.org/x/time v0.5.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -88,4 +90,5 @@ replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ../duckdb-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ../sqlite3-driver
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ../vecstore
 )

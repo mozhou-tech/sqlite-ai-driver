@@ -18,7 +18,6 @@ package vss
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -29,7 +28,7 @@ import (
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore"
 	"github.com/smartystreets/goconvey/convey"
 )
 
@@ -52,21 +51,14 @@ func TestBulkStore(t *testing.T) {
 	PatchConvey("test bulkStore", t, func() {
 		ctx := context.Background()
 
-		// Create a temporary SQLite database for testing
-		testdataDir := getProjectRootTestdata()
-		if err := os.MkdirAll(testdataDir, 0755); err != nil {
-			t.Fatalf("Failed to create testdata directory: %v", err)
+		// Create VecStore instance for testing
+		vecStore := vecstore.New(vecstore.Options{
+			Embedder: nil, // VecStore doesn't require embedder for initialization
+		})
+		if err := vecStore.Initialize(ctx); err != nil {
+			t.Fatalf("Failed to initialize vecstore: %v", err)
 		}
-		dbPath := filepath.Join(testdataDir, "test_indexer.db")
-		defer func() {
-			_ = os.Remove(dbPath)
-		}()
-
-		db, err := sql.Open("sqlite3", dbPath)
-		if err != nil {
-			t.Fatalf("Failed to open database: %v", err)
-		}
-		defer db.Close()
+		defer vecStore.Close()
 
 		d1 := &schema.Document{ID: "1", Content: "asd"}
 		d2 := &schema.Document{ID: "2", Content: "qwe", MetaData: map[string]any{
@@ -78,13 +70,14 @@ func TestBulkStore(t *testing.T) {
 		PatchConvey("test DocumentToMap failed", func() {
 			i := &Indexer{
 				config: &IndexerConfig{
-					DB: db,
+					VecStore: vecStore,
 					DocumentToMap: func(ctx context.Context, doc *schema.Document) (map[string]any, map[string]string, error) {
 						return nil, nil, fmt.Errorf("mock err")
 					},
-					BatchSize: 10,
-					Embedding: nil,
-					TableName: "test_documents",
+					BatchSize:        10,
+					Embedding:        nil,
+					TableName:        "test_documents",
+					VectorDimensions: 1024,
 				},
 			}
 
@@ -96,16 +89,17 @@ func TestBulkStore(t *testing.T) {
 		PatchConvey("test embSize > i.config.BatchSize", func() {
 			i := &Indexer{
 				config: &IndexerConfig{
-					DB: db,
+					VecStore: vecStore,
 					DocumentToMap: func(ctx context.Context, doc *schema.Document) (map[string]any, map[string]string, error) {
 						return map[string]any{"content": doc.Content}, map[string]string{
 							"content": "vector_content",
 							"another": "another_vector",
 						}, nil
 					},
-					BatchSize: 1,
-					Embedding: nil,
-					TableName: "test_documents",
+					BatchSize:        1,
+					Embedding:        nil,
+					TableName:        "test_documents",
+					VectorDimensions: 1024,
 				},
 			}
 
@@ -118,11 +112,12 @@ func TestBulkStore(t *testing.T) {
 		PatchConvey("test embedding not provided error", func() {
 			i := &Indexer{
 				config: &IndexerConfig{
-					DB:            db,
-					DocumentToMap: defaultDocumentToMap,
-					BatchSize:     1,
-					Embedding:     nil,
-					TableName:     "test_documents",
+					VecStore:         vecStore,
+					DocumentToMap:    defaultDocumentToMap,
+					BatchSize:        1,
+					Embedding:        nil,
+					TableName:        "test_documents",
+					VectorDimensions: 1024,
 				},
 			}
 
@@ -135,10 +130,11 @@ func TestBulkStore(t *testing.T) {
 			exp := fmt.Errorf("mock err")
 			i := &Indexer{
 				config: &IndexerConfig{
-					DB:            db,
-					DocumentToMap: defaultDocumentToMap,
-					BatchSize:     1,
-					TableName:     "test_documents",
+					VecStore:         vecStore,
+					DocumentToMap:    defaultDocumentToMap,
+					BatchSize:        1,
+					TableName:        "test_documents",
+					VectorDimensions: 1024,
 				},
 			}
 
@@ -150,10 +146,11 @@ func TestBulkStore(t *testing.T) {
 		PatchConvey("test len(vectors) != len(texts)", func() {
 			i := &Indexer{
 				config: &IndexerConfig{
-					DB:            db,
-					DocumentToMap: defaultDocumentToMap,
-					BatchSize:     1,
-					TableName:     "test_documents",
+					VecStore:         vecStore,
+					DocumentToMap:    defaultDocumentToMap,
+					BatchSize:        1,
+					TableName:        "test_documents",
+					VectorDimensions: 1024,
 				},
 			}
 
@@ -173,10 +170,11 @@ func TestBulkStore(t *testing.T) {
 
 			i := &Indexer{
 				config: &IndexerConfig{
-					DB:            db,
-					DocumentToMap: defaultDocumentToMap,
-					BatchSize:     1,
-					TableName:     "test_documents",
+					VecStore:         vecStore,
+					DocumentToMap:    defaultDocumentToMap,
+					BatchSize:        1,
+					TableName:        "test_documents",
+					VectorDimensions: 1024,
 				},
 			}
 

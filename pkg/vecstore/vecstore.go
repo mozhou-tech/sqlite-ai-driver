@@ -360,6 +360,16 @@ func (v *VecStore) Close() error {
 	return nil
 }
 
+// GetDB 返回内部的数据库连接（用于需要直接访问数据库的场景）
+func (v *VecStore) GetDB() *sql.DB {
+	return v.db
+}
+
+// GetTableName 返回表名
+func (v *VecStore) GetTableName() string {
+	return v.tableName
+}
+
 // SearchResult 搜索结果
 type SearchResult struct {
 	ID      string

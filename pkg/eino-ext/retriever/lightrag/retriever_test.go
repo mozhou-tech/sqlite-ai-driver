@@ -56,6 +56,7 @@ func TestRetriever(t *testing.T) {
 	graphPath := filepath.Join(workingDir, "graph.db")
 
 	rag, err := lightrag.New(lightrag.Options{
+		WorkingDir: workingDir,
 		DuckDBPath: duckdbPath,
 		GraphPath:  graphPath,
 		Embedder:   &simpleEmbedder{dims: 768},

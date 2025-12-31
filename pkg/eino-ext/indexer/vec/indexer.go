@@ -19,29 +19,26 @@ package vss
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components"
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore"
 )
 
 type IndexerConfig struct {
-	// DB is an already opened SQLite database connection instance.
-	// This indexer does not open or close the database connection.
-	// The caller is responsible for managing the database connection lifecycle.
-	DB *sql.DB
-	// TableName is the name of the virtual table to store documents.
+	// VecStore is a vecstore instance used as the underlying storage.
+	// This indexer uses vecstore as the backend storage.
+	VecStore *vecstore.VecStore
+	// TableName is the name of the table to store documents.
 	// Default "documents".
 	TableName string
 	// VectorDimensions is the dimension of the embedding vectors.
-	// This is required for creating the VSS virtual table.
+	// This is required for vector operations.
 	VectorDimensions int
 	// DocumentToMap supports customize how to convert eino document to map.
 	// It should return the map and a mapping of which fields in the map should be embedded.
@@ -56,7 +53,9 @@ type IndexerConfig struct {
 }
 
 type Indexer struct {
-	config *IndexerConfig
+	config    *IndexerConfig
+	db        *sql.DB
+	tableName string
 }
 
 func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
@@ -64,8 +63,8 @@ func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 		return nil, fmt.Errorf("[NewIndexer] embedding not provided for vss indexer")
 	}
 
-	if config.DB == nil {
-		return nil, fmt.Errorf("[NewIndexer] sqlite database connection not provided, must pass an already opened *sql.DB instance")
+	if config.VecStore == nil {
+		return nil, fmt.Errorf("[NewIndexer] vecstore instance not provided, must pass a *vecstore.VecStore instance")
 	}
 
 	if config.VectorDimensions <= 0 {
@@ -84,8 +83,21 @@ func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 		config.TableName = "documents"
 	}
 
+	// Initialize vecstore if not already initialized
+	if err := config.VecStore.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("[NewIndexer] failed to initialize vecstore: %w", err)
+	}
+
+	// Access vecstore's internal fields via public methods
+	db, tableName, err := getVecStoreInternals(config.VecStore)
+	if err != nil {
+		return nil, fmt.Errorf("[NewIndexer] failed to access vecstore internals: %w", err)
+	}
+
 	indexer := &Indexer{
-		config: config,
+		config:    config,
+		db:        db,
+		tableName: tableName,
 	}
 
 	// Initialize table schema
@@ -94,6 +106,16 @@ func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 	}
 
 	return indexer, nil
+}
+
+// getVecStoreInternals gets vecstore's internal fields via public methods
+func getVecStoreInternals(vs *vecstore.VecStore) (*sql.DB, string, error) {
+	db := vs.GetDB()
+	if db == nil {
+		return nil, "", fmt.Errorf("vecstore db is nil")
+	}
+	tableName := vs.GetTableName()
+	return db, tableName, nil
 }
 
 func (i *Indexer) Store(ctx context.Context, docs []*schema.Document, opts ...indexer.Option) (ids []string, err error) {
@@ -264,51 +286,60 @@ func defaultDocumentToMap(ctx context.Context, doc *schema.Document) (map[string
 
 // initSchema initializes the database table schema
 func (i *Indexer) initSchema(ctx context.Context) error {
-	// Create VSS virtual table for vector storage
-	// SQLite VSS uses virtual tables with vss0 module
-	// Format: CREATE VIRTUAL TABLE table_name USING vss0(vector(dimension), content TEXT, metadata TEXT)
+	// Create table for vecstore (DuckDB format)
+	// Use the configured table name instead of vecstore's default table name
 	createTableSQL := fmt.Sprintf(`
-		CREATE VIRTUAL TABLE IF NOT EXISTS %s USING vss0(
-			vector(%d),
+		CREATE TABLE IF NOT EXISTS %s (
+			id VARCHAR PRIMARY KEY,
 			content TEXT,
-			metadata TEXT
+			metadata JSON,
+			embedding FLOAT[],
+			embedding_status VARCHAR DEFAULT 'completed',
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			_rev INTEGER DEFAULT 1
 		)
-	`, i.config.TableName, i.config.VectorDimensions)
+	`, i.tableName)
 
-	_, err := i.config.DB.ExecContext(ctx, createTableSQL)
+	_, err := i.db.ExecContext(ctx, createTableSQL)
 	if err != nil {
-		return fmt.Errorf("[initSchema] failed to create vss virtual table: %w", err)
+		return fmt.Errorf("[initSchema] failed to create table: %w", err)
 	}
 
 	return nil
 }
 
-// bulkUpsert inserts or updates documents in SQLite VSS
+// bulkUpsert inserts or updates documents in vecstore (DuckDB)
 func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	if len(docs) == 0 {
 		return nil
 	}
 
 	// Start a transaction for batch operations
-	tx, err := i.config.DB.BeginTx(ctx, nil)
+	tx, err := i.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("[bulkUpsert] failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Prepare upsert statement using INSERT OR REPLACE
-	// SQLite VSS virtual table supports INSERT OR REPLACE syntax
+	// Prepare upsert statement using DuckDB's INSERT ... ON CONFLICT syntax
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
-		INSERT OR REPLACE INTO %s (vector, content, metadata)
-		VALUES (?, ?, ?)
-	`, i.config.TableName))
+		INSERT INTO %s (id, content, metadata, embedding, embedding_status, _rev)
+		VALUES (?, ?, ?::JSON, ?::FLOAT[], 'completed', 1)
+		ON CONFLICT (id) DO UPDATE SET
+			content = EXCLUDED.content,
+			metadata = EXCLUDED.metadata,
+			embedding = EXCLUDED.embedding,
+			embedding_status = 'completed',
+			_rev = %s._rev + 1
+	`, i.tableName, i.tableName))
 	if err != nil {
 		return fmt.Errorf("[bulkUpsert] failed to prepare statement: %w", err)
 	}
 	defer stmt.Close()
 
 	for _, doc := range docs {
-		// Extract content and vector_content
+		// Extract id and content
+		id, _ := doc["id"].(string)
 		content, _ := doc[defaultReturnFieldContent].(string)
 
 		// Get vector_content
@@ -336,25 +367,33 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 			}
 		}
 
-		// Add id to metadata for retrieval
-		if id, ok := doc["id"].(string); ok {
-			metadata["id"] = id
-		}
-
 		// Convert metadata to JSON
 		metadataJSON, err := json.Marshal(metadata)
 		if err != nil {
 			return fmt.Errorf("[bulkUpsert] failed to marshal metadata: %w", err)
 		}
 
-		// Convert vector to SQLite VSS format (BLOB)
-		// SQLite VSS expects vectors as BLOB in F32 format (little-endian float32)
-		vectorBlob := make([]byte, len(vectorContent)*4)
-		for i, v := range vectorContent {
-			binary.LittleEndian.PutUint32(vectorBlob[i*4:(i+1)*4], math.Float32bits(float32(v)))
+		// Convert vector to DuckDB FLOAT[] format (string representation)
+		// Format: [1.0, 2.0, 3.0]
+		vectorStr := "["
+		for idx, v := range vectorContent {
+			if idx > 0 {
+				vectorStr += ", "
+			}
+			vectorStr += fmt.Sprintf("%g", v)
 		}
+		vectorStr += "]"
 
-		_, err = stmt.ExecContext(ctx, vectorBlob, content, string(metadataJSON))
+		// Build content JSON (store all document data in content field, similar to vecstore)
+		contentDoc := make(map[string]any)
+		contentDoc["id"] = id
+		contentDoc["content"] = content
+		for k, v := range metadata {
+			contentDoc[k] = v
+		}
+		contentJSON, _ := json.Marshal(contentDoc)
+
+		_, err = stmt.ExecContext(ctx, id, string(contentJSON), string(metadataJSON), vectorStr)
 		if err != nil {
 			return fmt.Errorf("[bulkUpsert] failed to execute statement: %w", err)
 		}
