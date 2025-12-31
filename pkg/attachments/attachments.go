@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -220,6 +221,134 @@ func (m *Manager) StoreWithMetadata(filename string, data []byte, mimeType *stri
 	log.Printf("[attachments] Metadata stored successfully")
 
 	log.Printf("[attachments] StoreWithMetadata completed successfully: fileID=%s", fileID)
+	return fileID, nil
+}
+
+// StoreFromFile 从文件路径存储文件
+// filePath: 源文件路径
+// 返回: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+func (m *Manager) StoreFromFile(filePath string) (string, error) {
+	return m.StoreFromFileWithMetadata(filePath, nil, nil)
+}
+
+// StoreFromFileWithMetadata 从文件路径存储文件并保存元数据
+// filePath: 源文件路径
+// mimeType: MIME类型（可选）
+// metadata: 扩展元数据（可选）
+// 返回: 文件ID（相对路径，格式：YYYY-MM-DD/filename）
+func (m *Manager) StoreFromFileWithMetadata(filePath string, mimeType *string, metadata map[string]interface{}) (string, error) {
+	log.Printf("[attachments] StoreFromFileWithMetadata called: filePath=%s", filePath)
+
+	if filePath == "" {
+		log.Printf("[attachments] ERROR: filePath is empty")
+		return "", fmt.Errorf("文件路径不能为空")
+	}
+
+	// 打开源文件
+	srcFile, err := os.Open(filePath)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to open source file: %v", err)
+		return "", fmt.Errorf("打开源文件失败: %w", err)
+	}
+	defer srcFile.Close()
+
+	// 从路径中提取文件名
+	filename := filepath.Base(filePath)
+	if filename == "" || filename == "." || filename == "/" {
+		log.Printf("[attachments] ERROR: invalid filename from path: %s", filePath)
+		return "", fmt.Errorf("无法从路径提取文件名: %s", filePath)
+	}
+
+	// 按日期创建子目录（格式：YYYY-MM-DD）
+	dateDir := time.Now().Format("2006-01-02")
+	datePath := filepath.Join(m.baseDir, dateDir)
+	log.Printf("[attachments] Date directory: %s", dateDir)
+
+	// 确保日期目录存在
+	if err := os.MkdirAll(datePath, 0755); err != nil {
+		log.Printf("[attachments] ERROR: failed to create date directory: %v", err)
+		return "", fmt.Errorf("创建日期目录失败: %w", err)
+	}
+
+	// 构建目标文件路径
+	dstFilePath := filepath.Join(datePath, filename)
+
+	// 如果文件已存在，添加时间戳后缀避免覆盖
+	if _, err := os.Stat(dstFilePath); err == nil {
+		timestamp := time.Now().Format("150405")
+		ext := filepath.Ext(filename)
+		nameWithoutExt := filename[:len(filename)-len(ext)]
+		filename = fmt.Sprintf("%s_%s%s", nameWithoutExt, timestamp, ext)
+		dstFilePath = filepath.Join(datePath, filename)
+		log.Printf("[attachments] File exists, renamed to: %s", filename)
+	}
+
+	// 返回文件ID（相对路径）
+	fileID := filepath.Join(dateDir, filename)
+
+	// 计算文件绝对路径
+	absPath, err := filepath.Abs(dstFilePath)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to get absolute path: %v", err)
+		return "", fmt.Errorf("获取绝对路径失败: %w", err)
+	}
+
+	// 创建目标文件
+	dstFile, err := os.Create(dstFilePath)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to create destination file: %v", err)
+		return "", fmt.Errorf("创建目标文件失败: %w", err)
+	}
+	defer dstFile.Close()
+
+	// 使用 io.TeeReader 在复制时同时计算MD5
+	hash := md5.New()
+	teeReader := io.TeeReader(srcFile, hash)
+
+	// 使用 io.Copy 复制文件
+	copyStart := time.Now()
+	written, err := io.Copy(dstFile, teeReader)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to copy file: %v (took %v)", err, time.Since(copyStart))
+		os.Remove(dstFilePath) // 删除已创建的目标文件
+		return "", fmt.Errorf("复制文件失败: %w", err)
+	}
+	log.Printf("[attachments] File copied successfully: size=%d bytes (took %v)", written, time.Since(copyStart))
+
+	// 计算MD5
+	md5Hash := hash.Sum(nil)
+	md5Str := hex.EncodeToString(md5Hash)
+
+	// 确保目标文件已刷新到磁盘
+	if err := dstFile.Sync(); err != nil {
+		log.Printf("[attachments] WARNING: failed to sync file: %v", err)
+	}
+
+	// 存储元数据到数据库
+	now := time.Now()
+	mimeTypeStr := ""
+	if mimeType != nil {
+		mimeTypeStr = *mimeType
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	insertSQL := `
+		INSERT OR REPLACE INTO attachments_metadata 
+		(file_id, relative_path, absolute_path, file_size, mime_type, md5, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err = m.db.ExecContext(ctx, insertSQL, fileID, fileID, absPath, written, mimeTypeStr, md5Str, now, now)
+	if err != nil {
+		log.Printf("[attachments] ERROR: failed to insert metadata: %v", err)
+		// 如果数据库插入失败，删除已写入的文件
+		os.Remove(dstFilePath)
+		return "", fmt.Errorf("存储元数据失败: %w", err)
+	}
+	log.Printf("[attachments] Metadata stored successfully")
+
+	log.Printf("[attachments] StoreFromFileWithMetadata completed successfully: fileID=%s", fileID)
 	return fileID, nil
 }
 
