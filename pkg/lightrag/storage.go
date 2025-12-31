@@ -192,10 +192,12 @@ func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error)
 	}
 
 	// 初始化图数据库（如果需要）
+	// 使用 graphstore 中约定的数据库文件路径，只需要创建新的连接
 	var graph cayley_driver.Graph
 	if opts.GraphOptions != nil && opts.GraphOptions.Enabled {
-		graphPath := opts.Path + ".graph.db"
-		graph, err = cayley_driver.NewGraph(graphPath)
+		// 使用 graphstore 约定的数据库文件路径 "graphstore.db"
+		// cayley-driver 会自动将其映射到 {DATA_DIR}/cayley/graphstore.db
+		graph, err = cayley_driver.NewGraph("graphstore.db")
 		if err != nil {
 			db.Close()
 			return nil, fmt.Errorf("failed to create graph database: %w", err)
