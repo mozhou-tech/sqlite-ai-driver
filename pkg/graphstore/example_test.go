@@ -45,7 +45,6 @@ func ExampleGraphStore() {
 	store, err := graphstore.New(graphstore.Options{
 		Embedder:   embedder,
 		WorkingDir: "./testdata",          // 工作目录，作为基础目录
-		GraphDB:    "example_graph.db",    // 图谱数据库路径
 		TableName:  "graphstore_entities", // DuckDB 表名
 	})
 	if err != nil {
