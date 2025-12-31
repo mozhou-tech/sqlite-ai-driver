@@ -260,7 +260,7 @@ func (r *ImageRAG) InsertText(ctx context.Context, text string, metadata map[str
 }
 
 // Search 执行搜索
-func (r *ImageRAG) Search(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+func (r *ImageRAG) Search(ctx context.Context, query string, limit int, metadataFilter MetadataFilter) ([]SearchResult, error) {
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
 	}
@@ -281,7 +281,7 @@ func (r *ImageRAG) Search(ctx context.Context, query string, limit int) ([]Searc
 
 		// 搜索图片集合（使用textEmbedder生成的查询向量，因为图片的embedding也是基于OCR文本生成的）
 		if r.imagesVector != nil {
-			vectorResults, err := r.imagesVector.Search(ctx, queryEmbedding, limit)
+			vectorResults, err := r.imagesVector.Search(ctx, queryEmbedding, limit, metadataFilter)
 			if err != nil {
 				return nil, fmt.Errorf("images vector search failed: %w", err)
 			}
@@ -290,7 +290,7 @@ func (r *ImageRAG) Search(ctx context.Context, query string, limit int) ([]Searc
 
 		// 搜索文本集合
 		if r.textsVector != nil {
-			vectorResults, err := r.textsVector.Search(ctx, queryEmbedding, limit)
+			vectorResults, err := r.textsVector.Search(ctx, queryEmbedding, limit, metadataFilter)
 			if err != nil {
 				return nil, fmt.Errorf("texts vector search failed: %w", err)
 			}
@@ -304,7 +304,7 @@ func (r *ImageRAG) Search(ctx context.Context, query string, limit int) ([]Searc
 		}
 
 		if r.imagesVector != nil {
-			vectorResults, err := r.imagesVector.Search(ctx, queryEmbedding, limit)
+			vectorResults, err := r.imagesVector.Search(ctx, queryEmbedding, limit, metadataFilter)
 			if err != nil {
 				return nil, fmt.Errorf("images vector search failed: %w", err)
 			}
@@ -323,7 +323,7 @@ func (r *ImageRAG) Search(ctx context.Context, query string, limit int) ([]Searc
 }
 
 // HybridSearch 执行文本和图像混合搜索，权重分别为0.5
-func (r *ImageRAG) HybridSearch(ctx context.Context, query string, limit int) ([]SearchResult, error) {
+func (r *ImageRAG) HybridSearch(ctx context.Context, query string, limit int, metadataFilter MetadataFilter) ([]SearchResult, error) {
 	if !r.initialized {
 		return nil, fmt.Errorf("storages not initialized")
 	}
@@ -360,7 +360,7 @@ func (r *ImageRAG) HybridSearch(ctx context.Context, query string, limit int) ([
 
 	// 搜索文本集合（使用文本embedder）
 	if r.textsVector != nil {
-		textResults, err := r.textsVector.Search(ctx, textQueryEmbedding, limit)
+		textResults, err := r.textsVector.Search(ctx, textQueryEmbedding, limit, metadataFilter)
 		if err != nil {
 			return nil, fmt.Errorf("texts vector search failed: %w", err)
 		}
@@ -374,7 +374,7 @@ func (r *ImageRAG) HybridSearch(ctx context.Context, query string, limit int) ([
 
 	// 搜索图像集合（使用图像embedder）
 	if r.imagesVector != nil {
-		imageResults, err := r.imagesVector.Search(ctx, imageQueryEmbedding, limit)
+		imageResults, err := r.imagesVector.Search(ctx, imageQueryEmbedding, limit, metadataFilter)
 		if err != nil {
 			return nil, fmt.Errorf("images vector search failed: %w", err)
 		}

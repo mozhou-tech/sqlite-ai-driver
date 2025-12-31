@@ -128,13 +128,27 @@ func ExampleImageRAG() {
 	}
 
 	// 8. 执行搜索
-	results, err := rag.Search(ctx, "测试", 10)
+	results, err := rag.Search(ctx, "测试", 10, nil)
 	if err != nil {
 		log.Printf("搜索失败: %v", err)
 	} else {
 		fmt.Printf("找到 %d 个结果\n", len(results))
 		for i, result := range results {
 			fmt.Printf("结果 %d: %s (分数: %.4f, 来源: %s)\n", i+1, result.Content, result.Score, result.Source)
+		}
+	}
+
+	// 9. 执行带metadata过滤的搜索
+	metadataFilter := imagerag.MetadataFilter{
+		"source": "example",
+	}
+	filteredResults, err := rag.Search(ctx, "测试", 10, metadataFilter)
+	if err != nil {
+		log.Printf("带过滤的搜索失败: %v", err)
+	} else {
+		fmt.Printf("找到 %d 个过滤后的结果\n", len(filteredResults))
+		for i, result := range filteredResults {
+			fmt.Printf("过滤结果 %d: %s (分数: %.4f, 来源: %s)\n", i+1, result.Content, result.Score, result.Source)
 		}
 	}
 }

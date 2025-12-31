@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 
 	"golang.org/x/time/rate"
@@ -52,7 +53,7 @@ func (r *ImageRAG) addVectorSearch(collection *Collection, identifier string, do
 }
 
 // Search 执行向量搜索
-func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit int) ([]SearchResult, error) {
+func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit int, metadataFilter MetadataFilter) ([]SearchResult, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -71,7 +72,51 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 	}
 	vectorStr += "]"
 
+	// 构建WHERE子句
+	whereClause := fmt.Sprintf("%s IS NOT NULL AND embedding_status = 'completed'", v.vectorColumn)
+	var queryArgs []any
+
+	// 添加metadata过滤条件
+	if metadataFilter != nil && len(metadataFilter) > 0 {
+		// 使用DuckDB的JSON函数来过滤metadata
+		// 需要同时检查metadata字段和content字段中的metadata（因为metadata可能存储在content的JSON中）
+		filterConditions := []string{}
+		for key, value := range metadataFilter {
+			// 转义key以防止SQL注入（虽然key来自map，但为了安全还是转义）
+			// 使用json_extract_path_text来提取JSON字段值
+			// 注意：DuckDB的json_extract_path_text需要转义单引号
+			escapedKey := strings.ReplaceAll(key, "'", "''")
+			condition := fmt.Sprintf(
+				"(json_extract_path_text(COALESCE(metadata, '{}'), '%s') = ? OR json_extract_path_text(content, '$.%s') = ?)",
+				escapedKey, escapedKey,
+			)
+			filterConditions = append(filterConditions, condition)
+
+			// 将value转换为字符串进行比较
+			var valueStr string
+			switch v := value.(type) {
+			case string:
+				valueStr = v
+			case []byte:
+				valueStr = string(v)
+			default:
+				// 对于其他类型，转换为JSON字符串进行比较
+				valueBytes, _ := json.Marshal(value)
+				valueStr = string(valueBytes)
+				// 移除JSON字符串的引号（如果是字符串值）
+				if len(valueStr) >= 2 && valueStr[0] == '"' && valueStr[len(valueStr)-1] == '"' {
+					valueStr = valueStr[1 : len(valueStr)-1]
+				}
+			}
+			queryArgs = append(queryArgs, valueStr, valueStr)
+		}
+		if len(filterConditions) > 0 {
+			whereClause += " AND (" + strings.Join(filterConditions, " AND ") + ")"
+		}
+	}
+
 	// 使用DuckDB的list_cosine_similarity进行向量搜索
+	// 注意：参数顺序：第一个vectorStr用于SELECT，metadata过滤参数在中间，第二个vectorStr用于ORDER BY，最后是limit
 	sqlQuery := fmt.Sprintf(`
 		SELECT 
 			id,
@@ -79,12 +124,17 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 			metadata,
 			list_cosine_similarity(%s, ?::FLOAT[]) as similarity
 		FROM %s
-		WHERE %s IS NOT NULL AND embedding_status = 'completed'
+		WHERE %s
 		ORDER BY list_cosine_similarity(%s, ?::FLOAT[]) DESC
 		LIMIT ?
-	`, v.vectorColumn, v.tableName, v.vectorColumn, v.vectorColumn)
+	`, v.vectorColumn, v.tableName, whereClause, v.vectorColumn)
 
-	rows, err := v.db.QueryContext(ctx, sqlQuery, vectorStr, vectorStr, limit)
+	// 构建完整的参数列表：vectorStr（SELECT用）+ metadata过滤参数 + vectorStr（ORDER BY用）+ limit
+	finalArgs := []any{vectorStr}
+	finalArgs = append(finalArgs, queryArgs...)
+	finalArgs = append(finalArgs, vectorStr, limit)
+
+	rows, err := v.db.QueryContext(ctx, sqlQuery, finalArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search vectors: %w", err)
 	}
@@ -185,4 +235,3 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 		}
 	}
 }
-

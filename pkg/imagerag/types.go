@@ -24,3 +24,8 @@ type SearchResult struct {
 	Source  string // "vector", "text", "image", "hybrid"
 	Data    map[string]any
 }
+
+// MetadataFilter metadata过滤条件
+// 支持按key-value进行过滤，多个条件之间为AND关系
+// 例如：MetadataFilter{"source": "example", "category": "test"} 表示同时满足 source="example" 且 category="test"
+type MetadataFilter map[string]any
