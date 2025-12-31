@@ -2,7 +2,7 @@
 
 ## 概述
 
-GraphStore 的向量检索功能允许你通过自然语言查询找到相关的图谱实体，并自动返回这些实体在图谱中的关系。向量检索使用 DuckDB 的 `all.db` 共享数据库进行高效的向量相似度搜索。
+GraphStore 的向量检索功能允许你通过自然语言查询找到相关的图谱实体，并自动返回这些实体在图谱中的关系。向量检索使用 DuckDB 的 `index.db` 共享数据库进行高效的向量相似度搜索。
 
 ## 快速开始
 
@@ -103,7 +103,7 @@ type Triple struct {
 
 ```go
 // AddEntity 会自动调用 Embedder 生成 embedding
-// embedding 存储在 DuckDB 的 all.db 数据库中
+// embedding 存储在 DuckDB 的 index.db 数据库中
 store.AddEntity(ctx, "entity1", "机器学习专家", map[string]any{
     "skill": "ML",
     "level": "senior",
@@ -154,7 +154,7 @@ for _, result := range results {
 ### 1. 向量存储
 
 - 实体添加时，`AddEntity` 调用 `Embedder.Embed()` 生成 embedding
-- Embedding 存储在 DuckDB 的 `all.db` 共享数据库中
+- Embedding 存储在 DuckDB 的 `index.db` 共享数据库中
 - 表名默认为 `graphstore_entities`，可通过 `Options.TableName` 自定义
 
 ### 2. 向量搜索
@@ -276,7 +276,7 @@ func (e *OpenAIEmbedder) Dimensions() int {
    - `limit` 越大，返回结果越多，但计算时间越长
    - `maxDepth` 越大，子图越大，但能提供更完整的上下文
 4. **向量维度**：确保所有实体的 embedding 维度一致
-5. **数据库位置**：向量数据存储在 `./data/indexing/all.db`，由 `duckdb-driver` 自动管理
+5. **数据库位置**：向量数据存储在 `./data/indexing/index.db`，由 `duckdb-driver` 自动管理
 
 ## 完整示例
 

@@ -178,7 +178,7 @@ type duckdbDatabase struct {
 }
 
 // CreateDatabase 创建数据库实例
-// 注意：数据库路径会被 duckdb-driver 统一映射到共享数据库文件 {WorkingDir}/indexing/all.db
+// 注意：数据库路径会被 duckdb-driver 统一映射到共享数据库文件 {WorkingDir}/indexing/index.db
 // 目录创建由 duckdb-driver 自动处理，无需在此处创建
 //
 // 数据库文件行为：

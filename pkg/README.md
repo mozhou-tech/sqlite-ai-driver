@@ -22,7 +22,7 @@
 
 3. **duckdb-driver**: DuckDB扩展
    - 后端: DuckDB
-   - 数据目录: `./data/indexing/all.db`（所有路径统一映射到此共享数据库）
+   - 数据目录: `./data/indexing/index.db`（所有路径统一映射到此共享数据库）
    - 用途: DuckDB存储
 
 4. **sqlite3-driver**: SQLite3业务数据
@@ -37,7 +37,7 @@
 ### 自动目录行为
 
 - **cayley-driver**: 相对路径（如 `"graph.db"`）自动存储到 `{workingDir}/graph/`（通过 WorkingDir 参数指定）
-- **duckdb-driver**: 所有路径统一映射到共享数据库 `./data/indexing/all.db`
+- **duckdb-driver**: 所有路径统一映射到共享数据库 `./data/indexing/index.db`
 - **sqlite3-driver**: 相对路径（如 `"sqlite.db"`）自动存储到 `./data/db/`
 
 ### 数据目录配置
@@ -67,7 +67,7 @@ func main() {
     graph, _ := cayley_driver.NewGraphWithNamespace(workingDir, "graph.db", "")
     defer graph.Close()
     
-    // 2. 使用 duckdb-driver - 所有路径统一映射到 ./data/indexing/all.db
+    // 2. 使用 duckdb-driver - 所有路径统一映射到 ./data/indexing/index.db
     duckDB, _ := sql.Open("duckdb", "duck.db")
     defer duckDB.Close()
     
@@ -106,7 +106,7 @@ func main() {
 当路径不包含路径分隔符（`/` 或 `\`）时，驱动会将其视为相对路径，自动构建到对应的子目录：
 
 - `"graph.db"` → `{workingDir}/graph/graph.db`（通过 WorkingDir 参数指定）
-- `"duck.db"` → `./data/indexing/all.db`（统一映射到共享数据库）
+- `"duck.db"` → `./data/indexing/index.db`（统一映射到共享数据库）
 - `"sqlite.db"` → `./data/db/sqlite.db`
 
 ### 完整路径（手动控制）
@@ -124,4 +124,4 @@ func main() {
 4. **路径分隔符**: 使用 `filepath.Join()` 构建路径，确保跨平台兼容性
 5. **权限设置**: 确保应用有读写数据目录的权限
 6. **子目录约定**: 子目录名称（`graph`、`indexing`、`db`）是自动目录设置的约定，使用完整路径时可以自定义
-7. **DuckDB 共享数据库**: duckdb-driver 将所有路径统一映射到 `./data/indexing/all.db` 共享数据库，不同业务模块通过表名前缀区分
+7. **DuckDB 共享数据库**: duckdb-driver 将所有路径统一映射到 `./data/indexing/index.db` 共享数据库，不同业务模块通过表名前缀区分

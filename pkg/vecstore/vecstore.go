@@ -44,7 +44,7 @@ func New(opts Options) *VecStore {
 }
 
 // Initialize 初始化存储后端
-// 使用 duckdb-driver 的共享数据库 ./data/indexing/all.db
+// 使用 duckdb-driver 的共享数据库 ./data/indexing/index.db
 func (v *VecStore) Initialize(ctx context.Context) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -54,7 +54,7 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 	}
 
 	// 打开DuckDB数据库连接
-	// duckdb-driver 会自动将所有路径映射到共享数据库文件 ./data/indexing/all.db
+	// duckdb-driver 会自动将所有路径映射到共享数据库文件 ./data/indexing/index.db
 	db, err := sql.Open("duckdb", "vecstore.db")
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)

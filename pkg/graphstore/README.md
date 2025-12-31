@@ -64,7 +64,7 @@ err = store.Link(ctx, "entity2", "works_at", "company1")
 向量检索是 GraphStore 的核心功能，它通过以下步骤工作：
 
 1. **生成查询向量**：使用 Embedder 将查询文本转换为向量
-2. **向量相似度搜索**：在 DuckDB 的 `all.db` 数据库中，使用 `list_cosine_similarity` 函数查找最相似的实体
+2. **向量相似度搜索**：在 DuckDB 的 `index.db` 数据库中，使用 `list_cosine_similarity` 函数查找最相似的实体
 3. **获取图谱关系**：为每个找到的实体获取其在图谱中的关系（子图）
 
 ```go
@@ -166,8 +166,8 @@ type Embedder interface {
 
 - **图谱数据**：存储在 SQLite 数据库中（通过 `cayley-driver`）
 - **实体 Embedding（向量检索）**：存储在 DuckDB 数据库中（通过 `duckdb-driver`）
-  - 向量检索使用 `duckdb-driver` 的 `all.db` 共享数据库
-  - 所有 DuckDB 数据统一映射到 `./data/indexing/all.db`
+  - 向量检索使用 `duckdb-driver` 的 `index.db` 共享数据库
+  - 所有 DuckDB 数据统一映射到 `./data/indexing/index.db`
   - 不同的业务模块通过表名区分（如 `graphstore_entities`）
 
 ## 注意事项

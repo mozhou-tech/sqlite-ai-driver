@@ -28,7 +28,7 @@ type Options struct {
 
 // GraphStore 基于cayley-driver和duckdb-driver的纯图谱存储
 // - 使用cayley-driver存储图谱关系（三元组）
-// - 使用duckdb-driver的all.db共享数据库存储实体的embedding信息，用于向量检索
+// - 使用duckdb-driver的index.db共享数据库存储实体的embedding信息，用于向量检索
 // - 支持语义检索图谱（通过向量相似度搜索找到相关实体，然后返回图谱关系）
 type GraphStore struct {
 	graph       cayley_driver.Graph
@@ -79,8 +79,8 @@ func (g *GraphStore) Initialize(ctx context.Context) error {
 	}
 
 	// 打开DuckDB数据库用于向量检索
-	// 注意：无论传入什么路径，都会被 duckdb-driver 统一映射到共享数据库文件 ./data/indexing/all.db
-	// 向量检索使用 duckdb-driver 的 all.db 共享数据库，不同的业务模块通过表名区分
+	// 注意：无论传入什么路径，都会被 duckdb-driver 统一映射到共享数据库文件 ./data/indexing/index.db
+	// 向量检索使用 duckdb-driver 的 index.db 共享数据库，不同的业务模块通过表名区分
 	db, err := sql.Open("duckdb", "graphstore.db")
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -292,7 +292,7 @@ func (g *GraphStore) SemanticSearch(ctx context.Context, query string, limit int
 	vectorStr += "]"
 
 	// 使用DuckDB的list_cosine_similarity进行向量搜索
-	// 向量检索使用 duckdb-driver 的 all.db 共享数据库
+	// 向量检索使用 duckdb-driver 的 index.db 共享数据库
 	sqlQuery := fmt.Sprintf(`
 		SELECT 
 			entity_id,

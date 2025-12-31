@@ -45,7 +45,7 @@ func init() {
 // duckdbDriver 实现了 driver.Driver 接口
 type duckdbDriver struct{}
 
-// ensureDataPath 确保数据路径存在，所有路径都统一映射到共享数据库文件 ./data/indexing/all.db
+// ensureDataPath 确保数据路径存在，所有路径都统一映射到共享数据库文件 ./data/indexing/index.db
 // 无论输入是相对路径还是绝对路径，都会映射到同一个共享数据库文件
 // 不同的业务模块应使用不同的表名前缀来区分（如 lightrag_、imagesearch_）
 func ensureDataPath(dsn string) (string, error) {
@@ -57,8 +57,8 @@ func ensureDataPath(dsn string) (string, error) {
 		queryPart = dsn[idx:]
 	}
 
-	// 统一映射到共享数据库文件 ./data/indexing/all.db
-	fullPath := filepath.Join(dataDir, "indexing", "all.db") + queryPart
+	// 统一映射到共享数据库文件 ./data/indexing/index.db
+	fullPath := filepath.Join(dataDir, "indexing", "index.db") + queryPart
 
 	// 转换为绝对路径
 	absPath, err := filepath.Abs(fullPath)
@@ -95,7 +95,7 @@ func ensureReadWriteMode(dsn string) string {
 }
 
 // Open 实现 driver.Driver 接口
-// name 参数可以是任意路径（相对或绝对），但都会被统一映射到共享数据库文件 ./data/indexing/all.db
+// name 参数可以是任意路径（相对或绝对），但都会被统一映射到共享数据库文件 ./data/indexing/index.db
 // 不同的业务模块应使用不同的表名前缀来区分（如 lightrag_、imagesearch_）
 // 查询参数会被保留（如 ?access_mode=read_write）
 func (d *duckdbDriver) Open(name string) (driver.Conn, error) {

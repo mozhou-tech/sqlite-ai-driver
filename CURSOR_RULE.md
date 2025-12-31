@@ -65,7 +65,7 @@ import (
     _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 )
 
-// 使用相对路径（推荐）- 所有路径统一映射到 ./data/indexing/all.db
+// 使用相对路径（推荐）- 所有路径统一映射到 ./data/indexing/index.db
 db, err := sql.Open("duckdb", "duck.db")
 
 // 使用完整路径
@@ -171,7 +171,7 @@ retriever, err := duckdbretriever.NewRetriever(ctx, &duckdbretriever.RetrieverCo
 当路径**不包含路径分隔符**（`/` 或 `\`）时，驱动会将其视为相对路径，自动构建到对应的子目录：
 
 - `"graph.db"` → `{workingDir}/graph/graph.db`（通过 WorkingDir 参数指定）
-- `"duck.db"` → `./data/indexing/all.db`（统一映射到共享数据库）
+- `"duck.db"` → `./data/indexing/index.db`（统一映射到共享数据库）
 - `"sqlite.db"` → `./data/db/sqlite.db`
 
 ### 完整路径（手动控制）
