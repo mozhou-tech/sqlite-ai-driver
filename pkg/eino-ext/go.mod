@@ -12,6 +12,7 @@ require (
 	github.com/bytedance/mockey v1.4.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore v0.0.0-00010101000000-000000000000
@@ -88,6 +89,7 @@ replace (
 	github.com/mozhou-tech/sqlite-ai-driver => ../..
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ../cayley-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ../duckdb-driver
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore => ../graphstore
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ../sqlite3-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ../vecstore

@@ -12,7 +12,7 @@ import (
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/components/prompt"
 	"github.com/cloudwego/eino/schema"
-	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore"
 	"github.com/sirupsen/logrus"
 )
 
@@ -44,8 +44,8 @@ type ExtractionResult struct {
 
 // IndexerConfig defines the configuration for the Graph indexer.
 type IndexerConfig struct {
-	// Graph is the Cayley graph instance to use for indexing.
-	Graph cayley_driver.Graph
+	// Graph is the GraphStore instance to use for indexing.
+	Graph *graphstore.GraphStore
 	// LLM is the language model to use for extracting entities and relationships.
 	LLM LLM
 	// DocumentToMap optionally overrides the default conversion from eino document to map.
@@ -71,6 +71,11 @@ func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 
 	if config.DocumentToMap == nil {
 		config.DocumentToMap = defaultDocumentToMap
+	}
+
+	// Ensure GraphStore is initialized
+	if err := config.Graph.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("[NewIndexer] failed to initialize graph store: %w", err)
 	}
 
 	return &Indexer{

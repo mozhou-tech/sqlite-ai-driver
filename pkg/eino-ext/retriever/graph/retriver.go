@@ -1,19 +1,3 @@
-/*
- * Copyright 2025 CloudWeGo Authors
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package graph
 
 import (
@@ -28,7 +12,7 @@ import (
 	"github.com/cloudwego/eino/components/prompt"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
-	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore"
 	"github.com/sirupsen/logrus"
 )
 
@@ -50,8 +34,8 @@ type DocumentGetter func(ctx context.Context, docID string) (*schema.Document, e
 
 // RetrieverConfig defines the configuration for the Graph retriever.
 type RetrieverConfig struct {
-	// Graph is the Cayley graph instance to use for retrieval.
-	Graph cayley_driver.Graph
+	// Graph is the GraphStore instance to use for retrieval.
+	Graph *graphstore.GraphStore
 	// LLM is the language model to use for extracting keywords from queries.
 	LLM LLM
 	// DocumentGetter is an optional function to retrieve document content by ID.
@@ -86,6 +70,11 @@ func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, err
 
 	if config.MaxDepth <= 0 {
 		config.MaxDepth = 2
+	}
+
+	// Ensure GraphStore is initialized
+	if err := config.Graph.Initialize(ctx); err != nil {
+		return nil, fmt.Errorf("[NewRetriever] failed to initialize graph store: %w", err)
 	}
 
 	return &Retriever{
