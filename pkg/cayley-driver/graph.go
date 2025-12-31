@@ -105,14 +105,14 @@ func ensureDataPath(workingDir, path string) (string, error) {
 	return fullPath, nil
 }
 
-// NewGraphWithPrefix 创建新的图数据库实例（支持表前缀）
+// NewGraphWithNamespace 创建新的图数据库实例（支持表命名空间）
 // workingDir: 工作目录，作为基础目录，相对路径会构建到 {workingDir}/graph/ 目录
 // path: SQLite3 数据库文件路径
 //   - 完整路径：/path/to/graph.db 或 ./path/to/graph.db
 //   - 相对路径（如 "graph.db"）：自动构建到 {workingDir}/graph/ 目录
 //
-// prefix: 表前缀，如果为空则使用默认的 "quads" 表名
-func NewGraphWithPrefix(workingDir, path, prefix string) (Graph, error) {
+// namespace: 表命名空间，如果为空则使用默认的 "quads" 表名
+func NewGraphWithNamespace(workingDir, path, namespace string) (Graph, error) {
 	// 自动构建路径并创建目录
 	finalPath, err := ensureDataPath(workingDir, path)
 	if err != nil {
@@ -131,7 +131,7 @@ func NewGraphWithPrefix(workingDir, path, prefix string) (Graph, error) {
 
 	graph := &cayleyGraph{
 		db:          db,
-		tablePrefix: prefix,
+		tablePrefix: namespace,
 	}
 
 	// 初始化数据库表结构

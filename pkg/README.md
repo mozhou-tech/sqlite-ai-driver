@@ -86,7 +86,7 @@ func main() {
     
     // 2. 使用 cayley-driver - 自动存储到 {workingDir}/graph/graph.db
     workingDir := "./data"
-    graph, _ := cayley_driver.NewGraphWithPrefix(workingDir, "graph.db", "")
+    graph, _ := cayley_driver.NewGraphWithNamespace(workingDir, "graph.db", "")
     defer graph.Close()
     
     // 3. 使用 duckdb-driver - 自动存储到 {DATA_DIR}/duck/duck.db
@@ -122,7 +122,7 @@ func main() {
     defer fileDB.Close()
     
     // 使用 workingDir 和相对路径，会自动构建到 {dataDir}/graph/graph.db
-    graph, _ := cayley_driver.NewGraphWithPrefix(dataDir, "graph.db", "")
+    graph, _ := cayley_driver.NewGraphWithNamespace(dataDir, "graph.db", "")
     defer graph.Close()
 }
 ```

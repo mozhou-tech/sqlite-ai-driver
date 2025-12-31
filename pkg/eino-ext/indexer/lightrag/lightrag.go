@@ -108,7 +108,7 @@ func New(opts Options) (*LightRAG, error) {
 		db.Close()
 		return nil, fmt.Errorf("[New] WorkingDir is required")
 	}
-	graph, err := cayley_driver.NewGraphWithPrefix(opts.WorkingDir, opts.GraphPath, "")
+	graph, err := cayley_driver.NewGraphWithNamespace(opts.WorkingDir, opts.GraphPath, "")
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("[New] failed to create graph: %w", err)

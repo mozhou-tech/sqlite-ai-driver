@@ -22,7 +22,7 @@ func TestGraphBasic(t *testing.T) {
 	}()
 
 	// 创建图数据库
-	graph, err := NewGraphWithPrefix(workingDir, dbPath, "")
+	graph, err := NewGraphWithNamespace(workingDir, dbPath, "")
 	if err != nil {
 		t.Fatalf("Failed to create graph: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestGraphMultiplePredicates(t *testing.T) {
 		_ = os.Remove(fullPath)
 	}()
 
-	graph, err := NewGraphWithPrefix(workingDir, dbPath, "")
+	graph, err := NewGraphWithNamespace(workingDir, dbPath, "")
 	if err != nil {
 		t.Fatalf("Failed to create graph: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestGraphQueryChain(t *testing.T) {
 		_ = os.Remove(fullPath)
 	}()
 
-	graph, err := NewGraphWithPrefix(workingDir, dbPath, "")
+	graph, err := NewGraphWithNamespace(workingDir, dbPath, "")
 	if err != nil {
 		t.Fatalf("Failed to create graph: %v", err)
 	}

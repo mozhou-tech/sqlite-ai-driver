@@ -15,7 +15,7 @@ func main() {
 	// 使用 WorkingDir 参数指定工作目录，相对路径会自动构建到 {workingDir}/graph/ 目录
 	// 也可以使用绝对路径，如："/path/to/graph.db"
 	workingDir := "./testdata"
-	graph, err := cayley_driver.NewGraphWithPrefix(workingDir, "cayley_example.db", "")
+	graph, err := cayley_driver.NewGraphWithNamespace(workingDir, "cayley_example.db", "")
 	if err != nil {
 		log.Fatalf("创建图数据库失败: %v", err)
 	}

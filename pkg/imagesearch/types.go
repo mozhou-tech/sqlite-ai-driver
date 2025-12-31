@@ -14,6 +14,7 @@ type Options struct {
 	TextEmbedder  Embedder
 	ImageEmbedder Embedder
 	OCR           OCR
+	TablePrefix   string // 表前缀，默认为 "imagesearch_"
 }
 
 // SearchResult 搜索结果

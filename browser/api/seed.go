@@ -288,7 +288,7 @@ func main() {
 	// 初始化图数据库（使用 Cayley 驱动）
 	// 使用 dbPath 作为 workingDir，相对路径会构建到 {dbPath}/graph/ 目录
 	graphDBPath := "graph.db"
-	graphDB, err := cayley_driver.NewGraphWithPrefix(dbPath, graphDBPath, "")
+	graphDB, err := cayley_driver.NewGraphWithNamespace(dbPath, graphDBPath, "")
 	if err != nil {
 		logrus.WithError(err).Fatal("Failed to create graph database")
 	}

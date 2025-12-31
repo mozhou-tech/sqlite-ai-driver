@@ -203,7 +203,7 @@ func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error)
 		// 使用 graphstore 约定的数据库文件路径 "graphstore.db"
 		// cayley-driver 会自动将其映射到 {workingDir}/graph/graphstore.db
 		// 使用表前缀 "lightrag_" 以区分不同的数据
-		graph, err = cayley_driver.NewGraphWithPrefix(opts.WorkingDir, "graphstore.db", "lightrag_")
+		graph, err = cayley_driver.NewGraphWithNamespace(opts.WorkingDir, "graphstore.db", "lightrag_")
 		if err != nil {
 			db.Close()
 			return nil, fmt.Errorf("failed to create graph database: %w", err)

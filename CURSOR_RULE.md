@@ -142,7 +142,7 @@ import (
 // 创建图数据库实例
 // workingDir 作为基础目录，相对路径会构建到 {workingDir}/graph/ 目录
 workingDir := "./data"
-graph, err := cayley_driver.NewGraphWithPrefix(workingDir, "graph.db", "") // 自动存储到 {workingDir}/graph/graph.db
+graph, err := cayley_driver.NewGraphWithNamespace(workingDir, "graph.db", "") // 自动存储到 {workingDir}/graph/graph.db
 if err != nil {
     log.Fatal(err)
 }

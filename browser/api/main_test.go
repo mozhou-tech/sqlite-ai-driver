@@ -56,7 +56,7 @@ func setupTestDB(t *testing.T) (*sql.DB, cayley_driver.Graph, func()) {
 	// 初始化图数据库
 	// 使用 tmpDir 作为 workingDir，相对路径会构建到 {tmpDir}/graph/ 目录
 	graphDBPath := "graph.db"
-	testGraphDB, err := cayley_driver.NewGraphWithPrefix(tmpDir, graphDBPath, "")
+	testGraphDB, err := cayley_driver.NewGraphWithNamespace(tmpDir, graphDBPath, "")
 	require.NoError(t, err)
 
 	// 保存旧的全局变量
@@ -800,7 +800,7 @@ func setupTestDBWithoutEmbedding(t *testing.T) (*sql.DB, cayley_driver.Graph, fu
 	// 初始化图数据库
 	// 使用 tmpDir 作为 workingDir，相对路径会构建到 {tmpDir}/graph/ 目录
 	graphDBPath := "graph.db"
-	testGraphDB, err := cayley_driver.NewGraphWithPrefix(tmpDir, graphDBPath, "")
+	testGraphDB, err := cayley_driver.NewGraphWithNamespace(tmpDir, graphDBPath, "")
 	require.NoError(t, err)
 
 	// 保存旧的全局变量
