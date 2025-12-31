@@ -143,7 +143,6 @@ type GraphQueryResult struct {
 type DatabaseOptions struct {
 	Name         string
 	WorkingDir   string // 工作目录，作为基础目录
-	Path         string
 	GraphOptions *GraphOptions
 }
 
@@ -172,7 +171,6 @@ type VectorSearchConfig struct {
 type duckdbDatabase struct {
 	db          *sql.DB
 	graph       cayley_driver.Graph
-	path        string
 	collections []*duckdbCollection // 跟踪所有创建的集合，以便在关闭时停止它们的 worker
 	mu          sync.Mutex          // 保护 collections 的并发访问
 }
@@ -187,14 +185,11 @@ type duckdbDatabase struct {
 // - 表创建：使用 CREATE TABLE IF NOT EXISTS，如果表已存在则不会重新创建
 // - 列添加：如果表存在但缺少某些列（如 content_tokens、embedding_status），会自动添加（向后兼容）
 func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error) {
-	if opts.Path == "" {
-		opts.Path = "./lightrag"
-	}
 
 	// 打开DuckDB数据库
 	// 路径会被 duckdb-driver 统一映射到共享数据库，目录会自动创建
 	// 如果数据库文件已存在，会打开现有数据库；如果不存在，会自动创建
-	db, err := sql.Open("duckdb", opts.Path)
+	db, err := sql.Open("duckdb", duckdb_driver.DB_FILE)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -210,7 +205,7 @@ func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error)
 		// 使用 graphstore 约定的数据库文件路径 "graphstore.db"
 		// cayley-driver 会自动将其映射到 {workingDir}/graph/graphstore.db
 		// 使用表前缀 "lightrag_" 以区分不同的数据
-		graph, err = cayley_driver.NewGraphWithNamespace(opts.WorkingDir, "graphstore.db", "lightrag_")
+		graph, err = cayley_driver.NewGraphWithNamespace(opts.WorkingDir, cayley_driver.GRAPH_DB_FILE, "lightrag_")
 		if err != nil {
 			db.Close()
 			return nil, fmt.Errorf("failed to create graph database: %w", err)
@@ -220,7 +215,6 @@ func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error)
 	return &duckdbDatabase{
 		db:    db,
 		graph: graph,
-		path:  opts.Path,
 	}, nil
 }
 

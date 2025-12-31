@@ -86,7 +86,6 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 	db, err := CreateDatabase(ctx, DatabaseOptions{
 		Name:       "lightrag",
 		WorkingDir: r.workingDir,
-		Path:       "lightrag", // 任意标识符，都会被 duckdb-driver 映射到共享数据库
 		GraphOptions: &GraphOptions{
 			Enabled: true,
 			Backend: "cayley",

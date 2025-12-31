@@ -22,7 +22,6 @@ type Embedder interface {
 type Options struct {
 	Embedder   Embedder
 	WorkingDir string // 工作目录，作为基础目录
-	GraphDB    string // 图谱数据库路径（用于 cayley-driver）
 	TableName  string // DuckDB 表名，默认为 "graphstore_entities"
 }
 
@@ -51,13 +50,8 @@ func New(opts Options) (*GraphStore, error) {
 		return nil, fmt.Errorf("WorkingDir is required")
 	}
 
-	graphDB := opts.GraphDB
-	if graphDB == "" {
-		graphDB = "graphstore.db"
-	}
-
 	// 创建图谱数据库（使用 graphstore_ 表前缀）
-	graph, err := cayley_driver.NewGraphWithNamespace(workingDir, graphDB, "graphstore_")
+	graph, err := cayley_driver.NewGraphWithNamespace(workingDir, cayley_driver.GRAPH_DB_FILE, "graphstore_")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create graph: %w", err)
 	}
