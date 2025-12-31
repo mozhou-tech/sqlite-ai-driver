@@ -79,31 +79,6 @@ func init() {
 	}()
 }
 
-// replaceDriverWithReflection 使用反射替换已注册的驱动
-// 这是一个 hack，访问 database/sql 的内部实现
-// 注意：这依赖于 Go 的内部实现，可能会在版本更新时失效
-func replaceDriverWithReflection(name string, newDriver driver.Driver) {
-	// database/sql 包内部使用一个全局的 driversMu 互斥锁和 drivers map
-	// 我们需要访问这个 map 并替换驱动
-	// 由于 drivers 是 database/sql 包的未导出变量，我们需要使用反射 + unsafe
-
-	// 实际上，由于 database/sql 包的内部实现可能会变化
-	// 我们采用一个更实用的方法：不替换驱动，而是接受现状
-	// 如果 modernc.org/sqlite 先注册，我们的包装器不会被使用
-	// 在这种情况下，用户需要使用绝对路径而不是相对路径
-
-	// 暂时不实现反射替换，因为这太危险且不可靠
-	// 用户需要确保我们的包在 modernc.org/sqlite 之前被导入
-	// 或者：使用绝对路径而不是相对路径
-
-	// 注意：由于 modernc.org/sqlite 会在 init() 中自动注册驱动，
-	// 而我们的 init() 在它的 init() 之后执行，所以我们的注册会失败。
-	// 在这种情况下，ensureDataPath 不会被调用，相对路径功能不会工作。
-	// 用户需要使用绝对路径，或者确保我们的包在 modernc.org/sqlite 之前被导入。
-	_ = name
-	_ = newDriver
-}
-
 // sqliteDriverWrapper 包装 SQLite 驱动，自动处理路径和 PRAGMA 设置
 type sqliteDriverWrapper struct{}
 

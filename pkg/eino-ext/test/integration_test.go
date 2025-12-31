@@ -31,10 +31,10 @@ import (
 
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/transformer/splitter/tfidf"
-	duckdbindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/dockdb"
+	duckdbindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/duckdb"
 	lightragindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/lightrag"
-	duckdbretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/dockdb"
 	lightragretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/lightrag"
+	duckdbretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec"
 )
 
 type simpleEmbedder struct {

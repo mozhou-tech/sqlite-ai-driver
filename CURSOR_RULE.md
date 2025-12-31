@@ -16,9 +16,9 @@
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver` - 图数据库驱动（独立 API）
 
 3. **Eino 扩展包**：
-   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/dockdb` - DuckDB 索引器
+   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/duckdb` - DuckDB 索引器
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/lightrag` - LightRAG 索引器
-   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/dockdb` - DuckDB 检索器
+   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec` - DuckDB 检索器（包名：duckdb）
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/lightrag` - LightRAG 检索器
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/transformer/splitter/tfidf` - TF-IDF 文档分割器
 
@@ -126,7 +126,7 @@ import (
     "context"
     "database/sql"
     _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
-    "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/dockdb"
+    duckdbindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/duckdb"
 )
 
 // 打开 DuckDB 连接
@@ -134,7 +134,7 @@ db, _ := sql.Open("duckdb", "duck.db")
 defer db.Close()
 
 // 创建索引器
-indexer, err := dockdb.NewIndexer(dockdb.IndexerConfig{
+indexer, err := duckdbindexer.NewIndexer(ctx, &duckdbindexer.IndexerConfig{
     DB:        db,
     TableName: "documents",
     Embedding: embeddingClient, // 需要提供 embedding.Embedder 实例
@@ -148,7 +148,7 @@ import (
     "context"
     "database/sql"
     _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
-    "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/dockdb"
+    duckdbretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec"
 )
 
 // 打开 DuckDB 连接
@@ -156,10 +156,11 @@ db, _ := sql.Open("duckdb", "duck.db")
 defer db.Close()
 
 // 创建检索器
-retriever, err := dockdb.NewRetriever(dockdb.RetrieverConfig{
+retriever, err := duckdbretriever.NewRetriever(ctx, &duckdbretriever.RetrieverConfig{
     DB:        db,
     TableName: "documents",
     Embedding: embeddingClient,
+    TopK:      5,
 })
 ```
 
