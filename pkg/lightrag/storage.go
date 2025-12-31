@@ -15,6 +15,7 @@ import (
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	duckdb_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
 	"github.com/sirupsen/logrus"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
 
@@ -1206,12 +1207,12 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 	// 使用独立的 context，避免使用可能被取消的请求 context
 	processCtx := context.Background()
 
-	// 查询所有 pending 状态的文档，限制每次处理的数量
+	// 查询所有 pending 状态的文档，限制每次处理的数量（并发处理100个）
 	selectSQL := fmt.Sprintf(`
 		SELECT id, content, metadata
 		FROM %s
 		WHERE embedding_status = 'pending'
-		LIMIT 10
+		LIMIT 100
 	`, c.tableName)
 
 	rows, err := c.db.QueryContext(processCtx, selectSQL)
@@ -1247,146 +1248,170 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 		return
 	}
 
-	logrus.WithField("count", len(pendingDocs)).Debug("Processing pending embeddings")
+	logrus.WithField("count", len(pendingDocs)).Info("Processing pending embeddings concurrently")
 
-	// 处理每个文档的 embedding
+	// 使用 errgroup 并发处理所有文档
+	g, gCtx := errgroup.WithContext(processCtx)
+
+	// 限制并发数量，避免过多并发导致资源耗尽
+	// 使用 semaphore 模式控制并发数
+	sem := make(chan struct{}, 100) // 最多100个并发
+
 	for _, doc := range pendingDocs {
-		// 检查 worker context 是否已取消
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
+		doc := doc // 避免闭包问题
 
-		// 将状态更新为 processing
-		updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND embedding_status = 'pending'`, c.tableName)
-		result, err := c.db.ExecContext(processCtx, updateStatusSQL, doc.id)
-		if err != nil {
-			logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status to processing")
-			continue
-		}
+		g.Go(func() error {
+			// 获取信号量
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-gCtx.Done():
+				return gCtx.Err()
+			}
 
-		// 检查是否成功更新（可能被其他 worker 处理了）
-		rowsAffected, _ := result.RowsAffected()
-		if rowsAffected == 0 {
-			continue // 文档已被其他 worker 处理
-		}
+			// 检查 worker context 是否已取消
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
 
-		// 如果chunk不超过10个字符，则跳过嵌入处理
-		if len([]rune(doc.content)) <= 10 {
-			logrus.WithFields(logrus.Fields{
-				"doc_id":      doc.id,
-				"content_len": len([]rune(doc.content)),
-			}).Debug("Skipping embedding for chunk that is too short (<=10 characters)")
-			// 直接标记为 completed，跳过嵌入
-			updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'completed' WHERE id = ?`, c.tableName)
-			_, err = c.db.ExecContext(processCtx, updateStatusSQL, doc.id)
+			// 将状态更新为 processing
+			updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND embedding_status = 'pending'`, c.tableName)
+			result, err := c.db.ExecContext(processCtx, updateStatusSQL, doc.id)
 			if err != nil {
-				logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status to completed")
-			}
-			continue
-		}
-
-		// 解析 metadata
-		var metadataMap map[string]any
-		if doc.metadata != "" {
-			if err := json.Unmarshal([]byte(doc.metadata), &metadataMap); err != nil {
-				metadataMap = make(map[string]any)
-			}
-		} else {
-			metadataMap = make(map[string]any)
-		}
-
-		// 构建文档对象
-		docMap := map[string]any{
-			"id":       doc.id,
-			"content":  doc.content,
-			"metadata": metadataMap,
-		}
-		for k, v := range metadataMap {
-			docMap[k] = v
-		}
-
-		// 为每个向量搜索配置生成 embedding
-		allSuccess := true
-		for _, vs := range c.vectorSearches {
-			if vs.config.DocToEmbedding == nil {
-				continue
+				logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status to processing")
+				return nil // 不返回错误，继续处理其他文档
 			}
 
-			// 等待速率限制器允许（每秒最多5次）
-			limiter := c.getEmbeddingLimiter()
-			if err := limiter.Wait(processCtx); err != nil {
-				logrus.WithError(err).WithFields(logrus.Fields{
+			// 检查是否成功更新（可能被其他 worker 处理了）
+			rowsAffected, _ := result.RowsAffected()
+			if rowsAffected == 0 {
+				return nil // 文档已被其他 worker 处理
+			}
+
+			// 如果chunk不超过10个字符，则跳过嵌入处理
+			if len([]rune(doc.content)) <= 10 {
+				logrus.WithFields(logrus.Fields{
 					"doc_id":      doc.id,
-					"content_len": len(doc.content),
-				}).Error("Rate limiter wait failed")
-				allSuccess = false
-				continue
-			}
-
-			// 生成 embedding（DocToEmbedding 内部会使用 context.Background()，避免 context canceled 错误）
-			embedding, err := vs.config.DocToEmbedding(docMap)
-			if err != nil {
-				// 检查是否是 context canceled 错误
-				if err == context.Canceled || err == context.DeadlineExceeded {
-					logrus.WithError(err).WithFields(logrus.Fields{
-						"doc_id":      doc.id,
-						"content_len": len(doc.content),
-						"note":        "This should not happen as we use context.Background()",
-					}).Warn("Embedding failed due to context cancellation (unexpected)")
-				} else {
-					logrus.WithError(err).WithFields(logrus.Fields{
-						"doc_id":      doc.id,
-						"content_len": len(doc.content),
-						"source":      "background_worker",
-					}).Error("Failed to generate embedding in background worker")
-				}
-				allSuccess = false
-				continue
-			}
-
-			if len(embedding) > 0 {
-				// 转换为字符串格式
-				vectorStr := "["
-				for i, v := range embedding {
-					if i > 0 {
-						vectorStr += ", "
-					}
-					vectorStr += fmt.Sprintf("%g", v)
-				}
-				vectorStr += "]"
-				vectorColumn := "vector_" + vs.config.Identifier
-				updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
-				_, err = c.db.ExecContext(processCtx, updateSQL, vectorStr, doc.id)
+					"content_len": len([]rune(doc.content)),
+				}).Debug("Skipping embedding for chunk that is too short (<=10 characters)")
+				// 直接标记为 completed，跳过嵌入
+				updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'completed' WHERE id = ?`, c.tableName)
+				_, err = c.db.ExecContext(processCtx, updateStatusSQL, doc.id)
 				if err != nil {
-					logrus.WithError(err).WithFields(logrus.Fields{
-						"doc_id":        doc.id,
-						"vector_column": vectorColumn,
-					}).Error("Failed to update vector column")
-					allSuccess = false
-				} else {
-					logrus.WithFields(logrus.Fields{
-						"doc_id":      doc.id,
-						"vector_dim":  len(embedding),
-						"content_len": len(doc.content),
-					}).Debug("Successfully generated and stored embedding")
+					logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status to completed")
+				}
+				return nil
+			}
+
+			// 解析 metadata
+			var metadataMap map[string]any
+			if doc.metadata != "" {
+				if err := json.Unmarshal([]byte(doc.metadata), &metadataMap); err != nil {
+					metadataMap = make(map[string]any)
 				}
 			} else {
-				logrus.WithField("doc_id", doc.id).Warn("Empty embedding vector generated")
-				allSuccess = false
+				metadataMap = make(map[string]any)
 			}
-		}
 
-		// 更新状态
-		status := "completed"
-		if !allSuccess {
-			status = "failed"
-		}
-		updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = ? WHERE id = ?`, c.tableName)
-		_, err = c.db.ExecContext(processCtx, updateStatusSQL, status, doc.id)
-		if err != nil {
-			logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status")
-		}
+			// 构建文档对象
+			docMap := map[string]any{
+				"id":       doc.id,
+				"content":  doc.content,
+				"metadata": metadataMap,
+			}
+			for k, v := range metadataMap {
+				docMap[k] = v
+			}
+
+			// 为每个向量搜索配置生成 embedding
+			allSuccess := true
+			for _, vs := range c.vectorSearches {
+				if vs.config.DocToEmbedding == nil {
+					continue
+				}
+
+				// 等待速率限制器允许（每秒最多5次）
+				limiter := c.getEmbeddingLimiter()
+				if err := limiter.Wait(processCtx); err != nil {
+					logrus.WithError(err).WithFields(logrus.Fields{
+						"doc_id":      doc.id,
+						"content_len": len(doc.content),
+					}).Error("Rate limiter wait failed")
+					allSuccess = false
+					continue
+				}
+
+				// 生成 embedding（DocToEmbedding 内部会使用 context.Background()，避免 context canceled 错误）
+				embedding, err := vs.config.DocToEmbedding(docMap)
+				if err != nil {
+					// 检查是否是 context canceled 错误
+					if err == context.Canceled || err == context.DeadlineExceeded {
+						logrus.WithError(err).WithFields(logrus.Fields{
+							"doc_id":      doc.id,
+							"content_len": len(doc.content),
+							"note":        "This should not happen as we use context.Background()",
+						}).Warn("Embedding failed due to context cancellation (unexpected)")
+					} else {
+						logrus.WithError(err).WithFields(logrus.Fields{
+							"doc_id":      doc.id,
+							"content_len": len(doc.content),
+							"source":      "background_worker",
+						}).Error("Failed to generate embedding in background worker")
+					}
+					allSuccess = false
+					continue
+				}
+
+				if len(embedding) > 0 {
+					// 转换为字符串格式
+					vectorStr := "["
+					for i, v := range embedding {
+						if i > 0 {
+							vectorStr += ", "
+						}
+						vectorStr += fmt.Sprintf("%g", v)
+					}
+					vectorStr += "]"
+					vectorColumn := "vector_" + vs.config.Identifier
+					updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
+					_, err = c.db.ExecContext(processCtx, updateSQL, vectorStr, doc.id)
+					if err != nil {
+						logrus.WithError(err).WithFields(logrus.Fields{
+							"doc_id":        doc.id,
+							"vector_column": vectorColumn,
+						}).Error("Failed to update vector column")
+						allSuccess = false
+					} else {
+						logrus.WithFields(logrus.Fields{
+							"doc_id":      doc.id,
+							"vector_dim":  len(embedding),
+							"content_len": len(doc.content),
+						}).Debug("Successfully generated and stored embedding")
+					}
+				} else {
+					logrus.WithField("doc_id", doc.id).Warn("Empty embedding vector generated")
+					allSuccess = false
+				}
+			}
+
+			// 更新状态
+			status := "completed"
+			if !allSuccess {
+				status = "failed"
+			}
+			updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = ? WHERE id = ?`, c.tableName)
+			_, err = c.db.ExecContext(processCtx, updateStatusSQL, status, doc.id)
+			if err != nil {
+				logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status")
+			}
+			return nil
+		})
+	}
+
+	// 等待所有并发任务完成
+	if err := g.Wait(); err != nil {
+		logrus.WithError(err).Error("Error processing pending embeddings")
 	}
 }
