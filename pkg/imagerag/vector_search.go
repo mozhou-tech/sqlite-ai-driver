@@ -15,7 +15,7 @@ import (
 type VectorSearch struct {
 	db               *sql.DB
 	tableName        string
-	vectorColumn     string
+	vectorColumn     string // 'text_embedding' 或 'image_embedding'
 	embedder         Embedder
 	docToEmbedding   func(map[string]any) ([]float64, error)
 	embeddingLimiter *rate.Limiter
@@ -23,25 +23,10 @@ type VectorSearch struct {
 }
 
 // addVectorSearch 添加向量搜索
-func (r *ImageRAG) addVectorSearch(collection *Collection, identifier string, docToEmbedding func(map[string]any) ([]float64, error)) (*VectorSearch, error) {
-	vectorColumn := "vector_" + identifier
-
-	// 检查并创建vector列
-	checkColumnSQL := fmt.Sprintf(`
-		SELECT COUNT(*) 
-		FROM information_schema.columns 
-		WHERE table_name = '%s' AND column_name = ?
-	`, collection.tableName)
-
-	var count int
-	err := r.db.QueryRowContext(context.Background(), checkColumnSQL, vectorColumn).Scan(&count)
-	if err == nil && count == 0 {
-		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s FLOAT[]`, collection.tableName, vectorColumn)
-		_, err = r.db.ExecContext(context.Background(), alterTableSQL)
-		if err != nil {
-			return nil, fmt.Errorf("failed to add vector column: %w", err)
-		}
-	}
+// vectorColumn 应该是 'text_embedding' 或 'image_embedding'
+func (r *ImageRAG) addVectorSearch(collection *Collection, vectorColumn string, docToEmbedding func(map[string]any) ([]float64, error)) (*VectorSearch, error) {
+	// vectorColumn 已经是 'text_embedding' 或 'image_embedding'，不需要添加前缀
+	// 列已经在 createCollection 中创建了
 
 	return &VectorSearch{
 		db:             r.db,
@@ -72,7 +57,7 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 	}
 	vectorStr += "]"
 
-	// 构建WHERE子句
+	// 构建WHERE子句（根据对应的 embedding 字段是否有值来过滤）
 	whereClause := fmt.Sprintf("%s IS NOT NULL AND embedding_status = 'completed'", v.vectorColumn)
 	var queryArgs []any
 
@@ -175,13 +160,13 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 		v.embeddingLimiter = rate.NewLimiter(rate.Limit(5), 1)
 	})
 
-	// 查询pending状态的文档
+	// 查询pending状态的文档（只查询对应 embedding 字段为空的文档）
 	querySQL := fmt.Sprintf(`
 		SELECT id, content, metadata
 		FROM %s
-		WHERE embedding_status = 'pending'
+		WHERE %s IS NULL AND embedding_status = 'pending'
 		LIMIT 10
-	`, v.tableName)
+	`, v.tableName, v.vectorColumn)
 
 	rows, err := v.db.QueryContext(ctx, querySQL)
 	if err != nil {
@@ -204,7 +189,7 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 		}
 
 		// 更新状态为processing
-		updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND embedding_status = 'pending'`, v.tableName)
+		updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND %s IS NULL AND embedding_status = 'pending'`, v.tableName, v.vectorColumn)
 		_, _ = v.db.ExecContext(ctx, updateStatusSQL, id)
 
 		// 生成embedding
@@ -224,8 +209,8 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 				}
 				vectorStr += "]"
 
-				// 更新向量列
-				updateVectorSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[], embedding_status = 'completed' WHERE id = ?`, v.tableName, v.vectorColumn)
+				// 更新向量列（只更新对应的 embedding 字段，不改变 embedding_status）
+				updateVectorSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, v.tableName, v.vectorColumn)
 				_, _ = v.db.ExecContext(ctx, updateVectorSQL, vectorStr, id)
 			} else {
 				// 更新状态为failed

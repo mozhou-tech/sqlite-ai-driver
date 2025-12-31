@@ -30,6 +30,7 @@ func getProjectRootTestdata() string {
 func TestDuckDBDriver_Open(t *testing.T) {
 	// 使用工程根目录的 testdata
 	testdataDir := getProjectRootTestdata()
+	// 注意：无论传入什么路径，都会映射到共享数据库 testdata/indexing/all.db
 	dbPath := filepath.Join(testdataDir, "duckdb_test.db")
 
 	// 确保 testdata 目录存在
@@ -37,9 +38,11 @@ func TestDuckDBDriver_Open(t *testing.T) {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 
-	// 清理测试文件
+	// 清理测试文件（共享数据库文件）
 	defer func() {
-		_ = os.Remove(dbPath)
+		sharedDBPath := filepath.Join(testdataDir, "indexing", "all.db")
+		_ = os.Remove(sharedDBPath)
+		_ = os.RemoveAll(filepath.Join(testdataDir, "indexing"))
 	}()
 
 	db, err := sql.Open("duckdb", dbPath)
@@ -55,7 +58,7 @@ func TestDuckDBDriver_Open(t *testing.T) {
 }
 
 func TestDuckDBDriver_RelativePath(t *testing.T) {
-	// 测试相对路径，应该自动构建到 testdata/duck 目录
+	// 测试相对路径，应该自动构建到 testdata/indexing/all.db（共享数据库）
 	dbPath := "relative_test.db"
 
 	// 获取工程根目录的 testdata
@@ -74,7 +77,7 @@ func TestDuckDBDriver_RelativePath(t *testing.T) {
 		} else {
 			os.Setenv("DATA_DIR", originalDataDir)
 		}
-		_ = os.RemoveAll(filepath.Join(testdataDir, "duck"))
+		_ = os.RemoveAll(filepath.Join(testdataDir, "indexing"))
 	}()
 
 	db, err := sql.Open("duckdb", dbPath)
@@ -106,9 +109,9 @@ func TestDuckDBDriver_RelativePath(t *testing.T) {
 	}
 	defer db.Close()
 
-	// 验证文件确实创建在 testdata/duck 目录
+	// 验证文件确实创建在 testdata/indexing/all.db（共享数据库）
 	// 注意：DuckDB 可能使用内存模式或延迟创建文件，所以文件可能不会立即存在
-	expectedPath := filepath.Join(testdataDir, "duck", dbPath)
+	expectedPath := filepath.Join(testdataDir, "indexing", "all.db")
 	absExpectedPath, _ := filepath.Abs(expectedPath)
 
 	// 检查文件是否存在（相对路径或绝对路径）
@@ -134,13 +137,16 @@ func TestDuckDBDriver_RelativePath(t *testing.T) {
 
 func TestDuckDBDriver_CreateTable(t *testing.T) {
 	testdataDir := getProjectRootTestdata()
+	// 注意：无论传入什么路径，都会映射到共享数据库 testdata/indexing/all.db
 	dbPath := filepath.Join(testdataDir, "duckdb_create.db")
 
 	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
-		_ = os.Remove(dbPath)
+		sharedDBPath := filepath.Join(testdataDir, "indexing", "all.db")
+		_ = os.Remove(sharedDBPath)
+		_ = os.RemoveAll(filepath.Join(testdataDir, "indexing"))
 	}()
 
 	db, err := sql.Open("duckdb", dbPath)
@@ -181,13 +187,16 @@ func TestDuckDBDriver_CreateTable(t *testing.T) {
 
 func TestDuckDBDriver_Transaction(t *testing.T) {
 	testdataDir := getProjectRootTestdata()
+	// 注意：无论传入什么路径，都会映射到共享数据库 testdata/indexing/all.db
 	dbPath := filepath.Join(testdataDir, "duckdb_tx.db")
 
 	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
-		_ = os.Remove(dbPath)
+		sharedDBPath := filepath.Join(testdataDir, "indexing", "all.db")
+		_ = os.Remove(sharedDBPath)
+		_ = os.RemoveAll(filepath.Join(testdataDir, "indexing"))
 	}()
 
 	db, err := sql.Open("duckdb", dbPath)
@@ -237,13 +246,16 @@ func TestDuckDBDriver_Transaction(t *testing.T) {
 
 func TestDuckDBDriver_Extensions(t *testing.T) {
 	testdataDir := getProjectRootTestdata()
+	// 注意：无论传入什么路径，都会映射到共享数据库 testdata/indexing/all.db
 	dbPath := filepath.Join(testdataDir, "duckdb_ext.db")
 
 	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
-		_ = os.Remove(dbPath)
+		sharedDBPath := filepath.Join(testdataDir, "indexing", "all.db")
+		_ = os.Remove(sharedDBPath)
+		_ = os.RemoveAll(filepath.Join(testdataDir, "indexing"))
 	}()
 
 	db, err := sql.Open("duckdb", dbPath)
@@ -264,13 +276,16 @@ func TestDuckDBDriver_Extensions(t *testing.T) {
 
 func TestDuckDBDriver_QueryParams(t *testing.T) {
 	testdataDir := getProjectRootTestdata()
+	// 注意：无论传入什么路径，都会映射到共享数据库 testdata/indexing/all.db
 	dbPath := filepath.Join(testdataDir, "duckdb_params.db")
 
 	if err := os.MkdirAll(testdataDir, 0755); err != nil {
 		t.Fatalf("Failed to create testdata directory: %v", err)
 	}
 	defer func() {
-		_ = os.Remove(dbPath)
+		sharedDBPath := filepath.Join(testdataDir, "indexing", "all.db")
+		_ = os.Remove(sharedDBPath)
+		_ = os.RemoveAll(filepath.Join(testdataDir, "indexing"))
 	}()
 
 	// 测试带查询参数的 DSN
@@ -283,5 +298,104 @@ func TestDuckDBDriver_QueryParams(t *testing.T) {
 
 	if err := db.Ping(); err != nil {
 		t.Fatalf("Failed to ping database: %v", err)
+	}
+}
+
+// TestDuckDBDriver_SharedDatabase 测试不同路径都映射到同一个共享数据库文件
+func TestDuckDBDriver_SharedDatabase(t *testing.T) {
+	testdataDir := getProjectRootTestdata()
+	if err := os.MkdirAll(testdataDir, 0755); err != nil {
+		t.Fatalf("Failed to create testdata directory: %v", err)
+	}
+
+	// 设置环境变量指向工程根目录的 testdata
+	originalDataDir := os.Getenv("DATA_DIR")
+	os.Setenv("DATA_DIR", testdataDir)
+	defer func() {
+		if originalDataDir == "" {
+			os.Unsetenv("DATA_DIR")
+		} else {
+			os.Setenv("DATA_DIR", originalDataDir)
+		}
+		sharedDBPath := filepath.Join(testdataDir, "indexing", "all.db")
+		_ = os.Remove(sharedDBPath)
+		_ = os.RemoveAll(filepath.Join(testdataDir, "indexing"))
+	}()
+
+	ctx := context.Background()
+
+	// 使用不同的路径打开数据库
+	path1 := "test1.db"
+	path2 := "/absolute/path/test2.db"
+	path3 := "relative/test3.db"
+
+	// 打开第一个数据库并创建表
+	db1, err := sql.Open("duckdb", path1)
+	if err != nil {
+		t.Fatalf("Failed to open database with path1: %v", err)
+	}
+	defer db1.Close()
+
+	_, err = db1.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS shared_test_table1 (id INTEGER, data VARCHAR(100))`)
+	if err != nil {
+		t.Fatalf("Failed to create table in db1: %v", err)
+	}
+
+	_, err = db1.ExecContext(ctx, `INSERT INTO shared_test_table1 (id, data) VALUES (1, 'data1')`)
+	if err != nil {
+		t.Fatalf("Failed to insert data in db1: %v", err)
+	}
+
+	// 使用第二个路径打开数据库，应该访问同一个数据库文件
+	db2, err := sql.Open("duckdb", path2)
+	if err != nil {
+		t.Fatalf("Failed to open database with path2: %v", err)
+	}
+	defer db2.Close()
+
+	// 验证可以访问在 db1 中创建的表和数据
+	var data string
+	err = db2.QueryRowContext(ctx, `SELECT data FROM shared_test_table1 WHERE id = 1`).Scan(&data)
+	if err != nil {
+		t.Fatalf("Failed to query data from db2 (should access same database): %v", err)
+	}
+
+	if data != "data1" {
+		t.Errorf("Expected data='data1', got '%s'", data)
+	}
+
+	// 使用第三个路径打开数据库，也应该访问同一个数据库文件
+	db3, err := sql.Open("duckdb", path3)
+	if err != nil {
+		t.Fatalf("Failed to open database with path3: %v", err)
+	}
+	defer db3.Close()
+
+	// 在 db3 中插入数据
+	_, err = db3.ExecContext(ctx, `INSERT INTO shared_test_table1 (id, data) VALUES (2, 'data2')`)
+	if err != nil {
+		t.Fatalf("Failed to insert data in db3: %v", err)
+	}
+
+	// 在 db1 中验证可以访问 db3 插入的数据
+	var count int
+	err = db1.QueryRowContext(ctx, `SELECT COUNT(*) FROM shared_test_table1`).Scan(&count)
+	if err != nil {
+		t.Fatalf("Failed to query count from db1: %v", err)
+	}
+
+	if count != 2 {
+		t.Errorf("Expected 2 rows, got %d", count)
+	}
+
+	// 验证共享数据库文件路径
+	expectedSharedPath := filepath.Join(testdataDir, "indexing", "all.db")
+	absExpectedPath, _ := filepath.Abs(expectedSharedPath)
+
+	// 检查文件是否存在（可能还没有刷新到磁盘，但数据库应该可以访问）
+	if _, err := os.Stat(absExpectedPath); err != nil {
+		// 文件可能还没有创建（DuckDB 延迟创建），但数据库应该可以正常工作
+		// 验证数据库可以正常访问即可
+		t.Logf("Shared database file may not exist yet at %s (this is normal for DuckDB), but database is accessible", absExpectedPath)
 	}
 }

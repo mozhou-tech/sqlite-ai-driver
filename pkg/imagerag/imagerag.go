@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -54,18 +52,11 @@ func (r *ImageRAG) InitializeStorages(ctx context.Context) error {
 		return nil
 	}
 
-	if r.workingDir == "" {
-		r.workingDir = "./imagerag_storage"
-	}
-
-	// 确保目录存在
-	if err := os.MkdirAll(r.workingDir, 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %w", err)
-	}
-
 	// 打开DuckDB数据库
-	dbPath := filepath.Join(r.workingDir, "imagerag.db")
-	db, err := sql.Open("duckdb", dbPath)
+	// 注意：无论传入什么路径，都会被 duckdb-driver 统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
+	// 目录创建由 duckdb-driver 自动处理，无需在此处创建
+	// 使用简单的路径标识即可，实际路径会被映射到共享数据库
+	db, err := sql.Open("duckdb", "imagerag.db")
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -85,9 +76,9 @@ func (r *ImageRAG) InitializeStorages(ctx context.Context) error {
 	}
 	r.texts = texts
 
-	// 初始化图片向量搜索
+	// 初始化图片向量搜索（使用 image_embedding 字段）
 	if r.imageEmbedder != nil {
-		vector, err := r.addVectorSearch(images, "images_vector", func(doc map[string]any) ([]float64, error) {
+		vector, err := r.addVectorSearch(images, "image_embedding", func(doc map[string]any) ([]float64, error) {
 			// 优先使用OCR文本，如果没有则使用图片路径描述
 			ocrText, _ := doc["ocr_text"].(string)
 			if ocrText == "" {
@@ -103,9 +94,9 @@ func (r *ImageRAG) InitializeStorages(ctx context.Context) error {
 		r.imagesVector = vector
 	}
 
-	// 初始化文本向量搜索
+	// 初始化文本向量搜索（使用 text_embedding 字段）
 	if r.textEmbedder != nil {
-		vector, err := r.addVectorSearch(texts, "texts_vector", func(doc map[string]any) ([]float64, error) {
+		vector, err := r.addVectorSearch(texts, "text_embedding", func(doc map[string]any) ([]float64, error) {
 			// 使用文本内容生成embedding
 			content, _ := doc["content"].(string)
 			if content == "" {

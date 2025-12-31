@@ -54,36 +54,20 @@ func getDataDir() string {
 	return "./data"
 }
 
-// ensureDataPath 确保数据路径存在，如果是相对路径则自动构建到 duck 子目录
+// ensureDataPath 确保数据路径存在，所有路径都统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
+// 无论输入是相对路径还是绝对路径，都会映射到同一个共享数据库文件
+// 不同的业务模块应使用不同的表名前缀来区分（如 lightrag_、imagerag_）
 func ensureDataPath(dsn string) (string, error) {
-	// 如果 DSN 包含路径分隔符或已经是完整路径，直接使用
-	if strings.Contains(dsn, string(filepath.Separator)) || strings.Contains(dsn, "/") || strings.Contains(dsn, "\\") {
-		// 提取路径部分（去掉查询参数）
-		pathPart := dsn
-		if idx := strings.Index(dsn, "?"); idx != -1 {
-			pathPart = dsn[:idx]
-		}
-
-		// 确保目录存在
-		dir := filepath.Dir(pathPart)
-		if dir != "." && dir != "" {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				return "", fmt.Errorf("failed to create directory: %w", err)
-			}
-		}
-		return dsn, nil
-	}
-
-	// 如果是相对路径（不包含路径分隔符），自动构建到 duck 子目录
 	dataDir := getDataDir()
-	// 提取查询参数
+
+	// 提取查询参数（如果有）
 	queryPart := ""
 	if idx := strings.Index(dsn, "?"); idx != -1 {
 		queryPart = dsn[idx:]
-		dsn = dsn[:idx]
 	}
 
-	fullPath := filepath.Join(dataDir, "duck", dsn) + queryPart
+	// 统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
+	fullPath := filepath.Join(dataDir, "indexing", "all.db") + queryPart
 
 	// 转换为绝对路径
 	absPath, err := filepath.Abs(fullPath)
@@ -120,9 +104,9 @@ func ensureReadWriteMode(dsn string) string {
 }
 
 // Open 实现 driver.Driver 接口
-// name 参数可以是：
-// - 完整路径：/path/to/duck.db 或 /path/to/duck.db?access_mode=read_write
-// - 相对路径（如 "duck.db"）：自动构建到 {DATA_DIR}/duck/ 目录
+// name 参数可以是任意路径（相对或绝对），但都会被统一映射到共享数据库文件 {DATA_DIR}/indexing/all.db
+// 不同的业务模块应使用不同的表名前缀来区分（如 lightrag_、imagerag_）
+// 查询参数会被保留（如 ?access_mode=read_write）
 func (d *duckdbDriver) Open(name string) (driver.Conn, error) {
 	// 自动构建路径并创建目录
 	finalPath, err := ensureDataPath(name)
