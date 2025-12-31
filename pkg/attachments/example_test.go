@@ -55,12 +55,41 @@ func ExampleManager() {
 	fmt.Printf("文件内容: %s\n", string(readData))
 
 	// 列出所有文件
-	allFiles, err := mgr.List("")
+	allFileIDs, err := mgr.List("")
 	if err != nil {
 		fmt.Printf("列出文件失败: %v\n", err)
 		return
 	}
-	fmt.Printf("文件总数: %d\n", len(allFiles))
+	fmt.Printf("文件总数: %d\n", len(allFileIDs))
+
+	// 存储带元数据的文件
+	mimeType := "text/plain"
+	metadata := map[string]interface{}{
+		"author": "example",
+		"tags":   []string{"example", "test"},
+	}
+	fileID2, err := mgr.StoreWithMetadata("example2.txt", []byte("With metadata"), &mimeType, metadata)
+	if err != nil {
+		fmt.Printf("存储文件失败: %v\n", err)
+		return
+	}
+	fmt.Printf("文件已存储，ID: %s\n", fileID2)
+
+	// 获取带元数据的文件信息
+	info2, err := mgr.GetInfo(fileID2)
+	if err != nil {
+		fmt.Printf("获取文件信息失败: %v\n", err)
+		return
+	}
+	fmt.Printf("MIME类型: %s, 元数据: %v\n", info2.MimeType, info2.Metadata)
+
+	// 列出所有文件信息（从数据库）
+	allFiles, err := mgr.ListAll("")
+	if err != nil {
+		fmt.Printf("列出文件失败: %v\n", err)
+		return
+	}
+	fmt.Printf("数据库中的文件总数: %d\n", len(allFiles))
 
 	// 删除文件
 	if err := mgr.Delete(fileID); err != nil {
@@ -68,6 +97,12 @@ func ExampleManager() {
 		return
 	}
 	fmt.Println("文件已删除")
+
+	// 关闭管理器（关闭数据库连接）
+	if err := mgr.Close(); err != nil {
+		fmt.Printf("关闭管理器失败: %v\n", err)
+		return
+	}
 }
 
 func ExampleManager_StoreFromReader() {
@@ -84,10 +119,12 @@ func ExampleManager_StoreFromReader() {
 
 	// 从文件读取并存储
 	sourceFile := filepath.Join(tmpDir, "source.txt")
-	os.WriteFile(sourceFile, []byte("Source file content"), 0644)
+	_ = os.WriteFile(sourceFile, []byte("Source file content"), 0644)
 
 	file, _ := os.Open(sourceFile)
 	defer file.Close()
+
+	defer mgr.Close()
 
 	fileID, err := mgr.StoreFromReader("stored.txt", file)
 	if err != nil {

@@ -116,6 +116,7 @@ require (
 )
 
 replace (
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/attachments => ./pkg/attachments
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ./pkg/cayley-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ./pkg/duckdb-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext => ./pkg/eino-ext
