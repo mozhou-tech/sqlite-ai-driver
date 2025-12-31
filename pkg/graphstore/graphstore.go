@@ -50,8 +50,8 @@ func New(opts Options) (*GraphStore, error) {
 		graphDB = "graphstore.db"
 	}
 
-	// 创建图谱数据库
-	graph, err := cayley_driver.NewGraph(graphDB)
+	// 创建图谱数据库（使用 graphstore_ 表前缀）
+	graph, err := cayley_driver.NewGraphWithPrefix(graphDB, "graphstore_")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create graph: %w", err)
 	}

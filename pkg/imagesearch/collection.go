@@ -13,9 +13,10 @@ type Collection struct {
 }
 
 // createCollection 创建集合（使用共享表，每行数据都有 text_embedding 和 image_embedding 字段）
+// 表名使用 imagesearch_ 前缀，存储在 duckdb-driver 提供的共享数据库文件中
 func (r *ImageSearch) createCollection(ctx context.Context, name string) (*Collection, error) {
-	// 使用统一的表名
-	tableName := "imagesearch_documents"
+	// 使用统一的表名，前缀为 imagesearch_
+	tableName := "imagesearch_" + name
 
 	// 创建表（如果不存在）
 	createTableSQL := fmt.Sprintf(`

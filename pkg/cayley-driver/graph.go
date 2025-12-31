@@ -73,7 +73,8 @@ type GraphQuery interface {
 
 // cayleyGraph 是基于 SQLite3 的图数据库实现
 type cayleyGraph struct {
-	db *sql.DB
+	db          *sql.DB
+	tablePrefix string
 }
 
 // getDataDir 获取基础数据目录
@@ -117,6 +118,13 @@ func ensureDataPath(path string) (string, error) {
 // - 完整路径：/path/to/graph.db 或 ./path/to/graph.db
 // - 相对路径（如 "graph.db"）：自动构建到 {DATA_DIR}/cayley/ 目录
 func NewGraph(path string) (Graph, error) {
+	return NewGraphWithPrefix(path, "")
+}
+
+// NewGraphWithPrefix 创建新的图数据库实例（支持表前缀）
+// path: SQLite3 数据库文件路径
+// prefix: 表前缀，如果为空则使用默认的 "quads" 表名
+func NewGraphWithPrefix(path, prefix string) (Graph, error) {
 	// 自动构建路径并创建目录
 	finalPath, err := ensureDataPath(path)
 	if err != nil {
@@ -133,7 +141,10 @@ func NewGraph(path string) (Graph, error) {
 
 	// PRAGMA 已通过连接字符串参数设置，无需再次执行
 
-	graph := &cayleyGraph{db: db}
+	graph := &cayleyGraph{
+		db:          db,
+		tablePrefix: prefix,
+	}
 
 	// 初始化数据库表结构
 	ctx := context.Background()
@@ -145,25 +156,34 @@ func NewGraph(path string) (Graph, error) {
 	return graph, nil
 }
 
+// tableName 获取完整的表名（带前缀）
+func (g *cayleyGraph) tableName() string {
+	if g.tablePrefix != "" {
+		return g.tablePrefix + "quads"
+	}
+	return "quads"
+}
+
 // initSchema 初始化数据库表结构
 func (g *cayleyGraph) initSchema(ctx context.Context) error {
+	tableName := g.tableName()
 	// 创建三元组表
-	createTableSQL := `
-	CREATE TABLE IF NOT EXISTS quads (
+	createTableSQL := fmt.Sprintf(`
+	CREATE TABLE IF NOT EXISTS %s (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		subject TEXT NOT NULL,
 		predicate TEXT NOT NULL,
 		object TEXT NOT NULL,
-		created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+		created_at INTEGER NOT NULL DEFAULT (strftime('%%s', 'now')),
 		UNIQUE(subject, predicate, object)
 	);
 
-	CREATE INDEX IF NOT EXISTS idx_quads_subject ON quads(subject);
-	CREATE INDEX IF NOT EXISTS idx_quads_predicate ON quads(predicate);
-	CREATE INDEX IF NOT EXISTS idx_quads_object ON quads(object);
-	CREATE INDEX IF NOT EXISTS idx_quads_sp ON quads(subject, predicate);
-	CREATE INDEX IF NOT EXISTS idx_quads_po ON quads(predicate, object);
-	`
+	CREATE INDEX IF NOT EXISTS idx_%s_subject ON %s(subject);
+	CREATE INDEX IF NOT EXISTS idx_%s_predicate ON %s(predicate);
+	CREATE INDEX IF NOT EXISTS idx_%s_object ON %s(object);
+	CREATE INDEX IF NOT EXISTS idx_%s_sp ON %s(subject, predicate);
+	CREATE INDEX IF NOT EXISTS idx_%s_po ON %s(predicate, object);
+	`, tableName, tableName, tableName, tableName, tableName, tableName, tableName, tableName, tableName, tableName, tableName)
 
 	_, err := g.db.ExecContext(ctx, createTableSQL)
 	return err
@@ -171,7 +191,7 @@ func (g *cayleyGraph) initSchema(ctx context.Context) error {
 
 // Link 创建一条边
 func (g *cayleyGraph) Link(ctx context.Context, subject, predicate, object string) error {
-	query := `INSERT OR IGNORE INTO quads (subject, predicate, object) VALUES (?, ?, ?)`
+	query := fmt.Sprintf(`INSERT OR IGNORE INTO %s (subject, predicate, object) VALUES (?, ?, ?)`, g.tableName())
 
 	// 重试逻辑：处理 SQLITE_BUSY 错误
 	maxRetries := 5
@@ -204,7 +224,7 @@ func (g *cayleyGraph) Link(ctx context.Context, subject, predicate, object strin
 
 // Unlink 删除一条边
 func (g *cayleyGraph) Unlink(ctx context.Context, subject, predicate, object string) error {
-	query := `DELETE FROM quads WHERE subject = ? AND predicate = ? AND object = ?`
+	query := fmt.Sprintf(`DELETE FROM %s WHERE subject = ? AND predicate = ? AND object = ?`, g.tableName())
 
 	// 重试逻辑：处理 SQLITE_BUSY 错误
 	maxRetries := 5
@@ -239,12 +259,13 @@ func (g *cayleyGraph) Unlink(ctx context.Context, subject, predicate, object str
 func (g *cayleyGraph) GetNeighbors(ctx context.Context, node, predicate string) ([]string, error) {
 	var rows *sql.Rows
 	var err error
+	tableName := g.tableName()
 
 	if predicate == "" {
-		query := `SELECT DISTINCT object FROM quads WHERE subject = ?`
+		query := fmt.Sprintf(`SELECT DISTINCT object FROM %s WHERE subject = ?`, tableName)
 		rows, err = g.db.QueryContext(ctx, query, node)
 	} else {
-		query := `SELECT DISTINCT object FROM quads WHERE subject = ? AND predicate = ?`
+		query := fmt.Sprintf(`SELECT DISTINCT object FROM %s WHERE subject = ? AND predicate = ?`, tableName)
 		rows, err = g.db.QueryContext(ctx, query, node, predicate)
 	}
 
@@ -269,12 +290,13 @@ func (g *cayleyGraph) GetNeighbors(ctx context.Context, node, predicate string) 
 func (g *cayleyGraph) GetInNeighbors(ctx context.Context, node, predicate string) ([]string, error) {
 	var rows *sql.Rows
 	var err error
+	tableName := g.tableName()
 
 	if predicate == "" {
-		query := `SELECT DISTINCT subject FROM quads WHERE object = ?`
+		query := fmt.Sprintf(`SELECT DISTINCT subject FROM %s WHERE object = ?`, tableName)
 		rows, err = g.db.QueryContext(ctx, query, node)
 	} else {
-		query := `SELECT DISTINCT subject FROM quads WHERE object = ? AND predicate = ?`
+		query := fmt.Sprintf(`SELECT DISTINCT subject FROM %s WHERE object = ? AND predicate = ?`, tableName)
 		rows, err = g.db.QueryContext(ctx, query, node, predicate)
 	}
 
@@ -297,7 +319,7 @@ func (g *cayleyGraph) GetInNeighbors(ctx context.Context, node, predicate string
 
 // AllTriples 获取图中所有的三元组
 func (g *cayleyGraph) AllTriples(ctx context.Context) ([]Triple, error) {
-	query := `SELECT subject, predicate, object FROM quads`
+	query := fmt.Sprintf(`SELECT subject, predicate, object FROM %s`, g.tableName())
 	rows, err := g.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -490,9 +512,10 @@ func (q *graphQuery) All(ctx context.Context) ([]Triple, error) {
 			} else if step.direction == "both" {
 				// 获取所有出边和入边（predicate为空时返回所有类型的边）
 				// 查询所有以node为subject的三元组（出边）
-				outQuery := `SELECT predicate, object FROM quads WHERE subject = ?`
+				tableName := q.graph.tableName()
+				outQuery := fmt.Sprintf(`SELECT predicate, object FROM %s WHERE subject = ?`, tableName)
 				if step.predicate != "" {
-					outQuery = `SELECT predicate, object FROM quads WHERE subject = ? AND predicate = ?`
+					outQuery = fmt.Sprintf(`SELECT predicate, object FROM %s WHERE subject = ? AND predicate = ?`, tableName)
 				}
 				var outRows *sql.Rows
 				var err error
@@ -520,9 +543,9 @@ func (q *graphQuery) All(ctx context.Context) ([]Triple, error) {
 				outRows.Close()
 
 				// 查询所有以node为object的三元组（入边）
-				inQuery := `SELECT subject, predicate FROM quads WHERE object = ?`
+				inQuery := fmt.Sprintf(`SELECT subject, predicate FROM %s WHERE object = ?`, tableName)
 				if step.predicate != "" {
-					inQuery = `SELECT subject, predicate FROM quads WHERE object = ? AND predicate = ?`
+					inQuery = fmt.Sprintf(`SELECT subject, predicate FROM %s WHERE object = ? AND predicate = ?`, tableName)
 				}
 				var inRows *sql.Rows
 				if step.predicate != "" {
