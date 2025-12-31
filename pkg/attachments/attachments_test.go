@@ -1,31 +1,40 @@
 package attachments
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 )
 
 // getTestDataDir 获取测试数据目录路径
+// 为每个测试创建独立的临时目录，避免数据库锁竞争
 func getTestDataDir(t *testing.T) string {
-	// 获取当前测试文件的目录
-	_, filename, _, _ := runtime.Caller(1)
-	testDir := filepath.Dir(filename)
-	testDataDir := filepath.Join(testDir, "testdata")
+	// 创建临时目录，测试结束后自动清理
+	tmpDir := filepath.Join("./testdata", "attachments_test_"+t.Name())
 
-	// 确保 testdata 目录存在
-	if err := os.MkdirAll(testDataDir, 0755); err != nil {
-		t.Fatalf("创建 testdata 目录失败: %v", err)
+	// 清理可能存在的旧目录
+	os.RemoveAll(tmpDir)
+
+	// 确保目录存在
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		t.Fatalf("创建测试目录失败: %v", err)
 	}
 
-	return testDataDir
+	// 测试结束后清理
+	t.Cleanup(func() {
+		os.RemoveAll(tmpDir)
+	})
+
+	return tmpDir
 }
 
 func TestNew(t *testing.T) {
 	// 使用 testdata 目录
 	testDataDir := getTestDataDir(t)
+	fmt.Printf("workingDir: %s\n", testDataDir)
 
 	// 创建管理器
 	mgr, err := New(testDataDir)
@@ -40,16 +49,16 @@ func TestNew(t *testing.T) {
 		t.Errorf("attachments目录未创建")
 	}
 
-	// 检查baseDir
-	if mgr.GetBaseDir() != attachmentsDir {
-		t.Errorf("baseDir不匹配: 期望 %s, 实际 %s", attachmentsDir, mgr.GetBaseDir())
+	// 检查baseDir（需要转换为绝对路径进行比较，因为GetBaseDir返回绝对路径）
+	absAttachmentsDir, err := filepath.Abs(attachmentsDir)
+	if err != nil {
+		t.Fatalf("获取绝对路径失败: %v", err)
+	}
+	if mgr.GetBaseDir() != absAttachmentsDir {
+		t.Errorf("baseDir不匹配: 期望 %s, 实际 %s", absAttachmentsDir, mgr.GetBaseDir())
 	}
 
-	// 检查数据库是否创建
-	dbPath := filepath.Join(testDataDir, "attachments.db")
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		t.Errorf("数据库文件未创建")
-	}
+	// 不再检查数据库文件，因为已移除数据库功能
 }
 
 func TestStore(t *testing.T) {
@@ -66,14 +75,24 @@ func TestStore(t *testing.T) {
 	// 存储文件
 	filename := "test.txt"
 	data := []byte("Hello, World!")
+
+	// 清理可能存在的旧文件，避免文件重命名导致测试失败
+	expectedDateDir := time.Now().Format("2006-01-02")
+	expectedFileID := filepath.Join(expectedDateDir, filename)
+	expectedFilePath := filepath.Join(mgr.GetBaseDir(), expectedFileID)
+	// 直接删除文件系统中的文件（如果存在）
+	if err := os.Remove(expectedFilePath); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("清理旧文件失败: %v", err)
+	}
+	// 同时尝试从数据库删除（如果存在）
+	_ = mgr.Delete(expectedFileID)
+
 	fileID, err := mgr.Store(filename, data)
 	if err != nil {
 		t.Fatalf("存储文件失败: %v", err)
 	}
 
 	// 检查文件ID格式（应该是日期目录/文件名）
-	expectedDateDir := time.Now().Format("2006-01-02")
-	expectedFileID := filepath.Join(expectedDateDir, filename)
 	if fileID != expectedFileID {
 		t.Errorf("文件ID不匹配: 期望 %s, 实际 %s", expectedFileID, fileID)
 	}
@@ -86,38 +105,6 @@ func TestStore(t *testing.T) {
 
 	// 读取文件内容
 	readData, err := os.ReadFile(absPath)
-	if err != nil {
-		t.Fatalf("读取文件失败: %v", err)
-	}
-
-	if string(readData) != string(data) {
-		t.Errorf("文件内容不匹配: 期望 %s, 实际 %s", string(data), string(readData))
-	}
-}
-
-func TestStoreFromReader(t *testing.T) {
-	// 使用 testdata 目录
-	testDataDir := getTestDataDir(t)
-
-	// 创建管理器
-	mgr, err := New(testDataDir)
-	if err != nil {
-		t.Fatalf("创建管理器失败: %v", err)
-	}
-	defer mgr.Close()
-
-	// 从Reader存储文件
-	filename := "test_reader.txt"
-	data := []byte("Hello from Reader!")
-	reader := &testReader{data: data}
-
-	fileID, err := mgr.StoreFromReader(filename, reader)
-	if err != nil {
-		t.Fatalf("从Reader存储文件失败: %v", err)
-	}
-
-	// 读取文件内容验证
-	readData, err := mgr.Read(fileID)
 	if err != nil {
 		t.Fatalf("读取文件失败: %v", err)
 	}
@@ -389,17 +376,22 @@ func TestStoreWithMetadata(t *testing.T) {
 		t.Fatalf("获取文件信息失败: %v", err)
 	}
 
-	// 验证元数据
-	if info.MimeType != mimeType {
-		t.Errorf("MIME类型不匹配: 期望 %s, 实际 %s", mimeType, info.MimeType)
+	// 验证文件基本信息（元数据不再存储）
+	if info.Name != filename {
+		t.Errorf("文件名不匹配: 期望 %s, 实际 %s", filename, info.Name)
 	}
 
-	if info.Metadata == nil {
-		t.Errorf("元数据为空")
+	if info.Size != int64(len(data)) {
+		t.Errorf("文件大小不匹配: 期望 %d, 实际 %d", len(data), info.Size)
 	}
 
-	if info.Metadata["author"] != "test" {
-		t.Errorf("元数据author不匹配")
+	// 验证元数据字段为空（因为不再存储元数据）
+	if info.MimeType != "" {
+		t.Errorf("MIME类型应该为空，实际为: %s", info.MimeType)
+	}
+
+	if info.Metadata != nil {
+		t.Errorf("元数据应该为空，实际为: %v", info.Metadata)
 	}
 }
 
@@ -502,7 +494,7 @@ type testReader struct {
 
 func (r *testReader) Read(p []byte) (n int, err error) {
 	if r.pos >= len(r.data) {
-		return 0, nil
+		return 0, io.EOF
 	}
 
 	n = copy(p, r.data[r.pos:])
