@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.0.0",
   "scripts": {
     "dev": "DASHSCOPE_API_KEY=sk-fce19b4b06f04f0699c68ce771b1a266 concurrently -n \"api,frontend\" -c \"blue,green\" \"pnpm dev:api\" \"pnpm dev:frontend\"",
-    "dev:api": "cd api && go run main.go",
+    "dev:api": "cd api && go run .",
     "dev:frontend": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",

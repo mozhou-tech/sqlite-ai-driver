@@ -657,7 +657,7 @@ func main() {
 	fmt.Printf("  - users: %d 个\n", usersCount)
 	fmt.Println("\n✨ 示例数据生成完成！")
 	fmt.Println("\n💡 提示:")
-	fmt.Println("  - 在浏览器中访问 http://localhost:40111 查看数据")
+	fmt.Println("  - 在浏览器中访问 http://localhost:40121 查看数据")
 	fmt.Println("  - 使用 'articles' 集合测试全文搜索")
 	fmt.Println("  - 使用 'products' 集合测试向量搜索")
 	fmt.Println("  - 使用 'users' 集合和图数据库测试图查询")

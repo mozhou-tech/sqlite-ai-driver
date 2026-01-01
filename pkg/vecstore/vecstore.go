@@ -67,7 +67,7 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 			id VARCHAR PRIMARY KEY,
 			content TEXT,
 			metadata JSON,
-			embedding FLOAT[],
+			embedding FLOAT[1024],
 			embedding_status VARCHAR DEFAULT 'pending',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			_rev INTEGER DEFAULT 1
@@ -77,6 +77,18 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 	_, err = v.db.ExecContext(ctx, createTableSQL)
 	if err != nil {
 		return fmt.Errorf("failed to create table: %w", err)
+	}
+
+	// 启用 HNSW 实验性持久化功能
+	if _, err := v.db.ExecContext(ctx, "SET hnsw_enable_experimental_persistence = true"); err != nil {
+		// 如果启用失败，记录警告但不阻止初始化
+		// HNSW 索引可能仍然可以在内存模式下工作
+	}
+
+	// 创建向量索引
+	if err := v.createVectorIndex(ctx); err != nil {
+		// 如果创建索引失败，记录警告但不阻止初始化
+		// 向量搜索可能仍然可以使用顺序扫描
 	}
 
 	v.initialized = true
@@ -368,6 +380,47 @@ func (v *VecStore) GetDB() *sql.DB {
 // GetTableName 返回表名
 func (v *VecStore) GetTableName() string {
 	return v.tableName
+}
+
+// createVectorIndex 创建 DuckDB 向量索引
+func (v *VecStore) createVectorIndex(ctx context.Context) error {
+	// 检查 embedding 列是否存在
+	var count int
+	checkColumnSQL := fmt.Sprintf(`
+		SELECT COUNT(*) 
+		FROM information_schema.columns 
+		WHERE table_name = '%s' AND column_name = 'embedding'
+	`, v.tableName)
+
+	err := v.db.QueryRowContext(ctx, checkColumnSQL).Scan(&count)
+	if err != nil || count == 0 {
+		// embedding 列不存在，跳过索引创建
+		return nil
+	}
+
+	// 创建 HNSW 向量索引
+	createVectorIndexSQL := fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS %s_embedding_idx 
+		ON %s USING hnsw (embedding) WITH (metric = 'cosine');
+	`, v.tableName, v.tableName)
+
+	_, err = v.db.ExecContext(ctx, createVectorIndexSQL)
+	if err != nil {
+		// 如果索引已存在，忽略错误
+		if strings.Contains(err.Error(), "already exists") {
+			return nil
+		}
+		// 如果是因为列类型不支持（如 FLOAT[]），记录警告但不返回错误
+		if strings.Contains(err.Error(), "FLOAT[]") || strings.Contains(err.Error(), "variable") {
+			// FLOAT[] 类型不支持 HNSW 索引，需要固定维度（如 FLOAT[1024]）
+			// 这不会阻止向量搜索，只是无法使用索引加速
+			return fmt.Errorf("HNSW index requires fixed-dimension vector type (e.g., FLOAT[1024]), but column is FLOAT[]: %w", err)
+		}
+		// 其他错误也记录但不阻止初始化
+		return fmt.Errorf("failed to create vector index: %w", err)
+	}
+
+	return nil
 }
 
 // SearchResult 搜索结果

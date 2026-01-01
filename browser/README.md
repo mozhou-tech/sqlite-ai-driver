@@ -62,8 +62,8 @@ pnpm dev
 ```
 
 此命令会同时启动：
-- **后端 API 服务器**: `http://localhost:40111`
-- **前端开发服务器**: `http://localhost:40112`
+- **后端 API 服务器**: `http://localhost:40121`
+- **前端开发服务器**: `http://localhost:40122`
 
 如果需要单独启动，可以使用：
 - `pnpm dev:api` - 仅启动后端
@@ -72,7 +72,7 @@ pnpm dev
 环境变量（可选）:
 - `DB_NAME`: 数据库名称（默认: `browser-db`）
 - `DB_PATH`: 数据库路径（默认: `./data/browser-db`）
-- `PORT`: 服务器端口（默认: `40111`）
+- `PORT`: 服务器端口（默认: `40121`）
 - `DASHSCOPE_API_KEY`: DashScope API 密钥（用于生成 embedding，向量搜索功能需要）
 
 ### 3. 生成示例数据（可选）
