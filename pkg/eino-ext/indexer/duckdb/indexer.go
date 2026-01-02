@@ -11,7 +11,7 @@ import (
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
 )
 
 const (

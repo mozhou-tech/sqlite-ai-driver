@@ -1,11 +1,11 @@
 # GraphStore
 
-基于 `cayley-driver` 和 `duckdb-driver` 的纯图谱存储系统，支持实体 embedding 存储和语义检索图谱。
+基于 `cayley-driver` 和 `sqlite-driver` 的纯图谱存储系统，支持实体 embedding 存储和语义检索图谱。
 
 ## 功能特性
 
 - **图谱存储**：使用 `cayley-driver` 存储图谱关系（三元组）
-- **实体 Embedding**：使用 `duckdb-driver` 存储实体的 embedding 信息
+- **实体 Embedding**：使用 `sqlite-driver` 存储实体的 embedding 信息
 - **语义检索**：通过查询文本找到相似的实体，然后返回这些实体在图谱中的关系
 - **子图查询**：支持获取实体的子图（指定深度内的所有关系）
 
@@ -165,8 +165,8 @@ type Embedder interface {
 ## 数据存储
 
 - **图谱数据**：存储在 SQLite 数据库中（通过 `cayley-driver`）
-- **实体 Embedding（向量检索）**：存储在 DuckDB 数据库中（通过 `duckdb-driver`）
-  - 向量检索使用 `duckdb-driver` 的 `index.db` 共享数据库
+- **实体 Embedding（向量检索）**：存储在 DuckDB 数据库中（通过 `sqlite-driver`）
+  - 向量检索使用 `sqlite-driver` 的 `index.db` 共享数据库
   - 所有 DuckDB 数据统一映射到 `./data/indexing/index.db`
   - 不同的业务模块通过表名区分（如 `graphstore_entities`）
 

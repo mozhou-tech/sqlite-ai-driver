@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
 	"github.com/sirupsen/logrus"
 )
 

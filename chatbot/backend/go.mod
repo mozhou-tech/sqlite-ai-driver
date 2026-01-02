@@ -66,7 +66,7 @@ require (
 	github.com/microcosm-cc/bluemonday v1.0.27 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0 // indirect
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver v0.0.0 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
@@ -100,7 +100,7 @@ replace github.com/mozhou-tech/sqlite-ai-driver => ../../
 
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ../../pkg/cayley-driver
 
-replace github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ../../pkg/duckdb-driver
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver => ../../pkg/sqlite-driver
 
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext => ../../pkg/eino-ext
 

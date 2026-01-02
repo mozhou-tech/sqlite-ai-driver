@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	"github.com/google/uuid"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"golang.org/x/time/rate"
 )
 
@@ -24,15 +27,16 @@ type Options struct {
 	Embedder Embedder
 }
 
-// VecStore 基于DuckDB的纯文本向量搜索存储
+// VecStore 基于SQLite的纯文本向量搜索存储
 type VecStore struct {
-	db          *sql.DB
-	tableName   string
-	embedder    Embedder
-	initialized bool
-	mu          sync.Mutex
-	limiter     *rate.Limiter
-	limiterOnce sync.Once
+	db           *sql.DB
+	tableName    string
+	embedder     Embedder
+	initialized  bool
+	mu           sync.Mutex
+	limiter      *rate.Limiter
+	limiterOnce  sync.Once
+	isProcessing bool
 }
 
 // New 创建VecStore实例
@@ -44,7 +48,7 @@ func New(opts Options) *VecStore {
 }
 
 // Initialize 初始化存储后端
-// 使用 duckdb-driver 的共享数据库 ./data/indexing/index.db
+// 使用 sqlite3-driver 的 SQLite 数据库
 func (v *VecStore) Initialize(ctx context.Context) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -53,22 +57,23 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 		return nil
 	}
 
-	// 打开DuckDB数据库连接
-	// duckdb-driver 会自动将所有路径映射到共享数据库文件 ./data/indexing/index.db
-	db, err := sql.Open("duckdb", "vecstore.db")
+	// 打开SQLite数据库连接
+	// sqlite3-driver 会自动处理路径和 WAL 模式
+	db, err := sql.Open("sqlite3", "vecstore.db")
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	v.db = db
 
 	// 创建表（如果不存在）
+	// embedding 存储为 BLOB（JSON 格式的向量数组）
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
-			id VARCHAR PRIMARY KEY,
+			id TEXT PRIMARY KEY,
 			content TEXT,
-			metadata JSON,
-			embedding FLOAT[1024],
-			embedding_status VARCHAR DEFAULT 'pending',
+			metadata TEXT,
+			embedding BLOB,
+			embedding_status TEXT DEFAULT 'pending',
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			_rev INTEGER DEFAULT 1
 		)
@@ -79,17 +84,12 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to create table: %w", err)
 	}
 
-	// 启用 HNSW 实验性持久化功能
-	if _, err := v.db.ExecContext(ctx, "SET hnsw_enable_experimental_persistence = true"); err != nil {
-		// 如果启用失败，记录警告但不阻止初始化
-		// HNSW 索引可能仍然可以在内存模式下工作
-	}
-
-	// 创建向量索引
-	if err := v.createVectorIndex(ctx); err != nil {
-		// 如果创建索引失败，记录警告但不阻止初始化
-		// 向量搜索可能仍然可以使用顺序扫描
-	}
+	// 创建索引以提高查询性能
+	createIndexSQL := fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS %s_embedding_status_idx 
+		ON %s (embedding_status)
+	`, v.tableName, v.tableName)
+	_, _ = v.db.ExecContext(ctx, createIndexSQL)
 
 	v.initialized = true
 	return nil
@@ -105,8 +105,8 @@ func (v *VecStore) Insert(ctx context.Context, text string, metadata map[string]
 		return fmt.Errorf("text cannot be empty")
 	}
 
-	// 生成ID
-	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	// 使用 UUID 生成主键
+	id := uuid.New().String()
 
 	// 构建文档
 	doc := map[string]any{
@@ -181,16 +181,6 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 		return nil, fmt.Errorf("empty embedding vector")
 	}
 
-	// 转换向量为字符串格式
-	vectorStr := "["
-	for i, val := range queryEmbedding {
-		if i > 0 {
-			vectorStr += ", "
-		}
-		vectorStr += fmt.Sprintf("%g", val)
-	}
-	vectorStr += "]"
-
 	// 构建WHERE子句
 	whereClause := "embedding IS NOT NULL AND embedding_status = 'completed'"
 	var queryArgs []any
@@ -201,8 +191,9 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 		for key, value := range metadataFilter {
 			// 转义key以防止SQL注入
 			escapedKey := strings.ReplaceAll(key, "'", "''")
+			// SQLite 使用 json_extract 函数
 			condition := fmt.Sprintf(
-				"(json_extract_path_text(COALESCE(metadata, '{}'), '%s') = ? OR json_extract_path_text(content, '$.%s') = ?)",
+				"(json_extract(COALESCE(metadata, '{}'), '$.%s') = ? OR json_extract(content, '$.%s') = ?)",
 				escapedKey, escapedKey,
 			)
 			filterConditions = append(filterConditions, condition)
@@ -230,138 +221,94 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 		}
 	}
 
-	// 使用DuckDB的list_cosine_similarity进行向量搜索
+	// 查询所有候选文档（带metadata过滤）
 	sqlQuery := fmt.Sprintf(`
 		SELECT 
 			id,
 			content,
 			metadata,
-			list_cosine_similarity(embedding, ?::FLOAT[]) as similarity
+			embedding
 		FROM %s
 		WHERE %s
-		ORDER BY list_cosine_similarity(embedding, ?::FLOAT[]) DESC
-		LIMIT ?
 	`, v.tableName, whereClause)
 
-	// 构建完整的参数列表：vectorStr（SELECT用）+ metadata过滤参数 + vectorStr（ORDER BY用）+ limit
-	finalArgs := []any{vectorStr}
-	finalArgs = append(finalArgs, queryArgs...)
-	finalArgs = append(finalArgs, vectorStr, limit)
-
-	rows, err := v.db.QueryContext(ctx, sqlQuery, finalArgs...)
+	rows, err := v.db.QueryContext(ctx, sqlQuery, queryArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search vectors: %w", err)
 	}
 	defer rows.Close()
 
-	var results []SearchResult
+	// 在内存中计算余弦相似度并排序
+	type candidateResult struct {
+		id         string
+		content    string
+		metadata   any
+		doc        map[string]any
+		similarity float64
+	}
+
+	var candidates []candidateResult
 	for rows.Next() {
 		var id, content string
 		var metadataVal any
-		var similarity float64
+		var embeddingBlob []byte
 
-		err := rows.Scan(&id, &content, &metadataVal, &similarity)
+		err := rows.Scan(&id, &content, &metadataVal, &embeddingBlob)
 		if err != nil {
 			continue
 		}
+
+		// 解析存储的向量（JSON格式）
+		var storedEmbedding []float64
+		if err := json.Unmarshal(embeddingBlob, &storedEmbedding); err != nil {
+			continue
+		}
+
+		// 计算余弦相似度
+		similarity := cosineSimilarity(queryEmbedding, storedEmbedding)
 
 		var doc map[string]any
 		if err := json.Unmarshal([]byte(content), &doc); err != nil {
 			doc = map[string]any{"id": id, "content": content}
 		}
 
-		// 提取文本内容
-		textContent := ""
-		if text, ok := doc["content"].(string); ok {
-			textContent = text
-		}
-
-		results = append(results, SearchResult{
-			ID:      id,
-			Content: textContent,
-			Score:   similarity,
-			Data:    doc,
+		candidates = append(candidates, candidateResult{
+			id:         id,
+			content:    content,
+			metadata:   metadataVal,
+			doc:        doc,
+			similarity: similarity,
 		})
 	}
 
-	return results, nil
-}
-
-// processPendingEmbeddings 处理待处理的embedding
-func (v *VecStore) processPendingEmbeddings(ctx context.Context) {
-	// 获取embedding限制器
-	v.limiterOnce.Do(func() {
-		v.limiter = rate.NewLimiter(rate.Limit(5), 1)
+	// 按相似度降序排序
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].similarity > candidates[j].similarity
 	})
 
-	// 查询pending状态的文档
-	querySQL := fmt.Sprintf(`
-		SELECT id, content, metadata
-		FROM %s
-		WHERE embedding IS NULL AND embedding_status = 'pending'
-		LIMIT 10
-	`, v.tableName)
-
-	rows, err := v.db.QueryContext(ctx, querySQL)
-	if err != nil {
-		return
+	// 取前 limit 个结果
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var id, content string
-		var metadataVal any
-
-		if err := rows.Scan(&id, &content, &metadataVal); err != nil {
-			continue
-		}
-
-		// 解析文档
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(content), &doc); err != nil {
-			continue
-		}
-
+	// 转换为 SearchResult
+	results := make([]SearchResult, len(candidates))
+	for i, cand := range candidates {
 		// 提取文本内容
 		textContent := ""
-		if text, ok := doc["content"].(string); ok {
+		if text, ok := cand.doc["content"].(string); ok {
 			textContent = text
 		}
-		if textContent == "" {
-			continue
-		}
 
-		// 更新状态为processing
-		updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND embedding IS NULL AND embedding_status = 'pending'`, v.tableName)
-		_, _ = v.db.ExecContext(ctx, updateStatusSQL, id)
-
-		// 生成embedding
-		if v.embedder != nil {
-			// 等待速率限制
-			_ = v.limiter.Wait(ctx)
-
-			embedding, err := v.embedder.Embed(ctx, textContent)
-			if err == nil && len(embedding) > 0 {
-				// 转换为字符串格式
-				vectorStr := "["
-				for i, val := range embedding {
-					if i > 0 {
-						vectorStr += ", "
-					}
-					vectorStr += fmt.Sprintf("%g", val)
-				}
-				vectorStr += "]"
-
-				// 更新向量列和状态
-				updateVectorSQL := fmt.Sprintf(`UPDATE %s SET embedding = ?::FLOAT[], embedding_status = 'completed' WHERE id = ?`, v.tableName)
-				_, _ = v.db.ExecContext(ctx, updateVectorSQL, vectorStr, id)
-			} else {
-				// 更新状态为failed
-				updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
-				_, _ = v.db.ExecContext(ctx, updateStatusSQL, id)
-			}
+		results[i] = SearchResult{
+			ID:      cand.id,
+			Content: textContent,
+			Score:   cand.similarity,
+			Data:    cand.doc,
 		}
 	}
+
+	return results, nil
 }
 
 // Close 关闭VecStore
@@ -382,45 +329,24 @@ func (v *VecStore) GetTableName() string {
 	return v.tableName
 }
 
-// createVectorIndex 创建 DuckDB 向量索引
-func (v *VecStore) createVectorIndex(ctx context.Context) error {
-	// 检查 embedding 列是否存在
-	var count int
-	checkColumnSQL := fmt.Sprintf(`
-		SELECT COUNT(*) 
-		FROM information_schema.columns 
-		WHERE table_name = '%s' AND column_name = 'embedding'
-	`, v.tableName)
-
-	err := v.db.QueryRowContext(ctx, checkColumnSQL).Scan(&count)
-	if err != nil || count == 0 {
-		// embedding 列不存在，跳过索引创建
-		return nil
+// cosineSimilarity 计算两个向量的余弦相似度
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return 0.0
 	}
 
-	// 创建 HNSW 向量索引
-	createVectorIndexSQL := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS %s_embedding_idx 
-		ON %s USING hnsw (embedding) WITH (metric = 'cosine');
-	`, v.tableName, v.tableName)
-
-	_, err = v.db.ExecContext(ctx, createVectorIndexSQL)
-	if err != nil {
-		// 如果索引已存在，忽略错误
-		if strings.Contains(err.Error(), "already exists") {
-			return nil
-		}
-		// 如果是因为列类型不支持（如 FLOAT[]），记录警告但不返回错误
-		if strings.Contains(err.Error(), "FLOAT[]") || strings.Contains(err.Error(), "variable") {
-			// FLOAT[] 类型不支持 HNSW 索引，需要固定维度（如 FLOAT[1024]）
-			// 这不会阻止向量搜索，只是无法使用索引加速
-			return fmt.Errorf("HNSW index requires fixed-dimension vector type (e.g., FLOAT[1024]), but column is FLOAT[]: %w", err)
-		}
-		// 其他错误也记录但不阻止初始化
-		return fmt.Errorf("failed to create vector index: %w", err)
+	var dotProduct, normA, normB float64
+	for i := 0; i < len(a); i++ {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
 	}
 
-	return nil
+	if normA == 0 || normB == 0 {
+		return 0.0
+	}
+
+	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
 // SearchResult 搜索结果

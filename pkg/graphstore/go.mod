@@ -4,7 +4,7 @@ go 1.24.2
 
 require (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver v0.0.0
 )
 
 require (
@@ -47,6 +47,6 @@ require (
 
 replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ../cayley-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ../duckdb-driver
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver => ../sqlite-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
 )

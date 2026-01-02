@@ -72,7 +72,7 @@ require (
 	github.com/meguminnnnnnnnn/go-openai v0.1.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0 // indirect
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver v0.0.0 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
@@ -118,7 +118,7 @@ require (
 replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/attachments => ./pkg/attachments
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ./pkg/cayley-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ./pkg/duckdb-driver
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver => ./pkg/sqlite-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext => ./pkg/eino-ext
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf => ./pkg/eino-ext/document/parser/pdf
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./pkg/lightrag

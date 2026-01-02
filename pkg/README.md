@@ -9,7 +9,7 @@
 ```
 ./data/
 ├── cayley/         # cayley-driver 的数据目录
-├── indexing/       # duckdb-driver 的共享数据库目录
+├── indexing/       # sqlite-driver 的共享数据库目录
 └── db/             # sqlite3-driver 的数据目录
 ```
 
@@ -20,7 +20,7 @@
    - 数据目录: `{workingDir}/graph`（通过 WorkingDir 参数指定）
    - 用途: 图数据库存储
 
-3. **duckdb-driver**: DuckDB扩展
+3. **sqlite-driver**: DuckDB扩展
    - 后端: DuckDB
    - 数据目录: `./data/indexing/index.db`（所有路径统一映射到此共享数据库）
    - 用途: DuckDB存储
@@ -37,7 +37,7 @@
 ### 自动目录行为
 
 - **cayley-driver**: 相对路径（如 `"graph.db"`）自动存储到 `{workingDir}/graph/`（通过 WorkingDir 参数指定）
-- **duckdb-driver**: 所有路径统一映射到共享数据库 `./data/indexing/index.db`
+- **sqlite-driver**: 所有路径统一映射到共享数据库 `./data/indexing/index.db`
 - **sqlite3-driver**: 相对路径（如 `"sqlite.db"`）自动存储到 `./data/db/`
 
 ### 数据目录配置
@@ -56,7 +56,7 @@ package main
 import (
     "database/sql"
     
-    _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+    _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
     _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
     cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
 )
@@ -67,7 +67,7 @@ func main() {
     graph, _ := cayley_driver.NewGraphWithNamespace(workingDir, "graph.db", "")
     defer graph.Close()
     
-    // 2. 使用 duckdb-driver - 所有路径统一映射到 ./data/indexing/index.db
+    // 2. 使用 sqlite-driver - 所有路径统一映射到 ./data/indexing/index.db
     duckDB, _ := sql.Open("duckdb", "duck.db")
     defer duckDB.Close()
     
@@ -124,4 +124,4 @@ func main() {
 4. **路径分隔符**: 使用 `filepath.Join()` 构建路径，确保跨平台兼容性
 5. **权限设置**: 确保应用有读写数据目录的权限
 6. **子目录约定**: 子目录名称（`graph`、`indexing`、`db`）是自动目录设置的约定，使用完整路径时可以自定义
-7. **DuckDB 共享数据库**: duckdb-driver 将所有路径统一映射到 `./data/indexing/index.db` 共享数据库，不同业务模块通过表名前缀区分
+7. **DuckDB 共享数据库**: sqlite-driver 将所有路径统一映射到 `./data/indexing/index.db` 共享数据库，不同业务模块通过表名前缀区分

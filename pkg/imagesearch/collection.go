@@ -13,7 +13,7 @@ type Collection struct {
 }
 
 // createCollection 创建集合（使用共享表，每行数据都有 text_embedding 和 image_embedding 字段）
-// 表名使用 tablePrefix 前缀，存储在 duckdb-driver 提供的共享数据库文件中
+// 表名使用 tablePrefix 前缀，存储在 sqlite-driver 提供的共享数据库文件中
 func (r *ImageSearch) createCollection(ctx context.Context, name string) (*Collection, error) {
 	// 使用统一的表名，前缀为 tablePrefix
 	tableName := r.tablePrefix + name

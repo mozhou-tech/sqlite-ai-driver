@@ -5,7 +5,7 @@ go 1.24.2
 require (
 	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251229121631-716047332ba5
 	github.com/google/uuid v1.6.0
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver v0.0.0
 	github.com/sirupsen/logrus v1.9.3
 	golang.org/x/time v0.5.0
 )
@@ -66,6 +66,6 @@ require (
 )
 
 replace (
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver => ../duckdb-driver
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver => ../sqlite-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
 )

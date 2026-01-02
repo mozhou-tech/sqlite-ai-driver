@@ -9,7 +9,7 @@
 ### 可用包列表
 
 1. **数据库驱动包**（database/sql 驱动）：
-   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver` - DuckDB 驱动
+   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver` - DuckDB 驱动
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver` - SQLite3 驱动
 
 2. **图数据库包**：
@@ -49,7 +49,7 @@ DuckDB 驱动会自动安装所需的扩展（sqlite, vss, fts, excel），无�
 ```
 ./data/
 ├── graph/          # cayley-driver 的数据目录（通过 WorkingDir 参数指定）
-├── indexing/       # duckdb-driver 的共享数据库目录
+├── indexing/       # sqlite-driver 的共享数据库目录
 └── db/             # sqlite3-driver 的数据目录
 ```
 
@@ -62,7 +62,7 @@ DuckDB 驱动会自动安装所需的扩展（sqlite, vss, fts, excel），无�
 ```go
 import (
     "database/sql"
-    _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+    _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
 )
 
 // 使用相对路径（推荐）- 所有路径统一映射到 ./data/indexing/index.db
@@ -125,7 +125,7 @@ results, _ := query.V("user1").Out("follows").All(ctx)
 import (
     "context"
     "database/sql"
-    _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+    _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
     duckdbindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/duckdb"
 )
 
@@ -147,7 +147,7 @@ indexer, err := duckdbindexer.NewIndexer(ctx, &duckdbindexer.IndexerConfig{
 import (
     "context"
     "database/sql"
-    _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+    _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
     duckdbretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec"
 )
 
@@ -229,10 +229,10 @@ path := dataDir + "/db/app.db"
 
 ```go
 // ✅ 正确：使用空白导入
-import _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+import _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
 
 // ❌ 错误：不要直接导入包（除非需要使用包内的其他函数）
-import "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+import "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
 ```
 
 ### 2. 连接管理
@@ -267,7 +267,7 @@ DuckDB Driver 会自动安装以下扩展：
 **解决方案**：
 ```go
 // 确保已导入驱动
-import _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+import _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
 ```
 
 ### 问题：CGO 相关错误（Cayley Driver）

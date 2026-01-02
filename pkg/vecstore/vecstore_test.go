@@ -3,6 +3,8 @@ package vecstore
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +39,50 @@ func (e *mockEmbedder) Dimensions() int {
 	return e.dimensions
 }
 
+// setupTestStore 创建测试用的 VecStore，使用临时目录
+func setupTestStore(t *testing.T, embedder Embedder) (*VecStore, func()) {
+	// 创建临时目录
+	tmpDir, err := os.MkdirTemp("", "vecstore_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp directory: %v", err)
+	}
+
+	// 创建 VecStore 实例
+	store := New(Options{
+		Embedder: embedder,
+	})
+
+	// 修改数据库路径为临时目录中的文件
+	// 由于 VecStore.Initialize 硬编码了 "vecstore.db"，我们需要通过修改内部状态
+	// 或者直接设置 db 字段。但更好的方式是让每个测试使用独立的数据库文件
+	// 这里我们通过设置工作目录来实现
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+
+	// 切换到临时目录
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("Failed to change to temp directory: %v", err)
+	}
+
+	// 清理函数
+	cleanup := func() {
+		// 关闭数据库连接（Close 内部会处理 nil 检查）
+		store.Close()
+		// 恢复工作目录
+		os.Chdir(oldWd)
+		// 清理临时目录和数据库文件
+		dbPath := filepath.Join(tmpDir, "vecstore.db")
+		os.Remove(dbPath)
+		os.Remove(dbPath + "-shm")
+		os.Remove(dbPath + "-wal")
+		os.RemoveAll(tmpDir)
+	}
+
+	return store, cleanup
+}
+
 func TestNew(t *testing.T) {
 	embedder := newMockEmbedder(128)
 	store := New(Options{
@@ -58,11 +104,9 @@ func TestNew(t *testing.T) {
 }
 
 func TestInitialize(t *testing.T) {
-
 	embedder := newMockEmbedder(128)
-	store := New(Options{
-		Embedder: embedder,
-	})
+	store, cleanup := setupTestStore(t, embedder)
+	defer cleanup()
 
 	ctx := context.Background()
 	err := store.Initialize(ctx)
@@ -79,9 +123,6 @@ func TestInitialize(t *testing.T) {
 	if err != nil {
 		t.Errorf("repeated Initialize should not fail: %v", err)
 	}
-
-	// 清理
-	store.Close()
 }
 
 func TestInsert_WithoutInitialization(t *testing.T) {
@@ -101,18 +142,15 @@ func TestInsert_WithoutInitialization(t *testing.T) {
 }
 
 func TestInsert_EmptyText(t *testing.T) {
-
 	embedder := newMockEmbedder(128)
-	store := New(Options{
-		Embedder: embedder,
-	})
+	store, cleanup := setupTestStore(t, embedder)
+	defer cleanup()
 
 	ctx := context.Background()
 	err := store.Initialize(ctx)
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	defer store.Close()
 
 	err = store.Insert(ctx, "", nil)
 	if err == nil {
@@ -124,18 +162,15 @@ func TestInsert_EmptyText(t *testing.T) {
 }
 
 func TestInsert_WithMetadata(t *testing.T) {
-
 	embedder := newMockEmbedder(128)
-	store := New(Options{
-		Embedder: embedder,
-	})
+	store, cleanup := setupTestStore(t, embedder)
+	defer cleanup()
 
 	ctx := context.Background()
 	err := store.Initialize(ctx)
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	defer store.Close()
 
 	metadata := map[string]any{
 		"source": "test",
@@ -153,17 +188,14 @@ func TestInsert_WithMetadata(t *testing.T) {
 }
 
 func TestInsert_WithoutEmbedder(t *testing.T) {
-
-	store := New(Options{
-		Embedder: nil,
-	})
+	store, cleanup := setupTestStore(t, nil)
+	defer cleanup()
 
 	ctx := context.Background()
 	err := store.Initialize(ctx)
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	defer store.Close()
 
 	err = store.Insert(ctx, "test text", nil)
 	if err != nil {
@@ -213,18 +245,15 @@ func TestSearch_WithoutEmbedder(t *testing.T) {
 }
 
 func TestSearch_Basic(t *testing.T) {
-
 	embedder := newMockEmbedder(128)
-	store := New(Options{
-		Embedder: embedder,
-	})
+	store, cleanup := setupTestStore(t, embedder)
+	defer cleanup()
 
 	ctx := context.Background()
 	err := store.Initialize(ctx)
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	defer store.Close()
 
 	// 插入文档
 	err = store.Insert(ctx, "The capital of France is Paris", nil)
@@ -237,8 +266,8 @@ func TestSearch_Basic(t *testing.T) {
 		t.Fatalf("Insert failed: %v", err)
 	}
 
-	// 等待embedding处理完成
-	time.Sleep(1 * time.Second)
+	// 等待embedding处理完成（SQLite 可能需要稍长时间）
+	time.Sleep(2 * time.Second)
 
 	// 搜索
 	results, err := store.Search(ctx, "France capital", 10, nil)
@@ -265,18 +294,15 @@ func TestSearch_Basic(t *testing.T) {
 }
 
 func TestSearch_WithMetadataFilter(t *testing.T) {
-
 	embedder := newMockEmbedder(128)
-	store := New(Options{
-		Embedder: embedder,
-	})
+	store, cleanup := setupTestStore(t, embedder)
+	defer cleanup()
 
 	ctx := context.Background()
 	err := store.Initialize(ctx)
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	defer store.Close()
 
 	// 插入带metadata的文档
 	metadata1 := map[string]any{
@@ -297,8 +323,8 @@ func TestSearch_WithMetadataFilter(t *testing.T) {
 		t.Fatalf("Insert failed: %v", err)
 	}
 
-	// 等待embedding处理完成
-	time.Sleep(1 * time.Second)
+	// 等待embedding处理完成（SQLite 可能需要稍长时间）
+	time.Sleep(2 * time.Second)
 
 	// 使用metadata过滤搜索
 	filter := MetadataFilter{
@@ -322,18 +348,15 @@ func TestSearch_WithMetadataFilter(t *testing.T) {
 }
 
 func TestSearch_Limit(t *testing.T) {
-
 	embedder := newMockEmbedder(128)
-	store := New(Options{
-		Embedder: embedder,
-	})
+	store, cleanup := setupTestStore(t, embedder)
+	defer cleanup()
 
 	ctx := context.Background()
 	err := store.Initialize(ctx)
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	defer store.Close()
 
 	// 插入多个文档
 	for i := 0; i < 5; i++ {
@@ -343,8 +366,8 @@ func TestSearch_Limit(t *testing.T) {
 		}
 	}
 
-	// 等待embedding处理完成
-	time.Sleep(1 * time.Second)
+	// 等待embedding处理完成（SQLite 可能需要稍长时间）
+	time.Sleep(2 * time.Second)
 
 	// 测试limit
 	results, err := store.Search(ctx, "document", 3, nil)
@@ -368,11 +391,9 @@ func TestSearch_Limit(t *testing.T) {
 }
 
 func TestClose(t *testing.T) {
-
 	embedder := newMockEmbedder(128)
-	store := New(Options{
-		Embedder: embedder,
-	})
+	store, cleanup := setupTestStore(t, embedder)
+	defer cleanup()
 
 	ctx := context.Background()
 	err := store.Initialize(ctx)
@@ -393,18 +414,15 @@ func TestClose(t *testing.T) {
 }
 
 func TestProcessPendingEmbeddings(t *testing.T) {
-
 	embedder := newMockEmbedder(128)
-	store := New(Options{
-		Embedder: embedder,
-	})
+	store, cleanup := setupTestStore(t, embedder)
+	defer cleanup()
 
 	ctx := context.Background()
 	err := store.Initialize(ctx)
 	if err != nil {
 		t.Fatalf("Initialize failed: %v", err)
 	}
-	defer store.Close()
 
 	// 插入文档（会触发processPendingEmbeddings）
 	err = store.Insert(ctx, "Test document for embedding", nil)
@@ -412,8 +430,8 @@ func TestProcessPendingEmbeddings(t *testing.T) {
 		t.Fatalf("Insert failed: %v", err)
 	}
 
-	// 等待embedding处理
-	time.Sleep(1 * time.Second)
+	// 等待embedding处理（SQLite 可能需要稍长时间）
+	time.Sleep(2 * time.Second)
 
 	// 验证embedding已生成（通过搜索）
 	results, err := store.Search(ctx, "test", 10, nil)
