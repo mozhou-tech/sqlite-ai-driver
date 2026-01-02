@@ -296,7 +296,7 @@ func (i *Indexer) initSchema(ctx context.Context) error {
 	// Use the configured table name instead of vecstore's default table name
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
-			id VARCHAR PRIMARY KEY,
+			id INTEGER PRIMARY KEY,
 			content TEXT,
 			metadata JSON,
 			embedding FLOAT[],

@@ -74,7 +74,7 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 	// embedding 存储为 BLOB（JSON 格式的向量数组）
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
-			id TEXT PRIMARY KEY NOT NULL,
+			id INTEGER PRIMARY KEY NOT NULL,
 			content TEXT,
 			metadata TEXT,
 			embedding BLOB,
@@ -122,8 +122,8 @@ func (v *VecStore) Insert(ctx context.Context, text string, metadata map[string]
 		return fmt.Errorf("text cannot be empty")
 	}
 
-	// 使用 Snowflake 生成主键
-	id := v.snowflake.Generate().String()
+	// 使用 Snowflake 生成主键（int64 类型）
+	id := v.snowflake.Generate()
 
 	// 构建文档
 	doc := map[string]any{
@@ -258,7 +258,7 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 
 	// 在内存中计算余弦相似度并排序
 	type candidateResult struct {
-		id         string
+		id         int64
 		content    string
 		metadata   any
 		doc        map[string]any
@@ -267,7 +267,8 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 
 	var candidates []candidateResult
 	for rows.Next() {
-		var id, content string
+		var id int64
+		var content string
 		var metadataVal any
 		var embeddingBlob []byte
 
@@ -369,7 +370,7 @@ func cosineSimilarity(a, b []float64) float64 {
 
 // SearchResult 搜索结果
 type SearchResult struct {
-	ID      string
+	ID      int64
 	Content string
 	Score   float64
 	Data    map[string]any

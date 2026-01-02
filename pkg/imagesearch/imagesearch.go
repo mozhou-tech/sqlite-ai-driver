@@ -163,8 +163,10 @@ func (r *ImageSearch) InsertImage(ctx context.Context, imagePath string, metadat
 	}
 
 	// 构建文档
+	// 使用 Snowflake 生成主键（int64 类型）
+	id := r.snowflake.Generate()
 	doc := map[string]any{
-		"id":         r.snowflake.Generate().String(),
+		"id":         id,
 		"image_path": imagePath,
 		"ocr_text":   ocrText,
 		"width":      imageInfo.Width,

@@ -21,7 +21,7 @@ func (r *ImageSearch) createCollection(ctx context.Context, name string) (*Colle
 	// 创建表（如果不存在）
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
-			id VARCHAR PRIMARY KEY,
+			id INTEGER PRIMARY KEY,
 			content TEXT,
 			metadata JSON,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
