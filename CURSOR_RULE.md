@@ -9,16 +9,16 @@
 ### 可用包列表
 
 1. **数据库驱动包**（database/sql 驱动）：
-   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver` - DuckDB 驱动
+   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver` - SQLite 驱动
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver` - SQLite3 驱动
 
 2. **图数据库包**：
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver` - 图数据库驱动（独立 API）
 
 3. **Eino 扩展包**：
-   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/duckdb` - DuckDB 索引器
+   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/duckdb` - SQLite 索引器
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/lightrag` - LightRAG 索引器
-   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec` - DuckDB 检索器（包名：duckdb）
+   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec` - SQLite 检索器（包名：duckdb）
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/lightrag` - LightRAG 检索器
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/transformer/splitter/tfidf` - TF-IDF 文档分割器
 
@@ -32,9 +32,9 @@ go mod tidy
 ```
 
 
-#### DuckDB Driver
+#### SQLite Driver
 
-DuckDB 驱动会自动安装所需的扩展（sqlite, vss, fts, excel），无需额外配置。
+SQLite 驱动会自动安装所需的扩展（vss, fts），无需额外配置。
 
 ## ⚙️ 数据目录配置
 
@@ -57,7 +57,7 @@ DuckDB 驱动会自动安装所需的扩展（sqlite, vss, fts, excel），无�
 
 ### 1. 数据库驱动使用（database/sql）
 
-#### DuckDB Driver
+#### SQLite Driver
 
 ```go
 import (
@@ -66,10 +66,10 @@ import (
 )
 
 // 使用相对路径（推荐）- 所有路径统一映射到 ./data/indexing/index.db
-db, err := sql.Open("duckdb", "duck.db")
+db, err := sql.Open("sqlite3", "data.db")
 
 // 使用完整路径
-db, err := sql.Open("duckdb", "/path/to/duck.db")
+db, err := sql.Open("sqlite3", "/path/to/data.db")
 ```
 
 #### SQLite3 Driver
@@ -119,44 +119,44 @@ results, _ := query.V("user1").Out("follows").All(ctx)
 
 ### 3. Eino 扩展使用
 
-#### DuckDB Indexer
+#### SQLite Indexer
 
 ```go
 import (
     "context"
     "database/sql"
     _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
-    duckdbindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/duckdb"
+    sqliteindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/duckdb"
 )
 
-// 打开 DuckDB 连接
-db, _ := sql.Open("duckdb", "duck.db")
+// 打开 SQLite 连接
+db, _ := sql.Open("sqlite3", "data.db")
 defer db.Close()
 
 // 创建索引器
-indexer, err := duckdbindexer.NewIndexer(ctx, &duckdbindexer.IndexerConfig{
+indexer, err := sqliteindexer.NewIndexer(ctx, &sqliteindexer.IndexerConfig{
     DB:        db,
     TableName: "documents",
     Embedding: embeddingClient, // 需要提供 embedding.Embedder 实例
 })
 ```
 
-#### DuckDB Retriever
+#### SQLite Retriever
 
 ```go
 import (
     "context"
     "database/sql"
     _ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
-    duckdbretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec"
+    sqliteretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec"
 )
 
-// 打开 DuckDB 连接
-db, _ := sql.Open("duckdb", "duck.db")
+// 打开 SQLite 连接
+db, _ := sql.Open("sqlite3", "data.db")
 defer db.Close()
 
 // 创建检索器
-retriever, err := duckdbretriever.NewRetriever(ctx, &duckdbretriever.RetrieverConfig{
+retriever, err := sqliteretriever.NewRetriever(ctx, &sqliteretriever.RetrieverConfig{
     DB:        db,
     TableName: "documents",
     Embedding: embeddingClient,
@@ -171,7 +171,7 @@ retriever, err := duckdbretriever.NewRetriever(ctx, &duckdbretriever.RetrieverCo
 当路径**不包含路径分隔符**（`/` 或 `\`）时，驱动会将其视为相对路径，自动构建到对应的子目录：
 
 - `"graph.db"` → `{workingDir}/graph/graph.db`（通过 WorkingDir 参数指定）
-- `"duck.db"` → `./data/indexing/index.db`（统一映射到共享数据库）
+- `"data.db"` → `./data/indexing/index.db`（统一映射到共享数据库）
 - `"sqlite.db"` → `./data/db/sqlite.db`
 
 ### 完整路径（手动控制）
@@ -247,14 +247,12 @@ import "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver"
 - 使用 `database/sql` 包的连接池管理并发连接
 - Cayley Driver 的 Graph 实例不是并发安全的，需要在应用层加锁
 
-### 4. DuckDB 扩展
+### 4. SQLite 扩展
 
-DuckDB Driver 会自动安装以下扩展：
+SQLite Driver 会自动安装以下扩展：
 
-- `sqlite` - SQLite 扩展
 - `vss` - 向量搜索扩展
 - `fts` - 全文搜索扩展
-- `excel` - Excel 扩展
 
 首次使用时可能需要下载扩展，确保网络连接正常。
 
@@ -312,6 +310,5 @@ export CGO_ENABLED=1
 
 - 项目仓库: `github.com/mozhou-tech/sqlite-ai-driver`
 - Eino 框架: `github.com/cloudwego/eino`
-- DuckDB: `https://duckdb.org/`
 - SQLite: `https://www.sqlite.org/`
 

@@ -63,13 +63,13 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 
 	// 添加metadata过滤条件
 	if metadataFilter != nil && len(metadataFilter) > 0 {
-		// 使用DuckDB的JSON函数来过滤metadata
+		// 使用SQLite的JSON函数来过滤metadata
 		// 需要同时检查metadata字段和content字段中的metadata（因为metadata可能存储在content的JSON中）
 		filterConditions := []string{}
 		for key, value := range metadataFilter {
 			// 转义key以防止SQL注入（虽然key来自map，但为了安全还是转义）
 			// 使用json_extract_path_text来提取JSON字段值
-			// 注意：DuckDB的json_extract_path_text需要转义单引号
+			// 注意：SQLite的json_extract_path_text需要转义单引号
 			escapedKey := strings.ReplaceAll(key, "'", "''")
 			condition := fmt.Sprintf(
 				"(json_extract_path_text(COALESCE(metadata, '{}'), '%s') = ? OR json_extract_path_text(content, '$.%s') = ?)",
@@ -100,7 +100,7 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 		}
 	}
 
-	// 使用DuckDB的list_cosine_similarity进行向量搜索
+	// 使用SQLite的向量相似度搜索
 	// 注意：参数顺序：第一个vectorStr用于SELECT，metadata过滤参数在中间，第二个vectorStr用于ORDER BY，最后是limit
 	sqlQuery := fmt.Sprintf(`
 		SELECT 

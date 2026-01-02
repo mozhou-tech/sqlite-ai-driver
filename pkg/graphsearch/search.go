@@ -48,7 +48,7 @@ func (g *graphsearch) SemanticSearch(ctx context.Context, query string, limit in
 	}
 	vectorStr += "]"
 
-	// 使用DuckDB的list_cosine_similarity进行向量搜索
+	// 使用SQLite的向量相似度搜索
 	// 向量检索使用 sqlite-driver 的 index.db 共享数据库
 	sqlQuery := fmt.Sprintf(`
 		SELECT 

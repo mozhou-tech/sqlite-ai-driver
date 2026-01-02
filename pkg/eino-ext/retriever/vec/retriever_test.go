@@ -63,7 +63,7 @@ func TestNewRetriever(t *testing.T) {
 				VecStore:  vecStore,
 				Embedding: nil,
 			})
-			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] embedding not provided for duckdb retriever"))
+			convey.So(err, convey.ShouldBeError, fmt.Errorf("[NewRetriever] embedding not provided for sqlite retriever"))
 			convey.So(r, convey.ShouldBeNil)
 		})
 
@@ -103,7 +103,7 @@ func TestRetrieve(t *testing.T) {
 		PatchConvey("test Embedding not provided", func() {
 			r := &Retriever{config: &RetrieverConfig{Embedding: nil}}
 			resp, err := r.Retrieve(ctx, "test_query")
-			convey.So(err, convey.ShouldBeError, fmt.Errorf("[duckdb retriever] embedding not provided"))
+			convey.So(err, convey.ShouldBeError, fmt.Errorf("[sqlite retriever] embedding not provided"))
 			convey.So(resp, convey.ShouldBeNil)
 		})
 
@@ -119,7 +119,7 @@ func TestRetrieve(t *testing.T) {
 		PatchConvey("test vector size invalid", func() {
 			r := &Retriever{config: &RetrieverConfig{Embedding: &mockEmbedding{sizeForCall: []int{2}, dims: 10}}}
 			resp, err := r.Retrieve(ctx, "test_query")
-			convey.So(err, convey.ShouldBeError, fmt.Errorf("[duckdb retriever] invalid return length of vector, got=2, expected=1"))
+			convey.So(err, convey.ShouldBeError, fmt.Errorf("[sqlite retriever] invalid return length of vector, got=2, expected=1"))
 			convey.So(resp, convey.ShouldBeNil)
 		})
 

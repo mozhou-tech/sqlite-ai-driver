@@ -45,7 +45,7 @@ func Examplegraphsearch() {
 	store, err := graphsearch.New(graphsearch.Options{
 		Embedder:   embedder,
 		WorkingDir: "./testdata",           // 工作目录，作为基础目录
-		TableName:  "graphsearch_entities", // DuckDB 表名
+		TableName:  "graphsearch_entities", // SQLite 表名
 	})
 	if err != nil {
 		log.Fatalf("Failed to create graphsearch: %v", err)

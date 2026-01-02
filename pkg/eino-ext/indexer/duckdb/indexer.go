@@ -20,7 +20,7 @@ const (
 )
 
 type IndexerConfig struct {
-	// DB is an already opened DuckDB database connection instance.
+	// DB is an already opened SQLite database connection instance.
 	// This indexer does not open or close the database connection.
 	// The caller is responsible for managing the database connection lifecycle.
 	DB *sql.DB
@@ -45,11 +45,11 @@ type Indexer struct {
 
 func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 	if config.Embedding == nil {
-		return nil, fmt.Errorf("[NewIndexer] embedding not provided for duckdb indexer")
+		return nil, fmt.Errorf("[NewIndexer] embedding not provided for sqlite indexer")
 	}
 
 	if config.DB == nil {
-		return nil, fmt.Errorf("[NewIndexer] duckdb database connection not provided, must pass an already opened *sql.DB instance")
+		return nil, fmt.Errorf("[NewIndexer] sqlite database connection not provided, must pass an already opened *sql.DB instance")
 	}
 
 	if config.DocumentToMap == nil {
@@ -134,7 +134,7 @@ func (i *Indexer) bulkStore(ctx context.Context, docs []*schema.Document, option
 		}
 
 		if err := i.bulkUpsert(ctx, toStore); err != nil {
-			return fmt.Errorf("[bulkStore] duckdb bulk upsert failed: %w", err)
+			return fmt.Errorf("[bulkStore] sqlite bulk upsert failed: %w", err)
 		}
 
 		toStore = toStore[:0]
@@ -213,7 +213,7 @@ func (i *Indexer) makeEmbeddingCtx(ctx context.Context, emb embedding.Embedder) 
 	return callbacks.ReuseHandlers(ctx, runInfo)
 }
 
-const typ = "DuckDB"
+const typ = "SQLite"
 
 func (i *Indexer) GetType() string {
 	return typ
@@ -244,8 +244,8 @@ func defaultDocumentToMap(ctx context.Context, doc *schema.Document) (map[string
 
 // initSchema initializes the database table schema
 func (i *Indexer) initSchema(ctx context.Context) error {
-	// Create table for DuckDB vector storage
-	// DuckDB supports FLOAT[] type for vectors
+	// Create table for SQLite vector storage
+	// SQLite supports FLOAT[] type for vectors
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			id VARCHAR PRIMARY KEY,
@@ -264,7 +264,7 @@ func (i *Indexer) initSchema(ctx context.Context) error {
 	return nil
 }
 
-// bulkUpsert inserts or updates documents in DuckDB
+// bulkUpsert inserts or updates documents in SQLite
 func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	if len(docs) == 0 {
 		return nil
@@ -304,7 +304,7 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 			return fmt.Errorf("[bulkUpsert] vector content is empty")
 		}
 
-		// Convert vector to DuckDB FLOAT[] format (string representation)
+		// Convert vector to SQLite format (string representation)
 		// Format: [1.0, 2.0, 3.0]
 		vectorStr := "["
 		for i, v := range vectorContent {

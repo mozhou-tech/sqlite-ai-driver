@@ -77,7 +77,7 @@ func main() {
 	}
 
 	// 5. 创建 LightRAG Indexer，并传入 TFIDF splitter 作为 transformer
-	// 使用 pkg/eino-ext/indexer/lightrag 中的 LightRAG 实现（使用 DuckDB 和 Cayley graph）
+	// 使用 pkg/eino-ext/indexer/lightrag 中的 LightRAG 实现（使用 SQLite 和 Cayley graph）
 	lightRAGInstance, err := lightragindexer.New(lightragindexer.Options{
 		DuckDBPath: filepath.Join(workingDir, "lightrag.duckdb"),
 		GraphPath:  filepath.Join(workingDir, "lightrag.graph.db"),

@@ -40,7 +40,7 @@ type Retriever struct {
 
 func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, error) {
 	if config.Embedding == nil {
-		return nil, fmt.Errorf("[NewRetriever] embedding not provided for duckdb retriever")
+		return nil, fmt.Errorf("[NewRetriever] embedding not provided for sqlite retriever")
 	}
 
 	if config.VecStore == nil {
@@ -115,22 +115,22 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 
 	emb := co.Embedding
 	if emb == nil {
-		return nil, fmt.Errorf("[duckdb retriever] embedding not provided")
+		return nil, fmt.Errorf("[sqlite retriever] embedding not provided")
 	}
 
 	// Generate query vector using eino embedder
 	vectors, err := emb.EmbedStrings(r.makeEmbeddingCtx(ctx, emb), []string{query})
 	if err != nil {
-		return nil, fmt.Errorf("[duckdb retriever] failed to embed query: %w", err)
+		return nil, fmt.Errorf("[sqlite retriever] failed to embed query: %w", err)
 	}
 
 	if len(vectors) != 1 {
-		return nil, fmt.Errorf("[duckdb retriever] invalid return length of vector, got=%d, expected=1", len(vectors))
+		return nil, fmt.Errorf("[sqlite retriever] invalid return length of vector, got=%d, expected=1", len(vectors))
 	}
 
 	queryVector := vectors[0]
 
-	// Convert []float64 to string format that DuckDB can parse
+	// Convert []float64 to string format that SQLite can parse
 	// Format: [1.0, 2.0, 3.0]
 	vectorStr := "["
 	for i, v := range queryVector {
@@ -197,7 +197,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	// Execute query using vecstore's database connection
 	rows, err := r.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
-		return nil, fmt.Errorf("[duckdb retriever] search failed: %w", err)
+		return nil, fmt.Errorf("[sqlite retriever] search failed: %w", err)
 	}
 	defer rows.Close()
 
@@ -208,7 +208,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 
 		err := rows.Scan(&id, &content, &metadataRaw, &similarity)
 		if err != nil {
-			return nil, fmt.Errorf("[duckdb retriever] failed to scan row: %w", err)
+			return nil, fmt.Errorf("[sqlite retriever] failed to scan row: %w", err)
 		}
 
 		// Parse content JSON (vecstore stores all document data in content field as JSON)
@@ -271,7 +271,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("[duckdb retriever] row iteration error: %w", err)
+		return nil, fmt.Errorf("[sqlite retriever] row iteration error: %w", err)
 	}
 
 	callbacks.OnEnd(ctx, &retriever.CallbackOutput{Docs: docs})
@@ -293,7 +293,7 @@ func (r *Retriever) makeEmbeddingCtx(ctx context.Context, emb embedding.Embedder
 	return callbacks.ReuseHandlers(ctx, runInfo)
 }
 
-const typ = "DuckDB"
+const typ = "SQLite"
 
 func (r *Retriever) GetType() string {
 	return typ

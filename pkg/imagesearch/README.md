@@ -1,10 +1,10 @@
 # ImageSearch
 
-ImageSearch 是一个基于 DuckDB 的图片和文本 RAG（检索增强生成）系统。
+ImageSearch 是一个基于 SQLite 的图片和文本 RAG（检索增强生成）系统。
 
 ## 功能特性
 
-1. **底层基于sqlite-driver** - 直接使用 DuckDB 作为存储后端，支持高效的向量搜索
+1. **底层基于sqlite-driver** - 直接使用 SQLite 作为存储后端，支持高效的向量搜索
 2. **图片、文本embedding存储** - 支持图片和文本的向量化存储和检索
 3. **存储图片OCR文本结果** - 自动提取图片中的文本并存储，用于生成embedding
 4. **向量检索** - 仅使用向量相似度搜索，不依赖全文搜索

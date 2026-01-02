@@ -286,7 +286,7 @@ func defaultDocumentToMap(ctx context.Context, doc *schema.Document) (map[string
 
 // initSchema initializes the database table schema
 func (i *Indexer) initSchema(ctx context.Context) error {
-	// Create table for vecstore (DuckDB format)
+	// Create table for vecstore (SQLite format)
 	// Use the configured table name instead of vecstore's default table name
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -308,7 +308,7 @@ func (i *Indexer) initSchema(ctx context.Context) error {
 	return nil
 }
 
-// bulkUpsert inserts or updates documents in vecstore (DuckDB)
+// bulkUpsert inserts or updates documents in vecstore (SQLite)
 func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	if len(docs) == 0 {
 		return nil
@@ -321,7 +321,7 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	}
 	defer tx.Rollback()
 
-	// Prepare upsert statement using DuckDB's INSERT ... ON CONFLICT syntax
+	// Prepare upsert statement using SQLite's INSERT ... ON CONFLICT syntax
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (id, content, metadata, embedding, embedding_status, _rev)
 		VALUES (?, ?, ?::JSON, ?::FLOAT[], 'completed', 1)
@@ -373,7 +373,7 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 			return fmt.Errorf("[bulkUpsert] failed to marshal metadata: %w", err)
 		}
 
-		// Convert vector to DuckDB FLOAT[] format (string representation)
+		// Convert vector to SQLite format (string representation)
 		// Format: [1.0, 2.0, 3.0]
 		vectorStr := "["
 		for idx, v := range vectorContent {

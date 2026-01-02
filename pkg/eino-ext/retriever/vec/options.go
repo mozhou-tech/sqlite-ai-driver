@@ -30,7 +30,7 @@ type implOptions struct {
 
 // WithMetadataFilter sets metadata filter for vector search.
 // The filter is a map of key-value pairs that will be used to filter documents
-// based on their metadata JSON fields in DuckDB.
+// based on their metadata JSON fields in SQLite.
 func WithMetadataFilter(filter map[string]any) retriever.Option {
 	return retriever.WrapImplSpecificOptFn(func(o *implOptions) {
 		o.MetadataFilter = filter

@@ -16,7 +16,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// ImageSearch 基于DuckDB的图片和文本RAG系统
+// ImageSearch 基于SQLite的图片和文本RAG系统
 type ImageSearch struct {
 	db            *sql.DB
 	workingDir    string
@@ -72,10 +72,10 @@ func (r *ImageSearch) InitializeStorages(ctx context.Context) error {
 		return fmt.Errorf("failed to create working directory: %w", err)
 	}
 
-	// 打开DuckDB数据库
+	// 打开SQLite数据库
 	// 使用简单的路径标识即可，实际路径会被映射到共享数据库
 	// 所有表使用 tablePrefix 前缀以区分不同的业务模块
-	db, err := sql.Open("duckdb", filepath.Join(r.workingDir, "index.db"))
+	db, err := sql.Open("sqlite3", filepath.Join(r.workingDir, "index.db"))
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}

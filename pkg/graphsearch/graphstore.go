@@ -57,10 +57,10 @@ func (g *graphsearch) Initialize(ctx context.Context) error {
 		return nil
 	}
 
-	// 打开DuckDB数据库用于向量检索
+	// 打开SQLite数据库用于向量检索
 	// 注意：无论传入什么路径，都会被 sqlite-driver 统一映射到共享数据库文件 ./data/indexing/index.db
 	// 向量检索使用 sqlite-driver 的 index.db 共享数据库，不同的业务模块通过表名区分
-	db, err := sql.Open("duckdb", "graphsearch.db")
+	db, err := sql.Open("sqlite3", "graphsearch.db")
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}

@@ -29,7 +29,7 @@ import (
 	pdfparser "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/transformer/splitter/tfidf"
 	vssindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/vec"
-	duckdbretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec"
+	sqliteretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore"
 	"github.com/sirupsen/logrus"
@@ -210,7 +210,7 @@ func initRAG() error {
 	}
 
 	// 创建 Vec Retriever
-	einoRetriever, err = duckdbretriever.NewRetriever(ctx, &duckdbretriever.RetrieverConfig{
+	einoRetriever, err = sqliteretriever.NewRetriever(ctx, &sqliteretriever.RetrieverConfig{
 		VecStore:  vecStoreInstance,
 		TableName: "documents",
 		Embedding: einoEmbedder,
