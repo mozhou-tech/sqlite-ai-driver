@@ -1,4 +1,4 @@
-package vecstore
+package textsearch
 
 import (
 	"context"

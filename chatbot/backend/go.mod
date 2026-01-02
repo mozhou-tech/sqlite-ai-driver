@@ -110,4 +110,4 @@ replace github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./../../pkg/ligh
 
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../../pkg/sego
 
-replace github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ../../pkg/vecstore
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ./../../pkg/textsearch

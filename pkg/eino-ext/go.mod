@@ -92,5 +92,5 @@ replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore => ../graphstore
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ../sqlite3-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ../vecstore
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ./../textsearch
 )
