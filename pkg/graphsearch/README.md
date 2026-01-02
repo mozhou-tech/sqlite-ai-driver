@@ -1,4 +1,4 @@
-# GraphStore
+# graphsearch
 
 基于 `cayley-driver` 和 `sqlite-driver` 的纯图谱存储系统，支持实体 embedding 存储和语义检索图谱。
 
@@ -11,23 +11,23 @@
 
 ## 使用方法
 
-### 1. 创建 GraphStore 实例
+### 1. 创建 graphsearch 实例
 
 ```go
 import (
     "context"
-    "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore"
+    "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 )
 
 // 创建 embedder（需要实现 Embedder 接口）
 embedder := &YourEmbedder{}
 
-// 创建 GraphStore
-store, err := graphstore.New(graphstore.Options{
+// 创建 graphsearch
+store, err := graphsearch.New(graphsearch.Options{
     Embedder:   embedder,
     WorkingDir: "./data",         // 工作目录，作为基础目录（必填）
-    GraphDB:    "graphstore.db",  // 图谱数据库路径（可选，默认 "graphstore.db"）
-    TableName:  "graphstore_entities", // DuckDB 表名（可选，默认 "graphstore_entities"）
+    GraphDB:    "graphsearch.db",  // 图谱数据库路径（可选，默认 "graphsearch.db"）
+    TableName:  "graphsearch_entities", // sqlite 表名（可选，默认 "graphsearch_entities"）
 })
 if err != nil {
     log.Fatal(err)
@@ -61,10 +61,10 @@ err = store.Link(ctx, "entity2", "works_at", "company1")
 
 ### 4. 向量检索图谱实体（语义检索）
 
-向量检索是 GraphStore 的核心功能，它通过以下步骤工作：
+向量检索是 graphsearch 的核心功能，它通过以下步骤工作：
 
 1. **生成查询向量**：使用 Embedder 将查询文本转换为向量
-2. **向量相似度搜索**：在 DuckDB 的 `index.db` 数据库中，使用 `list_cosine_similarity` 函数查找最相似的实体
+2. **向量相似度搜索**：在 sqlite 的 `index.db` 数据库中，使用 `list_cosine_similarity` 函数查找最相似的实体
 3. **获取图谱关系**：为每个找到的实体获取其在图谱中的关系（子图）
 
 ```go
@@ -93,8 +93,8 @@ for _, result := range results {
 
 **向量检索的工作原理**：
 
-1. **向量存储**：实体添加时，`AddEntity` 会自动调用 Embedder 生成 embedding 并存储到 DuckDB
-2. **向量搜索**：`SemanticSearch` 使用 DuckDB 的 `list_cosine_similarity` 函数计算查询向量与所有实体向量的相似度
+1. **向量存储**：实体添加时，`AddEntity` 会自动调用 Embedder 生成 embedding 并存储到 sqlite
+2. **向量搜索**：`SemanticSearch` 使用 sqlite 的 `list_cosine_similarity` 函数计算查询向量与所有实体向量的相似度
 3. **结果排序**：按相似度从高到低排序，返回 top-K 个实体
 4. **图谱扩展**：为每个找到的实体，获取其在图谱中深度为 `maxDepth` 的子图关系
 
@@ -165,14 +165,14 @@ type Embedder interface {
 ## 数据存储
 
 - **图谱数据**：存储在 SQLite 数据库中（通过 `cayley-driver`）
-- **实体 Embedding（向量检索）**：存储在 DuckDB 数据库中（通过 `sqlite-driver`）
+- **实体 Embedding（向量检索）**：存储在 sqlite 数据库中（通过 `sqlite-driver`）
   - 向量检索使用 `sqlite-driver` 的 `index.db` 共享数据库
-  - 所有 DuckDB 数据统一映射到 `./data/indexing/index.db`
-  - 不同的业务模块通过表名区分（如 `graphstore_entities`）
+  - 所有 sqlite 数据统一映射到 `./data/data.db`
+  - 不同的业务模块通过表名区分（如 `graphsearch_entities`）
 
 ## 注意事项
 
-1. 调用 `Initialize()` 之前，GraphStore 未初始化，大部分操作会返回错误
+1. 调用 `Initialize()` 之前，graphsearch 未初始化，大部分操作会返回错误
 2. 如果提供了 `Embedder`，`AddEntity` 会自动生成 embedding
 3. `SemanticSearch` 只返回有 embedding 的实体（`embedding_status = 'completed'`）
 4. 子图查询使用 BFS 算法，深度从 0 开始计算
