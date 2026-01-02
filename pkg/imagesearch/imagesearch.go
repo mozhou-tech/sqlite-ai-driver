@@ -233,8 +233,10 @@ func (r *ImageSearch) InsertText(ctx context.Context, text string, metadata map[
 		return nil
 	}
 
+	// 使用 Snowflake 生成主键（int64 类型）
+	id := r.snowflake.Generate()
 	doc := map[string]any{
-		"id":         r.snowflake.Generate().String(),
+		"id":         id,
 		"content":    text,
 		"created_at": time.Now().Unix(),
 	}

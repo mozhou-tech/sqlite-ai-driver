@@ -352,7 +352,7 @@ func TestInsertImage_WithMetadata(t *testing.T) {
 	metadata := map[string]any{
 		"source":   "test",
 		"category": "example",
-		"id":       testSnowflake.Generate().String(),
+		"id":       testSnowflake.Generate(),
 	}
 
 	err = search.InsertImage(ctx, imagePath, metadata)
@@ -525,7 +525,7 @@ func TestInsertText_WithMetadata(t *testing.T) {
 	metadata := map[string]any{
 		"source":   "test",
 		"category": "document",
-		"id":       testSnowflake.Generate().String(),
+		"id":       testSnowflake.Generate(),
 	}
 
 	err = search.InsertText(ctx, "This is a test document with enough characters to be inserted", metadata)

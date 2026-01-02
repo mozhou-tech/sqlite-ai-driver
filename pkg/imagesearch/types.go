@@ -19,7 +19,7 @@ type Options struct {
 
 // SearchResult 搜索结果
 type SearchResult struct {
-	ID      string
+	ID      int64
 	Content string
 	Score   float64
 	Source  string // "vector", "text", "image", "hybrid"

@@ -345,10 +345,29 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 
 	for _, doc := range docs {
 		// Extract id and content
-		id, ok := doc["id"].(string)
-		if !ok || id == "" {
-			// 如果 id 不存在或为空，生成一个新的 Snowflake ID
-			id = i.snowflake.Generate().String()
+		var id int64
+		var ok bool
+		if idVal, exists := doc["id"]; exists {
+			switch v := idVal.(type) {
+			case int64:
+				id = v
+				ok = true
+			case int:
+				id = int64(v)
+				ok = true
+			case string:
+				// 如果传入的是字符串，尝试解析为 int64
+				// 这里保持向后兼容，但建议直接使用 int64
+				if v != "" {
+					// 如果字符串不为空，生成新的 ID
+					id = i.snowflake.Generate()
+					ok = true
+				}
+			}
+		}
+		if !ok || id == 0 {
+			// 如果 id 不存在或为 0，生成一个新的 Snowflake ID
+			id = i.snowflake.Generate()
 		}
 		content, _ := doc[defaultReturnFieldContent].(string)
 

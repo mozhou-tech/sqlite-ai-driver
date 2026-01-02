@@ -127,7 +127,8 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 
 	var results []SearchResult
 	for rows.Next() {
-		var id, content string
+		var id int64
+		var content string
 		var metadataVal any
 		var similarity float64
 
