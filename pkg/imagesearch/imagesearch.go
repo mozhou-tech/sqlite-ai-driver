@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/disgoorg/snowflake/v2"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/sirupsen/logrus"
 )
@@ -24,6 +24,7 @@ type ImageSearch struct {
 	imageEmbedder Embedder
 	ocr           OCR
 	tablePrefix   string // 表前缀
+	snowflake     *snowflake.Node
 
 	// 集合
 	images *Collection
@@ -49,12 +50,16 @@ func New(opts Options) *ImageSearch {
 		workingDir = "./testdata"
 	}
 
+	// 初始化 Snowflake 生成器，使用节点 ID 2（与 textsearch 区分）
+	snowflakeNode, _ := snowflake.NewNode(2)
+
 	return &ImageSearch{
 		workingDir:    workingDir,
 		textEmbedder:  opts.TextEmbedder,
 		imageEmbedder: opts.ImageEmbedder,
 		ocr:           opts.OCR,
 		tablePrefix:   tablePrefix,
+		snowflake:     snowflakeNode,
 	}
 }
 
@@ -159,7 +164,7 @@ func (r *ImageSearch) InsertImage(ctx context.Context, imagePath string, metadat
 
 	// 构建文档
 	doc := map[string]any{
-		"id":         uuid.New().String(),
+		"id":         r.snowflake.Generate().String(),
 		"image_path": imagePath,
 		"ocr_text":   ocrText,
 		"width":      imageInfo.Width,
@@ -227,7 +232,7 @@ func (r *ImageSearch) InsertText(ctx context.Context, text string, metadata map[
 	}
 
 	doc := map[string]any{
-		"id":         uuid.New().String(),
+		"id":         r.snowflake.Generate().String(),
 		"content":    text,
 		"created_at": time.Now().Unix(),
 	}

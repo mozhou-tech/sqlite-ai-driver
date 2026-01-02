@@ -27,6 +27,7 @@ import (
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/indexer"
 	"github.com/cloudwego/eino/schema"
+	"github.com/disgoorg/snowflake/v2"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore"
 )
 
@@ -56,6 +57,7 @@ type Indexer struct {
 	config    *IndexerConfig
 	db        *sql.DB
 	tableName string
+	snowflake *snowflake.Node
 }
 
 func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
@@ -94,10 +96,14 @@ func NewIndexer(ctx context.Context, config *IndexerConfig) (*Indexer, error) {
 		return nil, fmt.Errorf("[NewIndexer] failed to access vecstore internals: %w", err)
 	}
 
+	// 初始化 Snowflake 生成器，使用节点 ID 3（与其他模块区分）
+	snowflakeNode, _ := snowflake.NewNode(3)
+
 	indexer := &Indexer{
 		config:    config,
 		db:        db,
 		tableName: tableName,
+		snowflake: snowflakeNode,
 	}
 
 	// Initialize table schema
@@ -339,7 +345,11 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 
 	for _, doc := range docs {
 		// Extract id and content
-		id, _ := doc["id"].(string)
+		id, ok := doc["id"].(string)
+		if !ok || id == "" {
+			// 如果 id 不存在或为空，生成一个新的 Snowflake ID
+			id = i.snowflake.Generate().String()
+		}
 		content, _ := doc[defaultReturnFieldContent].(string)
 
 		// Get vector_content

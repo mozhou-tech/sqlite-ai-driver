@@ -4,6 +4,7 @@ go 1.24.2
 
 require (
 	github.com/cloudwego/eino v0.7.14
+	github.com/disgoorg/snowflake/v2 v2.0.1
 	github.com/rioloc/tfidf-go v0.0.0-20250724175239-3a8f9fe7e629
 	github.com/sirupsen/logrus v1.9.3
 )

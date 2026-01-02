@@ -4,7 +4,7 @@ go 1.24.2
 
 require (
 	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251229121631-716047332ba5
-	github.com/google/uuid v1.6.0
+	github.com/disgoorg/snowflake/v2 v2.0.1
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
 	golang.org/x/time v0.5.0
 )

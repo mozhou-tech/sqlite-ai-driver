@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/disgoorg/snowflake/v2"
 )
 
 // mockEmbedder 用于测试的简单嵌入生成器
@@ -347,10 +347,12 @@ func TestInsertImage_WithMetadata(t *testing.T) {
 	imagePath := filepath.Join(tmpDir, "test.png")
 	createTestImage(t, imagePath)
 
+	// 创建测试用的 Snowflake 生成器
+	testSnowflake, _ := snowflake.NewNode(99)
 	metadata := map[string]any{
 		"source":   "test",
 		"category": "example",
-		"id":       uuid.New().String(),
+		"id":       testSnowflake.Generate().String(),
 	}
 
 	err = search.InsertImage(ctx, imagePath, metadata)
@@ -518,10 +520,12 @@ func TestInsertText_WithMetadata(t *testing.T) {
 	}
 	defer search.Close(ctx)
 
+	// 创建测试用的 Snowflake 生成器
+	testSnowflake, _ := snowflake.NewNode(99)
 	metadata := map[string]any{
 		"source":   "test",
 		"category": "document",
-		"id":       uuid.New().String(),
+		"id":       testSnowflake.Generate().String(),
 	}
 
 	err = search.InsertText(ctx, "This is a test document with enough characters to be inserted", metadata)

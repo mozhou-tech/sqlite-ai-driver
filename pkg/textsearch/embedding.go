@@ -65,7 +65,7 @@ func (v *VecStore) processPendingEmbeddings(ctx context.Context) {
 		querySQL := fmt.Sprintf(`
 			SELECT id, content, metadata
 			FROM %s
-			WHERE embedding IS NULL AND embedding_status = 'pending'
+			WHERE embedding IS NULL AND embedding_status = 'pending' AND id IS NOT NULL AND id != ''
 			LIMIT 10
 		`, v.tableName)
 
@@ -146,17 +146,30 @@ func (v *VecStore) processPendingEmbeddings(ctx context.Context) {
 			var metadataVal any
 
 			if len(values) >= 1 && values[0] != nil {
-				if s, ok := values[0].(string); ok {
-					id = s
-				} else if b, ok := values[0].([]byte); ok {
-					id = string(b)
+				switch v := values[0].(type) {
+				case string:
+					id = v
+				case []byte:
+					id = string(v)
+				default:
+					// 尝试通过 fmt.Sprintf 转换
+					id = fmt.Sprintf("%v", v)
+					log.Printf("[processPendingEmbeddings] id 字段类型异常: %T, 值: %v", v, v)
 				}
+			} else if len(values) >= 1 {
+				log.Printf("[processPendingEmbeddings] id 字段为 nil，values[0] 类型: %T", values[0])
 			}
+
 			if len(values) >= 2 && values[1] != nil {
-				if s, ok := values[1].(string); ok {
-					content = s
-				} else if b, ok := values[1].([]byte); ok {
-					content = string(b)
+				switch v := values[1].(type) {
+				case string:
+					content = v
+				case []byte:
+					content = string(v)
+				default:
+					// 尝试通过 fmt.Sprintf 转换
+					content = fmt.Sprintf("%v", v)
+					log.Printf("[processPendingEmbeddings] content 字段类型异常: %T", v)
 				}
 			}
 			if len(values) >= 3 {
@@ -166,9 +179,14 @@ func (v *VecStore) processPendingEmbeddings(ctx context.Context) {
 			// metadataVal 被扫描但当前未使用，保留以备将来使用
 			_ = metadataVal
 
-			// 如果 id 为空，说明扫描失败，跳过这一行
+			// 如果 id 为空，说明无法从扫描结果中提取有效的 id 值，跳过这一行
+			// 可能原因：id 字段为 NULL、类型转换失败、或值为空字符串
 			if id == "" {
-				log.Printf("[processPendingEmbeddings] 跳过无效行（id 为空）")
+				var idValue interface{}
+				if len(values) >= 1 {
+					idValue = values[0]
+				}
+				log.Printf("[processPendingEmbeddings] 跳过无效行（id 为空），values[0] 类型: %T, 值: %v", idValue, idValue)
 				continue
 			}
 
