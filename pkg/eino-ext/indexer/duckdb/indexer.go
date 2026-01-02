@@ -280,7 +280,7 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	// Prepare upsert statement using INSERT OR REPLACE
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
 		INSERT OR REPLACE INTO %s (id, content, vector_content, metadata)
-		VALUES (?, ?, ?::FLOAT[], ?::JSON)
+		VALUES (?, ?, ?, ?)
 	`, i.config.TableName))
 	if err != nil {
 		return fmt.Errorf("[bulkUpsert] failed to prepare statement: %w", err)

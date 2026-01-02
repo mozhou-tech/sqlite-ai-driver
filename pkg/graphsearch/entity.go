@@ -62,11 +62,11 @@ func (g *graphsearch) AddEntity(ctx context.Context, entityID, entityName string
 			entity_name = excluded.entity_name,
 			metadata = excluded.metadata,
 			embedding = excluded.embedding,
-			embedding_status = excluded.embedding_status,
-			updated_at = CURRENT_TIMESTAMP
+		embedding_status = excluded.embedding_status,
+		updated_at = CURRENT_TIMESTAMP
 	`, g.tableName, func() string {
 		if embeddingStr != "" {
-			return "?::FLOAT[]"
+			return "?"
 		}
 		return "NULL"
 	}())

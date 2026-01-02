@@ -324,7 +324,7 @@ func (i *Indexer) bulkUpsert(ctx context.Context, docs []map[string]any) error {
 	// Prepare upsert statement using SQLite's INSERT ... ON CONFLICT syntax
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(`
 		INSERT INTO %s (id, content, metadata, embedding, embedding_status, _rev)
-		VALUES (?, ?, ?::JSON, ?::FLOAT[], 'completed', 1)
+		VALUES (?, ?, ?, ?, 'completed', 1)
 		ON CONFLICT (id) DO UPDATE SET
 			content = EXCLUDED.content,
 			metadata = EXCLUDED.metadata,

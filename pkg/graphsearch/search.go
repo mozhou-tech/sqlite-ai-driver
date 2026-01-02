@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"sort"
 )
 
 // SemanticSearch 语义检索图谱
@@ -38,48 +40,76 @@ func (g *graphsearch) SemanticSearch(ctx context.Context, query string, limit in
 		return nil, fmt.Errorf("empty embedding vector")
 	}
 
-	// 转换向量为字符串格式
-	vectorStr := "["
-	for i, val := range queryEmbedding {
-		if i > 0 {
-			vectorStr += ", "
-		}
-		vectorStr += fmt.Sprintf("%g", val)
-	}
-	vectorStr += "]"
-
-	// 使用SQLite的向量相似度搜索
-	// 向量检索使用 sqlite-driver 的 index.db 共享数据库
+	// 查询所有候选实体（在内存中计算相似度）
+	// SQLite 不支持 list_cosine_similarity 函数，需要在内存中计算
 	sqlQuery := fmt.Sprintf(`
 		SELECT 
 			entity_id,
 			entity_name,
 			metadata,
-			list_cosine_similarity(embedding, ?::FLOAT[]) as similarity
+			embedding
 		FROM %s
 		WHERE embedding IS NOT NULL AND embedding_status = 'completed'
-		ORDER BY list_cosine_similarity(embedding, ?::FLOAT[]) DESC
-		LIMIT ?
 	`, g.tableName)
 
-	rows, err := g.db.QueryContext(ctx, sqlQuery, vectorStr, vectorStr, limit)
+	rows, err := g.db.QueryContext(ctx, sqlQuery)
 	if err != nil {
 		return nil, fmt.Errorf("failed to search entities: %w", err)
 	}
 	defer rows.Close()
 
-	var results []SemanticSearchResult
-	entityIDs := make(map[string]bool)
+	// 在内存中计算余弦相似度并排序
+	type candidateResult struct {
+		entityID   string
+		entityName string
+		metadata   map[string]any
+		similarity float64
+	}
+
+	var candidates []candidateResult
 
 	for rows.Next() {
 		var entityID, entityName string
 		var metadataVal any
-		var similarity float64
+		var embeddingVal any
 
-		err := rows.Scan(&entityID, &entityName, &metadataVal, &similarity)
+		err := rows.Scan(&entityID, &entityName, &metadataVal, &embeddingVal)
 		if err != nil {
 			continue
 		}
+
+		// 解析 embedding
+		var storedEmbedding []float64
+		if embeddingVal != nil {
+			// 尝试不同的格式：字符串、JSON、字节数组
+			switch v := embeddingVal.(type) {
+			case string:
+				// 尝试解析 JSON 格式的向量（格式：[1.0, 2.0, 3.0]）
+				if err := json.Unmarshal([]byte(v), &storedEmbedding); err != nil {
+					continue
+				}
+			case []byte:
+				if err := json.Unmarshal(v, &storedEmbedding); err != nil {
+					continue
+				}
+			default:
+				// 尝试转换为字符串再解析
+				if str, ok := v.(string); ok {
+					if err := json.Unmarshal([]byte(str), &storedEmbedding); err != nil {
+						continue
+					}
+				} else {
+					continue
+				}
+			}
+		}
+
+		if len(storedEmbedding) == 0 || len(storedEmbedding) != len(queryEmbedding) {
+			continue
+		}
+
+		// 计算余弦相似度
+		similarity := cosineSimilarity(queryEmbedding, storedEmbedding)
 
 		// 解析metadata
 		var metadata map[string]any
@@ -92,18 +122,41 @@ func (g *graphsearch) SemanticSearch(ctx context.Context, query string, limit in
 			metadata = make(map[string]any)
 		}
 
+		candidates = append(candidates, candidateResult{
+			entityID:   entityID,
+			entityName: entityName,
+			metadata:   metadata,
+			similarity: similarity,
+		})
+	}
+
+	// 按相似度降序排序
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].similarity > candidates[j].similarity
+	})
+
+	// 取前 limit 个结果
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+
+	// 转换为 SemanticSearchResult
+	var results []SemanticSearchResult
+	entityIDs := make(map[string]bool)
+
+	for _, cand := range candidates {
 		// 获取该实体在图谱中的关系（子图）
-		triples := g.getSubgraphTriples(ctx, entityID, maxDepth)
+		triples := g.getSubgraphTriples(ctx, cand.entityID, maxDepth)
 
 		results = append(results, SemanticSearchResult{
-			EntityID:   entityID,
-			EntityName: entityName,
-			Score:      similarity,
-			Metadata:   metadata,
+			EntityID:   cand.entityID,
+			EntityName: cand.entityName,
+			Score:      cand.similarity,
+			Metadata:   cand.metadata,
 			Triples:    triples,
 		})
 
-		entityIDs[entityID] = true
+		entityIDs[cand.entityID] = true
 	}
 
 	return results, nil
@@ -178,4 +231,24 @@ func (g *graphsearch) GetSubgraph(ctx context.Context, entityID string, maxDepth
 	}
 
 	return g.getSubgraphTriples(ctx, entityID, maxDepth), nil
+}
+
+// cosineSimilarity 计算两个向量的余弦相似度
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return 0.0
+	}
+
+	var dotProduct, normA, normB float64
+	for i := 0; i < len(a); i++ {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+
+	if normA == 0 || normB == 0 {
+		return 0.0
+	}
+
+	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 }

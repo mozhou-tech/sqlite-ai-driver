@@ -149,7 +149,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 			id,
 			content,
 			metadata,
-			list_cosine_similarity(embedding, ?::FLOAT[]) as similarity
+			list_cosine_similarity(embedding, ?) as similarity
 		FROM %s
 		WHERE embedding IS NOT NULL AND embedding_status = 'completed'
 	`, r.tableName)
@@ -187,11 +187,11 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 
 	// Add score threshold if provided
 	if co.ScoreThreshold != nil {
-		sqlQuery += " AND list_cosine_similarity(embedding, ?::FLOAT[]) >= ?"
+		sqlQuery += " AND list_cosine_similarity(embedding, ?) >= ?"
 		args = append(args, vectorStr, *co.ScoreThreshold)
 	}
 
-	sqlQuery += " ORDER BY list_cosine_similarity(embedding, ?::FLOAT[]) DESC LIMIT ?"
+	sqlQuery += " ORDER BY list_cosine_similarity(embedding, ?) DESC LIMIT ?"
 	args = append(args, vectorStr, *co.TopK)
 
 	// Execute query using vecstore's database connection

@@ -107,10 +107,10 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 			id,
 			content,
 			metadata,
-			list_cosine_similarity(%s, ?::FLOAT[]) as similarity
+			list_cosine_similarity(%s, ?) as similarity
 		FROM %s
 		WHERE %s
-		ORDER BY list_cosine_similarity(%s, ?::FLOAT[]) DESC
+		ORDER BY list_cosine_similarity(%s, ?) DESC
 		LIMIT ?
 	`, v.vectorColumn, v.tableName, whereClause, v.vectorColumn)
 
@@ -210,7 +210,7 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 				vectorStr += "]"
 
 				// 更新向量列和状态为completed
-				updateVectorSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[], embedding_status = 'completed' WHERE id = ?`, v.tableName, v.vectorColumn)
+				updateVectorSQL := fmt.Sprintf(`UPDATE %s SET %s = ?, embedding_status = 'completed' WHERE id = ?`, v.tableName, v.vectorColumn)
 				_, _ = v.db.ExecContext(ctx, updateVectorSQL, vectorStr, id)
 			} else {
 				// 更新状态为failed
