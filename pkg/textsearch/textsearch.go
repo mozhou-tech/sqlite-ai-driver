@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/disgoorg/snowflake/v2"
+	"github.com/bwmarrin/snowflake"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"golang.org/x/time/rate"
 )

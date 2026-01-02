@@ -281,8 +281,8 @@ func TestSearch_Basic(t *testing.T) {
 
 	// 验证结果格式
 	for _, result := range results {
-		if result.ID == "" {
-			t.Error("result ID should not be empty")
+		if result.ID == 0 {
+			t.Error("result ID should not be zero")
 		}
 		if result.Content == "" {
 			t.Error("result Content should not be empty")
