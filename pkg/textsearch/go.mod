@@ -3,8 +3,8 @@ module github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore
 go 1.24.2
 
 require (
-	github.com/bwmarrin/snowflake v0.3.0
 	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251229121631-716047332ba5
+	github.com/google/uuid v1.6.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
 	golang.org/x/time v0.5.0
 )
@@ -18,11 +18,9 @@ require (
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/eino v0.6.0 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.2 // indirect
-	github.com/disgoorg/snowflake/v2 v2.0.3 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/eino-contrib/jsonschema v1.0.2 // indirect
 	github.com/evanphx/json-patch v0.5.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect

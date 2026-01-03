@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bwmarrin/snowflake"
+	"github.com/google/uuid"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"golang.org/x/time/rate"
 )
@@ -33,7 +33,6 @@ type VecStore struct {
 	db           *sql.DB
 	tableName    string
 	embedder     Embedder
-	snowflake    *snowflake.Node
 	initialized  bool
 	mu           sync.Mutex
 	limiter      *rate.Limiter
@@ -43,12 +42,9 @@ type VecStore struct {
 
 // New 创建VecStore实例
 func New(opts Options) *VecStore {
-	// 初始化 Snowflake 生成器，使用节点 ID 1
-	snowflakeNode, _ := snowflake.NewNode(1)
 	return &VecStore{
 		embedder:  opts.Embedder,
 		tableName: "vecstore_documents",
-		snowflake: snowflakeNode,
 	}
 }
 
@@ -74,7 +70,7 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 	// embedding 存储为 BLOB（JSON 格式的向量数组）
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
-			id INTEGER PRIMARY KEY NOT NULL,
+			id TEXT PRIMARY KEY NOT NULL,
 			content TEXT,
 			metadata TEXT,
 			embedding BLOB,
@@ -122,8 +118,8 @@ func (v *VecStore) Insert(ctx context.Context, text string, metadata map[string]
 		return fmt.Errorf("text cannot be empty")
 	}
 
-	// 使用 Snowflake 生成主键（int64 类型）
-	id := v.snowflake.Generate()
+	// 使用 UUID 生成主键
+	id := uuid.New().String()
 
 	// 构建文档
 	doc := map[string]any{
@@ -156,7 +152,7 @@ func (v *VecStore) Insert(ctx context.Context, text string, metadata map[string]
 	contentJSON, _ := json.Marshal(doc)
 
 	// 插入到数据库
-	// 使用 Snowflake ID 作为主键，确保唯一性
+	// 使用 UUID 作为主键，确保唯一性
 	insertSQL := fmt.Sprintf(`
 		INSERT INTO %s (id, content, metadata, _rev, embedding_status)
 		VALUES (?, ?, ?, 1, 'pending')
@@ -258,7 +254,7 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 
 	// 在内存中计算余弦相似度并排序
 	type candidateResult struct {
-		id         int64
+		id         string
 		content    string
 		metadata   any
 		doc        map[string]any
@@ -267,7 +263,7 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 
 	var candidates []candidateResult
 	for rows.Next() {
-		var id int64
+		var id string
 		var content string
 		var metadataVal any
 		var embeddingBlob []byte
@@ -370,7 +366,7 @@ func cosineSimilarity(a, b []float64) float64 {
 
 // SearchResult 搜索结果
 type SearchResult struct {
-	ID      int64
+	ID      string
 	Content string
 	Score   float64
 	Data    map[string]any
