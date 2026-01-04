@@ -223,7 +223,14 @@ func (pm *PromptManager) UpdateTemplate(name string, template PromptTemplate) er
 	}
 
 	pm.templates[name] = template
-	return pm.SaveTemplate(template)
+
+	// 如果设置了自定义目录，保存到文件
+	if pm.customDir != "" {
+		return pm.SaveTemplate(template)
+	}
+
+	// 如果没有设置自定义目录，只更新内存中的模板
+	return nil
 }
 
 // DeleteTemplate 删除模板

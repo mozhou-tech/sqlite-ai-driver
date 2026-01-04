@@ -67,4 +67,5 @@ replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ./pkg/sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ./pkg/sqlite3-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch => ./pkg/textsearch
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ./pkg/textsearch
 )

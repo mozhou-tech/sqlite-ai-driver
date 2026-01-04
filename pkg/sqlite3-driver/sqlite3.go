@@ -16,7 +16,7 @@ import (
 )
 
 // ensureDataPath 确保数据路径存在
-// workingDir: 工作目录，如果提供则相对路径会构建到 {workingDir}/data.db
+// workingDir: 工作目录，如果提供则相对路径会构建到 {workingDir}/db/{path}
 // path: 数据库文件路径
 func ensureDataPath(workingDir, path string) (string, error) {
 	// 如果路径包含路径分隔符（绝对路径或相对路径），直接使用
@@ -39,13 +39,13 @@ func ensureDataPath(workingDir, path string) (string, error) {
 
 	// 如果是相对路径（不包含路径分隔符）
 	if workingDir != "" {
-		// 如果提供了 workingDir，构建到 {workingDir}/data.db
+		// 如果提供了 workingDir，构建到 {workingDir}/db/{path}
 		// 将 workingDir 转换为绝对路径
 		absWorkingDir, err := filepath.Abs(workingDir)
 		if err != nil {
 			return "", fmt.Errorf("failed to get absolute path for workingDir: %w", err)
 		}
-		fullPath := filepath.Join(absWorkingDir, "data.db")
+		fullPath := filepath.Join(absWorkingDir, "db", path)
 
 		// 确保目录存在
 		dir := filepath.Dir(fullPath)

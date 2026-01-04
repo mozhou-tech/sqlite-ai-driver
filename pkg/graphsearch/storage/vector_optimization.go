@@ -1,11 +1,7 @@
 package storage
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
 	"math"
-	"sort"
 	"sync"
 )
 
@@ -41,7 +37,9 @@ type candidateResult struct {
 
 // batchComputeSimilarity 批量计算相似度
 // 注意：此函数应该在 graphsearch 包中定义
-// func (g *graphsearch) batchComputeSimilarity(ctx context.Context, entities []graphsearch.Entity, queryEmbedding []float64, optimizer *VectorSearchOptimizer) []candidateResult {
+// 已移动到 core 包中，此处保留注释作为参考
+/*
+func (g *graphsearch) batchComputeSimilarity(ctx context.Context, entities []graphsearch.Entity, queryEmbedding []float64, optimizer *VectorSearchOptimizer) []candidateResult {
 	var candidates []candidateResult
 
 	// 批量处理
@@ -63,10 +61,13 @@ type candidateResult struct {
 
 	return candidates
 }
+*/
 
 // computeBatchSimilarity 计算批量相似度
 // 注意：此函数应该在 graphsearch 包中定义
-// func (g *graphsearch) computeBatchSimilarity(ctx context.Context, entities []graphsearch.Entity, queryEmbedding []float64, optimizer *VectorSearchOptimizer) []candidateResult {
+// 已移动到 core 包中，此处保留注释作为参考
+/*
+func (g *graphsearch) computeBatchSimilarity(ctx context.Context, entities []graphsearch.Entity, queryEmbedding []float64, optimizer *VectorSearchOptimizer) []candidateResult {
 	candidates := make([]candidateResult, 0, len(entities))
 
 	for _, entity := range entities {
@@ -122,6 +123,7 @@ type candidateResult struct {
 
 	return candidates
 }
+*/
 
 // optimizedCosineSimilarity 优化的余弦相似度计算
 func optimizedCosineSimilarity(a, b []float64) float64 {
@@ -160,7 +162,9 @@ func (o *VectorSearchOptimizer) GetCacheSize() int {
 
 // PreloadEmbeddings 预加载 embeddings 到缓存
 // 注意：此函数应该在 graphsearch 包中定义
-// func (g *graphsearch) PreloadEmbeddings(ctx context.Context, optimizer *VectorSearchOptimizer, limit int) error {
+// 已移动到 core 包中，此处保留注释作为参考
+/*
+func (g *graphsearch) PreloadEmbeddings(ctx context.Context, optimizer *VectorSearchOptimizer, limit int) error {
 	if !g.initialized {
 		return fmt.Errorf("store not initialized, call Initialize first")
 	}
@@ -191,3 +195,4 @@ func (o *VectorSearchOptimizer) GetCacheSize() int {
 
 	return nil
 }
+*/

@@ -214,3 +214,15 @@ func cosineSimilarity(a, b []float64) float64 {
 
 	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 }
+
+// OptimizedSemanticSearch 使用优化器的语义检索
+func (g *graphsearch) OptimizedSemanticSearch(ctx context.Context, query string, limit int, maxDepth int, optimizer interface{}) ([]SemanticSearchResult, error) {
+	// 暂时使用普通的 SemanticSearch，优化器功能待实现
+	return g.SemanticSearch(ctx, query, limit, maxDepth)
+}
+
+// PreloadEmbeddings 预加载 embeddings 到缓存
+func (g *graphsearch) PreloadEmbeddings(ctx context.Context, optimizer interface{}, limit int) error {
+	// 暂时不实现，返回 nil
+	return nil
+}

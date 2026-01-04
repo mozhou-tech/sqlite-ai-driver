@@ -4,12 +4,39 @@ import (
 	"context"
 	"testing"
 
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
+	graphsearch "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 )
+
+// setupTestStore 设置测试用的 graphsearch 实例
+func setupTestStore(t *testing.T, embedder graphsearch.Embedder) interface {
+	Initialize(ctx context.Context) error
+	Close() error
+	GetQueryProcessor() graphsearch.QueryProcessor
+	AddEntity(ctx context.Context, entityID, entityName string, metadata map[string]any) error
+	Link(ctx context.Context, subject, predicate, object string) error
+} {
+	t.Helper()
+
+	store, err := graphsearch.New(graphsearch.Options{
+		Embedder:   embedder,
+		WorkingDir: "./testdata",
+		TableName:  "test_entities",
+	})
+	if err != nil {
+		t.Fatalf("创建 graphsearch 实例失败: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := store.Initialize(ctx); err != nil {
+		t.Fatalf("初始化 graphsearch 失败: %v", err)
+	}
+
+	return store
+}
 
 func TestQueryProcessor_ExtractEntities(t *testing.T) {
 	ctx := context.Background()
-	embedder := NewSimpleEmbedder(768)
+	embedder := graphsearch.NewSimpleEmbedder(768)
 	store := setupTestStore(t, embedder)
 	defer store.Close()
 
@@ -65,7 +92,7 @@ func TestQueryProcessor_ExtractEntities(t *testing.T) {
 
 func TestQueryProcessor_ExtractRelations(t *testing.T) {
 	ctx := context.Background()
-	embedder := NewSimpleEmbedder(768)
+	embedder := graphsearch.NewSimpleEmbedder(768)
 	store := setupTestStore(t, embedder)
 	defer store.Close()
 
@@ -112,7 +139,7 @@ func TestQueryProcessor_ExtractRelations(t *testing.T) {
 
 func TestQueryProcessor_DecomposeQuery(t *testing.T) {
 	ctx := context.Background()
-	embedder := NewSimpleEmbedder(768)
+	embedder := graphsearch.NewSimpleEmbedder(768)
 	store := setupTestStore(t, embedder)
 	defer store.Close()
 
@@ -165,7 +192,7 @@ func TestQueryProcessor_DecomposeQuery(t *testing.T) {
 
 func TestQueryProcessor_ExpandQuery(t *testing.T) {
 	ctx := context.Background()
-	embedder := NewSimpleEmbedder(768)
+	embedder := graphsearch.NewSimpleEmbedder(768)
 	store := setupTestStore(t, embedder)
 	defer store.Close()
 
@@ -220,7 +247,7 @@ func TestQueryProcessor_ExpandQuery(t *testing.T) {
 
 func TestQueryProcessor_ProcessQuery(t *testing.T) {
 	ctx := context.Background()
-	embedder := NewSimpleEmbedder(768)
+	embedder := graphsearch.NewSimpleEmbedder(768)
 	store := setupTestStore(t, embedder)
 	defer store.Close()
 
@@ -268,4 +295,3 @@ func TestQueryProcessor_ProcessQuery(t *testing.T) {
 		})
 	}
 }
-

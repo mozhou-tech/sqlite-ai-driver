@@ -119,7 +119,7 @@ func New(workingDir string) (*Manager, error) {
 func createTable(ctx context.Context, db *sql.DB) error {
 	createTableSQL := `
 		CREATE TABLE IF NOT EXISTS attachments_metadata (
-			file_id TEXT PRIMARY KEY,
+			file_id TEXT PRIMARY KEY, # 使用file_id作为主键，file_id是文件的唯一标识，由6位随机字符串和文件名组成
 			relative_path TEXT NOT NULL,
 			absolute_path TEXT NOT NULL,
 			file_size INTEGER NOT NULL,

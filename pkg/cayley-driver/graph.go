@@ -17,10 +17,10 @@ type cayleyGraph struct {
 }
 
 // NewGraphWithNamespace 创建新的图数据库实例（支持表命名空间）
-// workingDir: 工作目录，作为基础目录，相对路径会构建到 {workingDir}/data.db
+// workingDir: 工作目录，作为基础目录，相对路径会构建到 {workingDir}/graph/{path}
 // path: SQLite3 数据库文件路径
-//   - 完整路径：/path/to/data.db 或 ./path/to/data.db
-//   - 相对路径（如 "data.db"）：自动构建到 {workingDir}/data.db（与 sqlite3-driver 共用同一数据库文件）
+//   - 完整路径：/path/to/graph.db 或 ./path/to/graph.db
+//   - 相对路径（如 "graph.db"）：自动构建到 {workingDir}/graph/{path}
 //
 // namespace: 表命名空间，如果为空则使用默认的 "quads" 表名
 func NewGraphWithNamespace(workingDir, path, namespace string) (Graph, error) {

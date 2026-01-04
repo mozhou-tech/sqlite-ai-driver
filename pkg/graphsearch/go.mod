@@ -33,7 +33,6 @@ require (
 
 replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ../cayley-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch => .
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ../sqlite3-driver
 )

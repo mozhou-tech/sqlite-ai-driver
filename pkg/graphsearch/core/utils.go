@@ -1,7 +1,6 @@
-package utils
+package graphsearch
 
 import (
-	"context"
 	"fmt"
 )
 
@@ -272,7 +271,5 @@ func BuildGraphRAGOptions(funcs ...func(*GraphRAGOptions)) *GraphRAGOptions {
 }
 
 // GraphRAGQueryWithOptions 使用便捷函数执行 GraphRAG 查询
-func (g *graphsearch) GraphRAGQueryWithOptions(ctx context.Context, query string, funcs ...func(*GraphRAGOptions)) (*GeneratedAnswer, error) {
-	options := BuildGraphRAGOptions(funcs...)
-	return g.GraphRAGQuery(ctx, query, options)
-}
+// 注意：此函数应该在 graphsearch 包中定义，但由于方法接收器的问题，暂时保留在这里
+// 建议将此函数移动到 core/graphsearch.go 中

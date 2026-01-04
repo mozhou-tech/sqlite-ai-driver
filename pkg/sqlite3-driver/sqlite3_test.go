@@ -84,7 +84,9 @@ func TestSQLite3Driver_RelativePath(t *testing.T) {
 	// 检查扩展是否可用
 	skipIfExtensionNotAvailable(t, expectedPath)
 
-	db, err := sql.Open("sqlite3", relativeDbPath)
+	// 通过 DSN 查询参数传递 workingDir
+	dsn := relativeDbPath + "?workingDir=" + testdataDir
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		t.Fatalf("Failed to open database with relative path: %v", err)
 	}

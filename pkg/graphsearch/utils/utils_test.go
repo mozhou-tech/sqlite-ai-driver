@@ -1,7 +1,6 @@
-package utils_test
+package graphsearch_test
 
 import (
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch/utils"
 	"testing"
 
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
@@ -32,7 +31,7 @@ func TestValidateQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := utils.ValidateQuery(tt.query)
+			err := graphsearch.ValidateQuery(tt.query)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateQuery() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -48,7 +47,7 @@ func TestValidateRetrievalOptions(t *testing.T) {
 	}{
 		{
 			name:    "有效选项",
-			options: utils.DefaultRetrievalOptions(),
+			options: graphsearch.DefaultRetrievalOptions(),
 			wantErr: false,
 		},
 		{
@@ -80,7 +79,7 @@ func TestValidateRetrievalOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := utils.ValidateRetrievalOptions(tt.options)
+			err := graphsearch.ValidateRetrievalOptions(tt.options)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateRetrievalOptions() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -96,7 +95,7 @@ func TestValidateGenerationOptions(t *testing.T) {
 	}{
 		{
 			name:    "有效选项",
-			options: utils.DefaultGenerationOptions(),
+			options: graphsearch.DefaultGenerationOptions(),
 			wantErr: false,
 		},
 		{
@@ -119,7 +118,7 @@ func TestValidateGenerationOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := utils.ValidateGenerationOptions(tt.options)
+			err := graphsearch.ValidateGenerationOptions(tt.options)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateGenerationOptions() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -151,10 +150,10 @@ func TestDefaultOptions(t *testing.T) {
 }
 
 func TestBuildGraphRAGOptions(t *testing.T) {
-	opts := utils.BuildGraphRAGOptions(
-		utils.WithRetrievalStrategy(graphsearch.StrategyHybrid),
-		utils.WithRetrievalLimit(20),
-		utils.WithGenerationMethod(graphsearch.MethodHybrid),
+	opts := graphsearch.BuildGraphRAGOptions(
+		graphsearch.WithRetrievalStrategy(graphsearch.StrategyHybrid),
+		graphsearch.WithRetrievalLimit(20),
+		graphsearch.WithGenerationMethod(graphsearch.MethodHybrid),
 	)
 
 	if opts == nil {
