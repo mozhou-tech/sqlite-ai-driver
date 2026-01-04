@@ -1,4 +1,4 @@
-module github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore
+module github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch
 
 go 1.24.2
 

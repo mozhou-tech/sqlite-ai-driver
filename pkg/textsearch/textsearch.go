@@ -43,7 +43,7 @@ type Document struct {
 
 // TableName 指定表名
 func (Document) TableName() string {
-	return "vecstore_documents"
+	return "textsearch_documents"
 }
 
 // VecStore 基于SQLite的纯文本向量搜索存储
@@ -62,7 +62,7 @@ type VecStore struct {
 func New(opts Options) *VecStore {
 	return &VecStore{
 		embedder:  opts.Embedder,
-		tableName: "vecstore_documents",
+		tableName: "textsearch_documents",
 	}
 }
 
@@ -79,7 +79,7 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 	// 打开SQLite数据库连接，使用 GORM
 	// sqlite3-driver 会自动处理路径和 WAL 模式
 	// 注意：GORM 的 sqlite 驱动使用 modernc.org/sqlite，但我们可以通过 DSN 来利用 sqlite3-driver 的特性
-	db, err := gorm.Open(sqlite.Open("vecstore.db"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open("textsearch.db"), &gorm.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}

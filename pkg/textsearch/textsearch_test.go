@@ -41,8 +41,19 @@ func (e *mockEmbedder) Dimensions() int {
 
 // setupTestStore 创建测试用的 VecStore，使用临时目录
 func setupTestStore(t *testing.T, embedder Embedder) (*VecStore, func()) {
-	// 创建临时目录
-	tmpDir, err := os.MkdirTemp("", "vecstore_test_*")
+	// 获取当前工作目录
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Failed to get current working directory: %v", err)
+	}
+
+	// 在 testdata 目录下创建临时目录
+	testdataDir := filepath.Join(wd, "testdata")
+	if err := os.MkdirAll(testdataDir, 0755); err != nil {
+		t.Fatalf("Failed to create testdata directory: %v", err)
+	}
+
+	tmpDir, err := os.MkdirTemp(testdataDir, "textsearch_test_*")
 	if err != nil {
 		t.Fatalf("Failed to create temp directory: %v", err)
 	}
@@ -53,7 +64,7 @@ func setupTestStore(t *testing.T, embedder Embedder) (*VecStore, func()) {
 	})
 
 	// 修改数据库路径为临时目录中的文件
-	// 由于 VecStore.Initialize 硬编码了 "vecstore.db"，我们需要通过修改内部状态
+	// 由于 VecStore.Initialize 硬编码了 "textsearch.db"，我们需要通过修改内部状态
 	// 或者直接设置 db 字段。但更好的方式是让每个测试使用独立的数据库文件
 	// 这里我们通过设置工作目录来实现
 	oldWd, err := os.Getwd()
@@ -73,7 +84,7 @@ func setupTestStore(t *testing.T, embedder Embedder) (*VecStore, func()) {
 		// 恢复工作目录
 		os.Chdir(oldWd)
 		// 清理临时目录和数据库文件
-		dbPath := filepath.Join(tmpDir, "vecstore.db")
+		dbPath := filepath.Join(tmpDir, "textsearch.db")
 		os.Remove(dbPath)
 		os.Remove(dbPath + "-shm")
 		os.Remove(dbPath + "-wal")
@@ -95,8 +106,8 @@ func TestNew(t *testing.T) {
 	if store.embedder != embedder {
 		t.Error("embedder not set correctly")
 	}
-	if store.tableName != "vecstore_documents" {
-		t.Errorf("expected table name 'vecstore_documents', got '%s'", store.tableName)
+	if store.tableName != "textsearch_documents" {
+		t.Errorf("expected table name 'textsearch_documents', got '%s'", store.tableName)
 	}
 	if store.initialized {
 		t.Error("store should not be initialized after New")
