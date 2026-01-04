@@ -23,6 +23,19 @@ type GraphSearch interface {
 	GetSubgraph(ctx context.Context, entityID string, maxDepth int) ([]graphsearch.Triple, error)
 	GetNeighbors(ctx context.Context, node, predicate string) ([]string, error)
 	FindPath(ctx context.Context, from, to string, maxDepth int, predicate string) ([][]string, error)
+	ListEntities(ctx context.Context, limit int, offset int) ([]map[string]any, error)
+	// 新增方法的接口（用于测试新功能）
+	IndexDocument(ctx context.Context, filePath string, options *graphsearch.IndexingOptions) error
+	IndexDocuments(ctx context.Context, filePaths []string, options *graphsearch.IndexingOptions) error
+	SummarizeCommunity(ctx context.Context, entityID string, options *graphsearch.CommunitySummarizationOptions) (*graphsearch.CommunitySummary, error)
+	SummarizeCommunities(ctx context.Context, entityIDs []string, options *graphsearch.CommunitySummarizationOptions) ([]*graphsearch.CommunitySummary, error)
+	DetectCommunities(ctx context.Context, maxDepth int) ([]graphsearch.Community, error)
+	OptimizedSemanticSearch(ctx context.Context, query string, limit int, maxDepth int, optimizer *graphsearch.VectorSearchOptimizer) ([]graphsearch.SemanticSearchResult, error)
+	PreloadEmbeddings(ctx context.Context, optimizer *graphsearch.VectorSearchOptimizer, limit int) error
+	FindShortestPath(ctx context.Context, from, to string, maxDepth int) ([]string, error)
+	FindAllPaths(ctx context.Context, from, to string, maxDepth int, maxPaths int) ([][]string, error)
+	GetCentralEntities(ctx context.Context, limit int) ([]string, error)
+	GetEntityNeighbors(ctx context.Context, entityID string, maxNeighbors int) ([]string, error)
 }
 
 // setupTestStore 创建并初始化测试用的 graphsearch 实例
