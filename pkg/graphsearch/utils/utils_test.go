@@ -1,9 +1,8 @@
 package graphsearch_test
 
 import (
+	graphsearch "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch/core"
 	"testing"
-
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 )
 
 func TestValidateQuery(t *testing.T) {
@@ -128,22 +127,22 @@ func TestValidateGenerationOptions(t *testing.T) {
 
 func TestDefaultOptions(t *testing.T) {
 	// 测试默认选项不为 nil
-	ragOpts := utils.DefaultGraphRAGOptions()
+	ragOpts := graphsearch.DefaultGraphRAGOptions()
 	if ragOpts == nil {
 		t.Error("DefaultGraphRAGOptions() 返回 nil")
 	}
 
-	retOpts := utils.DefaultRetrievalOptions()
+	retOpts := graphsearch.DefaultRetrievalOptions()
 	if retOpts == nil {
 		t.Error("DefaultRetrievalOptions() 返回 nil")
 	}
 
-	orgOpts := utils.DefaultOrganizationOptions()
+	orgOpts := graphsearch.DefaultOrganizationOptions()
 	if orgOpts == nil {
 		t.Error("DefaultOrganizationOptions() 返回 nil")
 	}
 
-	genOpts := utils.DefaultGenerationOptions()
+	genOpts := graphsearch.DefaultGenerationOptions()
 	if genOpts == nil {
 		t.Error("DefaultGenerationOptions() 返回 nil")
 	}

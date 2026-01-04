@@ -292,3 +292,17 @@ type GraphRAGOptions struct {
 	OrganizationOptions *OrganizationOptions
 	GenerationOptions   *GenerationOptions
 }
+
+// LLMGenerator LLM生成器接口（可选，用于集成外部LLM）
+type LLMGenerator interface {
+	Generate(ctx context.Context, prompt string, options map[string]any) (string, error)
+}
+
+// LLMConfig LLM 配置
+type LLMConfig struct {
+	Provider string // openai, azure, etc.
+	APIKey   string
+	BaseURL  string
+	Model    string
+	Options  map[string]any
+}
