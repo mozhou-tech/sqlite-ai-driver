@@ -12,7 +12,6 @@ import (
 	"github.com/cloudwego/eino/components/prompt"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 	"github.com/sirupsen/logrus"
 )
 
