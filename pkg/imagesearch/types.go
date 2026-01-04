@@ -1,6 +1,9 @@
 package imagesearch
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Embedder 向量嵌入生成器接口
 type Embedder interface {
@@ -15,6 +18,24 @@ type Options struct {
 	ImageEmbedder Embedder
 	OCR           OCR
 	TablePrefix   string // 表前缀，默认为 "imagesearch_"
+}
+
+// Document GORM 模型，表示图片和文本存储中的文档
+type Document struct {
+	ID              int64     `gorm:"primaryKey;not null"`         // Snowflake ID
+	Content         string    `gorm:"type:TEXT"`                   // JSON 格式的文档内容
+	Metadata        string    `gorm:"type:TEXT"`                   // JSON 格式的元数据
+	TextEmbedding   string    `gorm:"type:TEXT"`                   // 文本向量（JSON 数组格式）
+	ImageEmbedding  string    `gorm:"type:TEXT"`                   // 图片向量（JSON 数组格式）
+	EmbeddingStatus string    `gorm:"type:TEXT;default:'pending'"` // embedding 状态
+	Rev             int       `gorm:"column:_rev;default:1"`       // 版本号
+	CreatedAt       time.Time `gorm:"autoCreateTime"`              // 创建时间
+}
+
+// TableName 动态表名，由 Collection 设置
+func (Document) TableName() string {
+	// 这个方法会被 Collection 覆盖，这里只是占位符
+	return "imagesearch_documents"
 }
 
 // SearchResult 搜索结果

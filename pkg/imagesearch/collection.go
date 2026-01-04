@@ -2,13 +2,14 @@ package imagesearch
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+
+	"gorm.io/gorm"
 )
 
 // Collection 集合
 type Collection struct {
-	db        *sql.DB
+	db        *gorm.DB
 	tableName string
 }
 
@@ -18,52 +19,32 @@ func (r *ImageSearch) createCollection(ctx context.Context, name string) (*Colle
 	// 使用统一的表名，前缀为 tablePrefix
 	tableName := r.tablePrefix + name
 
-	// 创建表（如果不存在）
-	createTableSQL := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			id INTEGER PRIMARY KEY,
-			content TEXT,
-			metadata JSON,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			_rev INTEGER DEFAULT 1
-		)
-	`, tableName)
-
-	_, err := r.db.ExecContext(ctx, createTableSQL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create table: %w", err)
+	// 使用 GORM AutoMigrate 创建表（如果不存在）
+	// 注意：GORM 的 AutoMigrate 会自动处理列的增加，但不会删除列
+	// 我们需要手动处理 text_embedding 和 image_embedding 列，因为它们是 TEXT 类型存储 JSON 数组
+	documentModel := Document{}
+	if err := r.db.WithContext(ctx).Table(tableName).AutoMigrate(&documentModel); err != nil {
+		return nil, fmt.Errorf("failed to migrate table: %w", err)
 	}
 
-	// 检查并创建必要的列
-	checkColumnSQL := fmt.Sprintf(`
-		SELECT COUNT(*) 
-		FROM information_schema.columns 
-		WHERE table_name = '%s' AND column_name = ?
-	`, tableName)
+	// 检查并创建必要的列（如果不存在）
+	// SQLite 不支持直接检查列是否存在，所以我们使用 ALTER TABLE IF NOT EXISTS 的变通方法
+	// 由于 SQLite 的限制，我们直接尝试添加列，如果已存在会忽略错误
 
-	var count int
+	// 创建 text_embedding 列（如果不存在）
+	_ = r.db.WithContext(ctx).Exec(fmt.Sprintf(`
+		ALTER TABLE %s ADD COLUMN text_embedding TEXT
+	`, tableName)).Error
 
-	// 创建 text_embedding 列
-	err = r.db.QueryRowContext(ctx, checkColumnSQL, "text_embedding").Scan(&count)
-	if err == nil && count == 0 {
-		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN text_embedding FLOAT[]`, tableName)
-		_, _ = r.db.ExecContext(ctx, alterTableSQL)
-	}
+	// 创建 image_embedding 列（如果不存在）
+	_ = r.db.WithContext(ctx).Exec(fmt.Sprintf(`
+		ALTER TABLE %s ADD COLUMN image_embedding TEXT
+	`, tableName)).Error
 
-	// 创建 image_embedding 列
-	err = r.db.QueryRowContext(ctx, checkColumnSQL, "image_embedding").Scan(&count)
-	if err == nil && count == 0 {
-		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN image_embedding FLOAT[]`, tableName)
-		_, _ = r.db.ExecContext(ctx, alterTableSQL)
-	}
-
-	// 创建 embedding_status 列
-	statusColumn := "embedding_status"
-	err = r.db.QueryRowContext(ctx, checkColumnSQL, statusColumn).Scan(&count)
-	if err == nil && count == 0 {
-		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s VARCHAR DEFAULT 'pending'`, tableName, statusColumn)
-		_, _ = r.db.ExecContext(ctx, alterTableSQL)
-	}
+	// 创建 embedding_status 列（如果不存在）
+	_ = r.db.WithContext(ctx).Exec(fmt.Sprintf(`
+		ALTER TABLE %s ADD COLUMN embedding_status TEXT DEFAULT 'pending'
+	`, tableName)).Error
 
 	return &Collection{
 		db:        r.db,

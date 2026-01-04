@@ -77,18 +77,18 @@ func setupTestStore(t *testing.T, embedder Embedder) (*VecStore, func()) {
 		t.Fatalf("Failed to change to temp directory: %v", err)
 	}
 
-	// 清理函数
+	// 清理函数（不删除数据，保留数据库文件用于验证）
 	cleanup := func() {
 		// 关闭数据库连接（Close 内部会处理 nil 检查）
 		store.Close()
 		// 恢复工作目录
 		os.Chdir(oldWd)
-		// 清理临时目录和数据库文件
-		dbPath := filepath.Join(tmpDir, "textsearch.db")
-		os.Remove(dbPath)
-		os.Remove(dbPath + "-shm")
-		os.Remove(dbPath + "-wal")
-		os.RemoveAll(tmpDir)
+		// 不删除数据库文件和临时目录，保留用于验证
+		// 以下代码已注释，不再删除测试数据
+		// os.Remove(dbPath)
+		// os.Remove(dbPath + "-shm")
+		// os.Remove(dbPath + "-wal")
+		// os.RemoveAll(tmpDir)
 	}
 
 	return store, cleanup

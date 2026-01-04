@@ -2,18 +2,18 @@ package imagesearch
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
 	"golang.org/x/time/rate"
+	"gorm.io/gorm"
 )
 
 // VectorSearch 向量搜索
 type VectorSearch struct {
-	db               *sql.DB
+	db               *gorm.DB
 	tableName        string
 	vectorColumn     string // 'text_embedding' 或 'image_embedding'
 	embedder         Embedder
@@ -119,33 +119,30 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 	finalArgs = append(finalArgs, queryArgs...)
 	finalArgs = append(finalArgs, vectorStr, limit)
 
-	rows, err := v.db.QueryContext(ctx, sqlQuery, finalArgs...)
-	if err != nil {
+	// 使用 GORM 的 Raw SQL 查询
+	type SearchRow struct {
+		ID         int64
+		Content    string
+		Metadata   string
+		Similarity float64
+	}
+
+	var rows []SearchRow
+	if err := v.db.WithContext(ctx).Raw(sqlQuery, finalArgs...).Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("failed to search vectors: %w", err)
 	}
-	defer rows.Close()
 
 	var results []SearchResult
-	for rows.Next() {
-		var id int64
-		var content string
-		var metadataVal any
-		var similarity float64
-
-		err := rows.Scan(&id, &content, &metadataVal, &similarity)
-		if err != nil {
-			continue
-		}
-
+	for _, row := range rows {
 		var doc map[string]any
-		if err := json.Unmarshal([]byte(content), &doc); err != nil {
-			doc = map[string]any{"id": id, "content": content}
+		if err := json.Unmarshal([]byte(row.Content), &doc); err != nil {
+			doc = map[string]any{"id": row.ID, "content": row.Content}
 		}
 
 		results = append(results, SearchResult{
-			ID:      id,
+			ID:      row.ID,
 			Content: getContentFromDoc(doc),
-			Score:   similarity,
+			Score:   row.Similarity,
 			Source:  "vector",
 			Data:    doc,
 		})
@@ -162,6 +159,13 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 	})
 
 	// 查询pending状态的文档（只查询对应 embedding 字段为空的文档）
+	type PendingDoc struct {
+		ID       int64
+		Content  string
+		Metadata string
+	}
+
+	var pendingDocs []PendingDoc
 	querySQL := fmt.Sprintf(`
 		SELECT id, content, metadata
 		FROM %s
@@ -169,29 +173,20 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 		LIMIT 10
 	`, v.tableName, v.vectorColumn)
 
-	rows, err := v.db.QueryContext(ctx, querySQL)
-	if err != nil {
+	if err := v.db.WithContext(ctx).Raw(querySQL).Scan(&pendingDocs).Error; err != nil {
 		return
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var id, content string
-		var metadataVal any
-
-		if err := rows.Scan(&id, &content, &metadataVal); err != nil {
-			continue
-		}
-
+	for _, pendingDoc := range pendingDocs {
 		// 解析文档
 		var doc map[string]any
-		if err := json.Unmarshal([]byte(content), &doc); err != nil {
+		if err := json.Unmarshal([]byte(pendingDoc.Content), &doc); err != nil {
 			continue
 		}
 
 		// 更新状态为processing
 		updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND %s IS NULL AND embedding_status = 'pending'`, v.tableName, v.vectorColumn)
-		_, _ = v.db.ExecContext(ctx, updateStatusSQL, id)
+		_ = v.db.WithContext(ctx).Exec(updateStatusSQL, pendingDoc.ID).Error
 
 		// 生成embedding
 		if v.docToEmbedding != nil {
@@ -212,11 +207,11 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 
 				// 更新向量列和状态为completed
 				updateVectorSQL := fmt.Sprintf(`UPDATE %s SET %s = ?, embedding_status = 'completed' WHERE id = ?`, v.tableName, v.vectorColumn)
-				_, _ = v.db.ExecContext(ctx, updateVectorSQL, vectorStr, id)
+				_ = v.db.WithContext(ctx).Exec(updateVectorSQL, vectorStr, pendingDoc.ID).Error
 			} else {
 				// 更新状态为failed
 				updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
-				_, _ = v.db.ExecContext(ctx, updateStatusSQL, id)
+				_ = v.db.WithContext(ctx).Exec(updateStatusSQL, pendingDoc.ID).Error
 			}
 		}
 	}

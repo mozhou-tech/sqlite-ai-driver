@@ -2,7 +2,6 @@ package imagesearch
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,11 +13,13 @@ import (
 	"github.com/disgoorg/snowflake/v2"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/sirupsen/logrus"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // ImageSearch 基于SQLite的图片和文本RAG系统
 type ImageSearch struct {
-	db            *sql.DB
+	db            *gorm.DB
 	workingDir    string
 	textEmbedder  Embedder
 	imageEmbedder Embedder
@@ -77,10 +78,11 @@ func (r *ImageSearch) InitializeStorages(ctx context.Context) error {
 		return fmt.Errorf("failed to create working directory: %w", err)
 	}
 
-	// 打开SQLite数据库
+	// 打开SQLite数据库，使用 GORM
 	// 使用简单的路径标识即可，实际路径会被映射到共享数据库
 	// 所有表使用 tablePrefix 前缀以区分不同的业务模块
-	db, err := sql.Open("sqlite3", filepath.Join(r.workingDir, "index.db"))
+	dbPath := filepath.Join(r.workingDir, "index.db")
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
@@ -192,17 +194,19 @@ func (r *ImageSearch) InsertImage(ctx context.Context, imagePath string, metadat
 		}
 	}
 
-	// 插入到数据库
-	insertSQL := fmt.Sprintf(`
-		INSERT INTO %s (id, content, metadata, _rev, embedding_status)
-		VALUES (?, ?, ?, 1, 'pending')
-	`, r.images.tableName)
-
 	// 将doc序列化为content字段（存储所有数据）
 	contentJSON, _ := json.Marshal(doc)
 
-	_, err = r.db.ExecContext(ctx, insertSQL, doc["id"], string(contentJSON), metadataJSON)
-	if err != nil {
+	// 使用 GORM 插入文档
+	document := Document{
+		ID:              id,
+		Content:         string(contentJSON),
+		Metadata:        metadataJSON,
+		EmbeddingStatus: "pending",
+		Rev:             1,
+	}
+
+	if err := r.db.WithContext(ctx).Table(r.images.tableName).Create(&document).Error; err != nil {
 		return fmt.Errorf("failed to insert image: %w", err)
 	}
 
@@ -257,16 +261,18 @@ func (r *ImageSearch) InsertText(ctx context.Context, text string, metadata map[
 		}
 	}
 
-	// 插入到数据库
-	insertSQL := fmt.Sprintf(`
-		INSERT INTO %s (id, content, metadata, _rev, embedding_status)
-		VALUES (?, ?, ?, 1, 'pending')
-	`, r.texts.tableName)
-
 	contentJSON, _ := json.Marshal(doc)
 
-	_, err := r.db.ExecContext(ctx, insertSQL, doc["id"], string(contentJSON), metadataJSON)
-	if err != nil {
+	// 使用 GORM 插入文档
+	document := Document{
+		ID:              id,
+		Content:         string(contentJSON),
+		Metadata:        metadataJSON,
+		EmbeddingStatus: "pending",
+		Rev:             1,
+	}
+
+	if err := r.db.WithContext(ctx).Table(r.texts.tableName).Create(&document).Error; err != nil {
 		return fmt.Errorf("failed to insert text: %w", err)
 	}
 
@@ -463,7 +469,11 @@ func getContentFromDoc(doc map[string]any) string {
 // Close 关闭ImageSearch
 func (r *ImageSearch) Close(ctx context.Context) error {
 	if r.db != nil {
-		return r.db.Close()
+		sqlDB, err := r.db.DB()
+		if err != nil {
+			return err
+		}
+		return sqlDB.Close()
 	}
 	return nil
 }
