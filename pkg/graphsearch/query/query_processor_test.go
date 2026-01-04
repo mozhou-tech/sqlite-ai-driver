@@ -2,9 +2,8 @@ package graphsearch_test
 
 import (
 	"context"
+	graphsearch "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch/core"
 	"testing"
-
-	graphsearch "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 )
 
 // setupTestStore 设置测试用的 graphsearch 实例

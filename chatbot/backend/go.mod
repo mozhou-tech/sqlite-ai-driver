@@ -15,6 +15,7 @@ require (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch v0.0.0
 	github.com/sirupsen/logrus v1.9.3
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch v0.0.0
 )
 
 require (
@@ -103,3 +104,4 @@ replace github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../../pkg/sego
 
 replace github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch => ../../pkg/textsearch
+replace github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch => ../../pkg/graphsearch
