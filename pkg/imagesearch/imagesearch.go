@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/disgoorg/snowflake/v2"
+	"github.com/google/uuid"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/sirupsen/logrus"
 	"gorm.io/driver/sqlite"
@@ -25,7 +25,6 @@ type ImageSearch struct {
 	imageEmbedder Embedder
 	ocr           OCR
 	tablePrefix   string // 表前缀
-	snowflake     *snowflake.Node
 
 	// 集合
 	images *Collection
@@ -51,16 +50,12 @@ func New(opts Options) *ImageSearch {
 		workingDir = "./testdata"
 	}
 
-	// 初始化 Snowflake 生成器，使用节点 ID 2（与 textsearch 区分）
-	snowflakeNode, _ := snowflake.NewNode(2)
-
 	return &ImageSearch{
 		workingDir:    workingDir,
 		textEmbedder:  opts.TextEmbedder,
 		imageEmbedder: opts.ImageEmbedder,
 		ocr:           opts.OCR,
 		tablePrefix:   tablePrefix,
-		snowflake:     snowflakeNode,
 	}
 }
 
@@ -165,10 +160,12 @@ func (r *ImageSearch) InsertImage(ctx context.Context, imagePath string, metadat
 	}
 
 	// 构建文档
-	// 使用 Snowflake 生成主键（int64 类型）
-	id := r.snowflake.Generate()
+	// 使用 UUID 生成主键（二进制形式）
+	uuidVal := uuid.New()
+	idBytes := uuidVal[:]     // UUID 本身就是 [16]byte
+	idStr := uuidVal.String() // 用于在 content JSON 中存储
 	doc := map[string]any{
-		"id":         id,
+		"id":         idStr, // 在 content 中存储 UUID 字符串
 		"image_path": imagePath,
 		"ocr_text":   ocrText,
 		"width":      imageInfo.Width,
@@ -198,8 +195,9 @@ func (r *ImageSearch) InsertImage(ctx context.Context, imagePath string, metadat
 	contentJSON, _ := json.Marshal(doc)
 
 	// 使用 GORM 插入文档
+	// 使用 UUID 二进制作为主键，确保唯一性
 	document := Document{
-		ID:              id,
+		ID:              idBytes,
 		Content:         string(contentJSON),
 		Metadata:        metadataJSON,
 		EmbeddingStatus: "pending",
@@ -237,10 +235,12 @@ func (r *ImageSearch) InsertText(ctx context.Context, text string, metadata map[
 		return nil
 	}
 
-	// 使用 Snowflake 生成主键（int64 类型）
-	id := r.snowflake.Generate()
+	// 使用 UUID 生成主键（二进制形式）
+	uuidVal := uuid.New()
+	idBytes := uuidVal[:]     // UUID 本身就是 [16]byte
+	idStr := uuidVal.String() // 用于在 content JSON 中存储
 	doc := map[string]any{
-		"id":         id,
+		"id":         idStr, // 在 content 中存储 UUID 字符串
 		"content":    text,
 		"created_at": time.Now().Unix(),
 	}
@@ -264,8 +264,9 @@ func (r *ImageSearch) InsertText(ctx context.Context, text string, metadata map[
 	contentJSON, _ := json.Marshal(doc)
 
 	// 使用 GORM 插入文档
+	// 使用 UUID 二进制作为主键，确保唯一性
 	document := Document{
-		ID:              id,
+		ID:              idBytes,
 		Content:         string(contentJSON),
 		Metadata:        metadataJSON,
 		EmbeddingStatus: "pending",

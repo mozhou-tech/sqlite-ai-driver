@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/disgoorg/snowflake/v2"
+	"github.com/google/uuid"
 )
 
 // mockEmbedder 用于测试的简单嵌入生成器
@@ -125,7 +125,7 @@ func waitForEmbeddings(search *ImageSearch, maxWait time.Duration) {
 				SELECT COUNT(*) FROM %stexts 
 				WHERE text_embedding IS NULL AND embedding_status = 'pending'
 			`, tablePrefix)
-			_ = search.db.QueryRowContext(ctx, querySQL).Scan(&pendingCount)
+			_ = search.db.WithContext(ctx).Raw(querySQL).Row().Scan(&pendingCount)
 		}
 		if search.imagesVector != nil {
 			querySQL := fmt.Sprintf(`
@@ -133,7 +133,7 @@ func waitForEmbeddings(search *ImageSearch, maxWait time.Duration) {
 				WHERE image_embedding IS NULL AND embedding_status = 'pending'
 			`, tablePrefix)
 			var imgPending int
-			_ = search.db.QueryRowContext(ctx, querySQL).Scan(&imgPending)
+			_ = search.db.WithContext(ctx).Raw(querySQL).Row().Scan(&imgPending)
 			pendingCount += imgPending
 		}
 
@@ -347,12 +347,11 @@ func TestInsertImage_WithMetadata(t *testing.T) {
 	imagePath := filepath.Join(tmpDir, "test.png")
 	createTestImage(t, imagePath)
 
-	// 创建测试用的 Snowflake 生成器
-	testSnowflake, _ := snowflake.NewNode(99)
+	// 使用 UUID 生成测试 ID
 	metadata := map[string]any{
 		"source":   "test",
 		"category": "example",
-		"id":       testSnowflake.Generate(),
+		"id":       uuid.New().String(),
 	}
 
 	err = search.InsertImage(ctx, imagePath, metadata)
@@ -520,12 +519,11 @@ func TestInsertText_WithMetadata(t *testing.T) {
 	}
 	defer search.Close(ctx)
 
-	// 创建测试用的 Snowflake 生成器
-	testSnowflake, _ := snowflake.NewNode(99)
+	// 使用 UUID 生成测试 ID
 	metadata := map[string]any{
 		"source":   "test",
 		"category": "document",
-		"id":       testSnowflake.Generate(),
+		"id":       uuid.New().String(),
 	}
 
 	err = search.InsertText(ctx, "This is a test document with enough characters to be inserted", metadata)

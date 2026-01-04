@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	sqlite3_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 )
@@ -121,7 +122,7 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 
 	// 使用 GORM 的 Raw SQL 查询
 	type SearchRow struct {
-		ID         int64
+		ID         []byte
 		Content    string
 		Metadata   string
 		Similarity float64
@@ -134,13 +135,19 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 
 	var results []SearchResult
 	for _, row := range rows {
+		// 将二进制 UUID 转换为字符串
+		id, err := sqlite3_driver.BytesToUUIDString(row.ID)
+		if err != nil {
+			continue // 跳过无效的 UUID
+		}
+
 		var doc map[string]any
 		if err := json.Unmarshal([]byte(row.Content), &doc); err != nil {
-			doc = map[string]any{"id": row.ID, "content": row.Content}
+			doc = map[string]any{"id": id, "content": row.Content}
 		}
 
 		results = append(results, SearchResult{
-			ID:      row.ID,
+			ID:      id,
 			Content: getContentFromDoc(doc),
 			Score:   row.Similarity,
 			Source:  "vector",
@@ -160,7 +167,7 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 
 	// 查询pending状态的文档（只查询对应 embedding 字段为空的文档）
 	type PendingDoc struct {
-		ID       int64
+		ID       []byte
 		Content  string
 		Metadata string
 	}

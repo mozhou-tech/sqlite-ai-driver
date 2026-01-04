@@ -22,14 +22,14 @@ type Options struct {
 
 // Document GORM 模型，表示图片和文本存储中的文档
 type Document struct {
-	ID              int64     `gorm:"primaryKey;not null"`         // Snowflake ID
-	Content         string    `gorm:"type:TEXT"`                   // JSON 格式的文档内容
-	Metadata        string    `gorm:"type:TEXT"`                   // JSON 格式的元数据
-	TextEmbedding   string    `gorm:"type:TEXT"`                   // 文本向量（JSON 数组格式）
-	ImageEmbedding  string    `gorm:"type:TEXT"`                   // 图片向量（JSON 数组格式）
-	EmbeddingStatus string    `gorm:"type:TEXT;default:'pending'"` // embedding 状态
-	Rev             int       `gorm:"column:_rev;default:1"`       // 版本号
-	CreatedAt       time.Time `gorm:"autoCreateTime"`              // 创建时间
+	ID              []byte    `gorm:"type:BLOB(16);primaryKey;not null"` // UUID 二进制
+	Content         string    `gorm:"type:TEXT"`                         // JSON 格式的文档内容
+	Metadata        string    `gorm:"type:TEXT"`                         // JSON 格式的元数据
+	TextEmbedding   string    `gorm:"type:TEXT"`                         // 文本向量（JSON 数组格式）
+	ImageEmbedding  string    `gorm:"type:TEXT"`                         // 图片向量（JSON 数组格式）
+	EmbeddingStatus string    `gorm:"type:TEXT;default:'pending'"`       // embedding 状态
+	Rev             int       `gorm:"column:_rev;default:1"`             // 版本号
+	CreatedAt       time.Time `gorm:"autoCreateTime"`                    // 创建时间
 }
 
 // TableName 动态表名，由 Collection 设置
@@ -40,7 +40,7 @@ func (Document) TableName() string {
 
 // SearchResult 搜索结果
 type SearchResult struct {
-	ID      int64
+	ID      string
 	Content string
 	Score   float64
 	Source  string // "vector", "text", "image", "hybrid"
