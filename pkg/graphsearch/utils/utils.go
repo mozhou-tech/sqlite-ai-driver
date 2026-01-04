@@ -1,4 +1,4 @@
-package graphsearch
+package utils
 
 import (
 	"context"
@@ -8,31 +8,31 @@ import (
 // DefaultGraphRAGOptions 返回默认的 GraphRAG 配置选项
 func DefaultGraphRAGOptions() *GraphRAGOptions {
 	return &GraphRAGOptions{
-		RetrievalOptions: DefaultRetrievalOptions(),
+		RetrievalOptions:    DefaultRetrievalOptions(),
 		OrganizationOptions: DefaultOrganizationOptions(),
-		GenerationOptions: DefaultGenerationOptions(),
+		GenerationOptions:   DefaultGenerationOptions(),
 	}
 }
 
 // DefaultRetrievalOptions 返回默认的检索选项
 func DefaultRetrievalOptions() *RetrievalOptions {
 	return &RetrievalOptions{
-		Limit:              10,
-		MaxDepth:           2,
+		Limit:               10,
+		MaxDepth:            2,
 		SimilarityThreshold: 0.0,
-		Strategy:           StrategyHybrid,
+		Strategy:            StrategyHybrid,
 	}
 }
 
 // DefaultOrganizationOptions 返回默认的组织选项
 func DefaultOrganizationOptions() *OrganizationOptions {
 	return &OrganizationOptions{
-		EnablePruning:       true,
-		EnableReranking:     true,
-		EnableAugmentation:  false,
-		EnableVerbalization: true,
-		PruningOptions:      DefaultPruningOptions(),
-		RerankingOptions:    DefaultRerankingOptions(),
+		EnablePruning:        true,
+		EnableReranking:      true,
+		EnableAugmentation:   false,
+		EnableVerbalization:  true,
+		PruningOptions:       DefaultPruningOptions(),
+		RerankingOptions:     DefaultRerankingOptions(),
 		VerbalizationOptions: DefaultVerbalizationOptions(),
 	}
 }
@@ -276,4 +276,3 @@ func (g *graphsearch) GraphRAGQueryWithOptions(ctx context.Context, query string
 	options := BuildGraphRAGOptions(funcs...)
 	return g.GraphRAGQuery(ctx, query, options)
 }
-

@@ -71,7 +71,7 @@ func (g *graphsearch) Initialize(ctx context.Context) error {
 	}
 
 	// 打开SQLite数据库用于向量检索，使用 GORM
-	// 注意：无论传入什么路径，都会被 sqlite-driver 统一映射到共享数据库文件 ./data/indexing/data.db
+	// 注意：无论传入什么路径，都会被 sqlite-driver 统一映射到共享数据库文件 ./testdata/indexing/data.db
 	// 向量检索使用 sqlite-driver 的 data.db 共享数据库，不同的业务模块通过表名区分
 	db, err := gorm.Open(sqlite.Open("graphsearch.db"), &gorm.Config{})
 	if err != nil {

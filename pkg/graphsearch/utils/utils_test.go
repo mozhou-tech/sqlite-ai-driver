@@ -1,6 +1,7 @@
-package graphsearch_test
+package utils_test
 
 import (
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch/utils"
 	"testing"
 
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
@@ -31,7 +32,7 @@ func TestValidateQuery(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := graphsearch.ValidateQuery(tt.query)
+			err := utils.ValidateQuery(tt.query)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateQuery() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -47,7 +48,7 @@ func TestValidateRetrievalOptions(t *testing.T) {
 	}{
 		{
 			name:    "有效选项",
-			options: graphsearch.DefaultRetrievalOptions(),
+			options: utils.DefaultRetrievalOptions(),
 			wantErr: false,
 		},
 		{
@@ -79,7 +80,7 @@ func TestValidateRetrievalOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := graphsearch.ValidateRetrievalOptions(tt.options)
+			err := utils.ValidateRetrievalOptions(tt.options)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateRetrievalOptions() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -95,7 +96,7 @@ func TestValidateGenerationOptions(t *testing.T) {
 	}{
 		{
 			name:    "有效选项",
-			options: graphsearch.DefaultGenerationOptions(),
+			options: utils.DefaultGenerationOptions(),
 			wantErr: false,
 		},
 		{
@@ -118,7 +119,7 @@ func TestValidateGenerationOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := graphsearch.ValidateGenerationOptions(tt.options)
+			err := utils.ValidateGenerationOptions(tt.options)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ValidateGenerationOptions() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -128,32 +129,32 @@ func TestValidateGenerationOptions(t *testing.T) {
 
 func TestDefaultOptions(t *testing.T) {
 	// 测试默认选项不为 nil
-	ragOpts := graphsearch.DefaultGraphRAGOptions()
+	ragOpts := utils.DefaultGraphRAGOptions()
 	if ragOpts == nil {
 		t.Error("DefaultGraphRAGOptions() 返回 nil")
 	}
 
-	retOpts := graphsearch.DefaultRetrievalOptions()
+	retOpts := utils.DefaultRetrievalOptions()
 	if retOpts == nil {
 		t.Error("DefaultRetrievalOptions() 返回 nil")
 	}
 
-	orgOpts := graphsearch.DefaultOrganizationOptions()
+	orgOpts := utils.DefaultOrganizationOptions()
 	if orgOpts == nil {
 		t.Error("DefaultOrganizationOptions() 返回 nil")
 	}
 
-	genOpts := graphsearch.DefaultGenerationOptions()
+	genOpts := utils.DefaultGenerationOptions()
 	if genOpts == nil {
 		t.Error("DefaultGenerationOptions() 返回 nil")
 	}
 }
 
 func TestBuildGraphRAGOptions(t *testing.T) {
-	opts := graphsearch.BuildGraphRAGOptions(
-		graphsearch.WithRetrievalStrategy(graphsearch.StrategyHybrid),
-		graphsearch.WithRetrievalLimit(20),
-		graphsearch.WithGenerationMethod(graphsearch.MethodHybrid),
+	opts := utils.BuildGraphRAGOptions(
+		utils.WithRetrievalStrategy(graphsearch.StrategyHybrid),
+		utils.WithRetrievalLimit(20),
+		utils.WithGenerationMethod(graphsearch.MethodHybrid),
 	)
 
 	if opts == nil {

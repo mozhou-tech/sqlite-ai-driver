@@ -172,7 +172,7 @@ type Embedder interface {
 - **图谱数据**：存储在 SQLite 数据库中（通过 `cayley-driver`）
 - **实体 Embedding（向量检索）**：存储在 sqlite 数据库中（通过 `sqlite-driver`）
   - 向量检索使用 `sqlite-driver` 的 `index.db` 共享数据库
-  - 所有 sqlite 数据统一映射到 `./data/data.db`
+  - 所有 sqlite 数据统一映射到 `./testdata/data.db`
   - 不同的业务模块通过表名区分（如 `graphsearch_entities`）
 
 ## GraphRAG 使用指南

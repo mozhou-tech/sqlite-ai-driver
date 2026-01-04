@@ -1,4 +1,4 @@
-package graphsearch
+package prompts
 
 import (
 	"context"

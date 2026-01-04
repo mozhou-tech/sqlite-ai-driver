@@ -12,7 +12,7 @@ require (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext v0.0.0-00010101000000-000000000000
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf v0.0.0
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag v0.0.0-00010101000000-000000000000
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
 	gorm.io/driver/sqlite v1.6.0
@@ -121,6 +121,7 @@ replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver => ./pkg/sqlite-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext => ./pkg/eino-ext
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf => ./pkg/eino-ext/document/parser/pdf
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch => ./pkg/graphsearch
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./pkg/lightrag
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ./pkg/sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ./pkg/sqlite3-driver

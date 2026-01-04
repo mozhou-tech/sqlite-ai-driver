@@ -1,14 +1,13 @@
-package graphsearch_test
+package storage_test
 
 import (
 	"context"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch/storage"
 	"testing"
-
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 )
 
 func TestVectorSearchOptimizer_New(t *testing.T) {
-	optimizer := graphsearch.NewVectorSearchOptimizer(100)
+	optimizer := storage.NewVectorSearchOptimizer(100)
 	if optimizer == nil {
 		t.Fatal("NewVectorSearchOptimizer() 返回 nil")
 	}
@@ -19,7 +18,7 @@ func TestVectorSearchOptimizer_New(t *testing.T) {
 }
 
 func TestVectorSearchOptimizer_ClearCache(t *testing.T) {
-	optimizer := graphsearch.NewVectorSearchOptimizer(100)
+	optimizer := storage.NewVectorSearchOptimizer(100)
 
 	// 清空缓存
 	optimizer.ClearCache()
@@ -40,7 +39,7 @@ func TestOptimizedSemanticSearch(t *testing.T) {
 	store.AddEntity(ctx, "entity2", "Bob", map[string]any{"type": "person"})
 	store.Link(ctx, "entity1", "knows", "entity2")
 
-	optimizer := graphsearch.NewVectorSearchOptimizer(100)
+	optimizer := storage.NewVectorSearchOptimizer(100)
 
 	results, err := store.OptimizedSemanticSearch(ctx, "Alice", 10, 2, optimizer)
 	if err != nil {
@@ -67,7 +66,7 @@ func TestPreloadEmbeddings(t *testing.T) {
 	store.AddEntity(ctx, "entity1", "Alice", map[string]any{"type": "person"})
 	store.AddEntity(ctx, "entity2", "Bob", map[string]any{"type": "person"})
 
-	optimizer := graphsearch.NewVectorSearchOptimizer(100)
+	optimizer := storage.NewVectorSearchOptimizer(100)
 
 	err := store.PreloadEmbeddings(ctx, optimizer, 10)
 	if err != nil {

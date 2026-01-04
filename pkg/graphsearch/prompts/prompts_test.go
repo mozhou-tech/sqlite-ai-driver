@@ -1,16 +1,15 @@
-package graphsearch_test
+package prompts_test
 
 import (
 	"context"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch/prompts"
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 )
 
 func TestPromptManager_LoadDefaultPrompts(t *testing.T) {
-	manager := graphsearch.NewPromptManager("")
+	manager := prompts.NewPromptManager("")
 	manager.LoadDefaultPrompts()
 
 	templates := manager.ListTemplates()
@@ -41,7 +40,7 @@ func TestPromptManager_LoadDefaultPrompts(t *testing.T) {
 }
 
 func TestPromptManager_GetTemplate(t *testing.T) {
-	manager := graphsearch.NewPromptManager("")
+	manager := prompts.NewPromptManager("")
 	manager.LoadDefaultPrompts()
 
 	template, err := manager.GetTemplate("entity_extraction")
@@ -59,7 +58,7 @@ func TestPromptManager_GetTemplate(t *testing.T) {
 }
 
 func TestPromptManager_FormatTemplate(t *testing.T) {
-	manager := graphsearch.NewPromptManager("")
+	manager := prompts.NewPromptManager("")
 	manager.LoadDefaultPrompts()
 
 	variables := map[string]any{
@@ -82,9 +81,9 @@ func TestPromptManager_FormatTemplate(t *testing.T) {
 
 func TestPromptManager_SaveAndLoadTemplate(t *testing.T) {
 	tmpDir := t.TempDir()
-	manager := graphsearch.NewPromptManager(tmpDir)
+	manager := prompts.NewPromptManager(tmpDir)
 
-	template := graphsearch.PromptTemplate{
+	template := prompts.PromptTemplate{
 		Name:        "test_template",
 		Description: "测试模板",
 		Template:    "这是一个测试模板，包含变量 {{variable}}",
@@ -114,7 +113,7 @@ func TestPromptManager_SaveAndLoadTemplate(t *testing.T) {
 }
 
 func TestPromptManager_UpdateTemplate(t *testing.T) {
-	manager := graphsearch.NewPromptManager("")
+	manager := prompts.NewPromptManager("")
 	manager.LoadDefaultPrompts()
 
 	template, _ := manager.GetTemplate("entity_extraction")
@@ -137,9 +136,9 @@ func TestPromptManager_UpdateTemplate(t *testing.T) {
 
 func TestPromptManager_DeleteTemplate(t *testing.T) {
 	tmpDir := t.TempDir()
-	manager := graphsearch.NewPromptManager(tmpDir)
+	manager := prompts.NewPromptManager(tmpDir)
 
-	template := graphsearch.PromptTemplate{
+	template := prompts.PromptTemplate{
 		Name:     "temp_template",
 		Template: "临时模板",
 	}
