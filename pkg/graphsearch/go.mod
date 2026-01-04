@@ -5,6 +5,7 @@ go 1.24.2
 require (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
+	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
 )
