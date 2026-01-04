@@ -209,8 +209,8 @@ export default function Home() {
     <div className="flex flex-col h-screen bg-background relative overflow-hidden">
       <header className="border-b p-4 flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold">LightRAG Chatbot</h1>
-          <p className="text-sm text-muted-foreground">基于 eino-lightrag 的多轮对话示例</p>
+          <h1 className="text-2xl font-bold">RAG Chatbot</h1>
+          <p className="text-sm text-muted-foreground">基于 eino 的多轮对话示例</p>
         </div>
         <div className="flex gap-2">
           <select
@@ -260,11 +260,11 @@ export default function Home() {
               <div className="flex items-center justify-center h-full">
                 <Card className="w-full max-w-2xl">
                   <CardHeader>
-                    <CardTitle>欢迎使用 LightRAG Chatbot</CardTitle>
+                    <CardTitle>欢迎使用 RAG Chatbot</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <p className="text-muted-foreground">
-                      这是一个基于 eino-lightrag 的多轮对话示例。您可以上传文档构建知识库，然后开始提问。
+                      这是一个基于 eino 的多轮对话示例。您可以上传文档构建知识库，然后开始提问。
                     </p>
                   </CardContent>
                 </Card>

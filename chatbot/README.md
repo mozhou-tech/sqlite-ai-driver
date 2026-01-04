@@ -1,13 +1,13 @@
-# LightRAG Chatbot
+# RAG Chatbot
 
-这是一个基于 eino-lightrag 的多轮对话示例应用。
+这是一个基于 eino 的多轮对话示例应用。
 
 ## 功能特性
 
-1. **后端基于 Gin 和 eino 实现**，使用本仓库提供的 eino-ext 包提供的 lightrag 扩展
+1. **后端基于 Gin 和 eino 实现**，使用本仓库提供的 eino-ext 包提供的向量检索扩展
 2. **前端基于最新版 Next.js**，使用 shadcn/ui 组件库
 3. **大模型基于环境变量配置的 OpenAI 模型**
-4. **提供简单的多轮对话示例**，用于品策 eino-lightrag 的效果
+4. **提供简单的多轮对话示例**，用于展示 eino RAG 的效果
 
 ## 项目结构
 
@@ -139,8 +139,7 @@ curl -X POST http://localhost:45111/api/documents \
 ### 后端
 - **Gin**: Web 框架
 - **eino**: LLM 应用框架
-- **lightrag**: LightRAG 实现
-- **eino-ext**: eino 扩展包
+- **eino-ext**: eino 扩展包（向量检索、文档解析等）
 
 ### 前端
 - **Next.js 15**: React 框架
@@ -156,7 +155,7 @@ curl -X POST http://localhost:45111/api/documents \
 后端使用 Go 1.24.2 开发，主要依赖：
 - `github.com/gin-gonic/gin`: Web 框架
 - `github.com/cloudwego/eino`: LLM 应用框架
-- `github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag`: LightRAG 实现
+- `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext`: eino 扩展包
 
 ### 前端开发
 

@@ -17,9 +17,7 @@
 
 3. **Eino 扩展包**：
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/duckdb` - SQLite 索引器
-   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/lightrag` - LightRAG 索引器
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec` - SQLite 检索器（包名：duckdb）
-   - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/lightrag` - LightRAG 检索器
    - `github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/transformer/splitter/tfidf` - TF-IDF 文档分割器
 
 ## 🔧 安装依赖
