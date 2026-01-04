@@ -105,11 +105,29 @@ func (g *defaultGenerator) GenerateWithGraph(ctx context.Context, organizedResul
 	// 使用文本化后的内容
 	if len(organizedResult.VerbalizedTexts) > 0 {
 		answerParts = append(answerParts, organizedResult.VerbalizedTexts...)
-	} else {
-		// 如果没有文本化，手动构建
+	} else if len(organizedResult.Subgraphs) > 0 {
+		// 如果没有文本化，从子图构建
 		for _, subgraph := range organizedResult.Subgraphs {
 			text := g.subgraphToText(subgraph)
 			answerParts = append(answerParts, text)
+		}
+	} else if len(organizedResult.Triples) > 0 {
+		// 如果只有三元组，从三元组构建文本
+		tripleTexts := make([]string, 0, len(organizedResult.Triples))
+		for _, triple := range organizedResult.Triples {
+			tripleTexts = append(tripleTexts, fmt.Sprintf("%s %s %s", triple.Subject, triple.Predicate, triple.Object))
+		}
+		if len(tripleTexts) > 0 {
+			answerParts = append(answerParts, strings.Join(tripleTexts, "\n"))
+		}
+	} else if len(organizedResult.Entities) > 0 {
+		// 如果只有实体，从实体构建文本
+		entityTexts := make([]string, 0, len(organizedResult.Entities))
+		for _, entity := range organizedResult.Entities {
+			entityTexts = append(entityTexts, fmt.Sprintf("实体：%s (ID: %s)", entity.EntityName, entity.EntityID))
+		}
+		if len(entityTexts) > 0 {
+			answerParts = append(answerParts, strings.Join(entityTexts, "\n"))
 		}
 	}
 
