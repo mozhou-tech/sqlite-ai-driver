@@ -4,6 +4,9 @@
 - 本工程是基于 `gitlab.com/cznic/sqlite` 的二次封装
 - 默认开启 WAL（Write-Ahead Logging）模式
 
+## ID主键规范
+- 本工程中所有表的 ID 字段都使用 16 字节的二进制 UUID 作为主键（BLOB(16)），并使用 `uuidStringToBytes` 和 `bytesToUUIDString` 进行转换
+- 在CURD操作时，使用 `uuidStringToBytes` 和 `bytesToUUIDString` 进行转换
 
 Virtual Tables (vtab)
 ---------------------

@@ -2,6 +2,7 @@ package textsearch
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -9,327 +10,55 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino-ext/components/embedding/openai"
+	sqlite3_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 )
 
 // processPendingEmbeddings 处理待处理的embedding
 func (v *VecStore) processPendingEmbeddings(ctx context.Context) {
-	// 防止并发执行（使用非阻塞方式）
-	if v.isProcessing {
-		log.Printf("[processPendingEmbeddings] 已有处理任务在运行，跳过")
+	if !v.acquireProcessingLock() {
 		return
 	}
-	v.isProcessing = true
-
-	// 确保在函数退出时重置标志
 	defer func() {
 		v.isProcessing = false
 	}()
 
 	log.Printf("[processPendingEmbeddings] 开始处理待处理的embedding")
 
-	// 检查 context 是否已取消
-	select {
-	case <-ctx.Done():
-		log.Printf("[processPendingEmbeddings] Context已取消，退出")
-		return
-	default:
-	}
-
-	// 检查数据库是否已关闭
-	db := v.db
-	if db == nil {
-		log.Printf("[processPendingEmbeddings] 数据库连接为空，退出")
+	if !v.checkContextAndDB(ctx) {
 		return
 	}
 
 	processedCount := 0
-	// 循环处理，直到没有更多待处理的文档
 	for {
-		// 检查 context 是否已取消
-		select {
-		case <-ctx.Done():
-			log.Printf("[processPendingEmbeddings] Context已取消，已处理 %d 个文档", processedCount)
-			return
-		default:
-		}
-
-		// 检查数据库是否已关闭
-		db = v.db
-		if db == nil {
-			log.Printf("[processPendingEmbeddings] 数据库连接已关闭，退出")
+		if !v.checkContextAndDB(ctx) {
+			log.Printf("[processPendingEmbeddings] Context已取消或数据库已关闭，已处理 %d 个文档", processedCount)
 			return
 		}
 
-		// 查询pending状态的文档（使用带超时的 context，避免无限阻塞）
-		queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
-		querySQL := fmt.Sprintf(`
-			SELECT id, content, metadata
-			FROM %s
-			WHERE embedding IS NULL AND embedding_status = 'pending' AND id IS NOT NULL AND id != ''
-			LIMIT 10
-		`, v.tableName)
-
-		log.Printf("[processPendingEmbeddings] 准备执行查询: %s", querySQL)
-		queryStart := time.Now()
-		rows, err := db.QueryContext(queryCtx, querySQL)
-		queryDuration := time.Since(queryStart)
+		rows, queryCancel, err := v.queryPendingDocuments(ctx)
 		if err != nil {
-			queryCancel()
-			// 如果是 context 取消或超时，直接返回
-			if err == context.Canceled || err == context.DeadlineExceeded {
-				log.Printf("[processPendingEmbeddings] 查询超时或被取消 (耗时: %v): %v", queryDuration, err)
-				return
-			}
-			log.Printf("[processPendingEmbeddings] 查询失败 (耗时: %v): %v", queryDuration, err)
 			return
 		}
-		log.Printf("[processPendingEmbeddings] 查询成功 (耗时: %v)，开始处理结果", queryDuration)
 
-		// 检查查询返回的列数
-		columns, err := rows.Columns()
-		if err != nil {
-			log.Printf("[processPendingEmbeddings] 获取列信息失败: %v", err)
+		if !v.validateQueryColumns(rows) {
 			rows.Close()
 			queryCancel()
 			return
 		}
-		if len(columns) != 3 {
-			log.Printf("[processPendingEmbeddings] 查询返回的列数不正确: 期望 3 列，实际 %d 列，列名: %v", len(columns), columns)
-			rows.Close()
-			queryCancel()
-			return
-		}
-		log.Printf("[processPendingEmbeddings] 查询返回 %d 列: %v", len(columns), columns)
 
-		batchCount := 0
-		hasRows := false
-		defer func() {
-			rows.Close()
-			queryCancel()
-		}()
-
-		for rows.Next() {
-			hasRows = true
-			// 检查 context 是否已取消
-			select {
-			case <-ctx.Done():
-				log.Printf("[processPendingEmbeddings] 处理过程中Context已取消，已处理 %d 个文档", processedCount)
-				return
-			default:
-			}
-
-			// 使用更安全的方式扫描：先扫描到 interface{} 切片，然后转换
-			values := make([]interface{}, len(columns))
-			valuePtrs := make([]interface{}, len(columns))
-			for i := range values {
-				valuePtrs[i] = &values[i]
-			}
-
-			// 使用 recover 捕获可能的 panic
-			scanErr := func() (err error) {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Printf("[processPendingEmbeddings] 扫描行时发生 panic: %v, 列数: %d", r, len(columns))
-						err = fmt.Errorf("panic during scan: %v", r)
-					}
-				}()
-				return rows.Scan(valuePtrs...)
-			}()
-
-			if scanErr != nil {
-				log.Printf("[processPendingEmbeddings] 扫描行失败: %v", scanErr)
-				continue
-			}
-
-			// 转换值
-			var id, content string
-			var metadataVal any
-
-			if len(values) >= 1 && values[0] != nil {
-				switch v := values[0].(type) {
-				case string:
-					id = v
-				case []byte:
-					id = string(v)
-				default:
-					// 尝试通过 fmt.Sprintf 转换
-					id = fmt.Sprintf("%v", v)
-					log.Printf("[processPendingEmbeddings] id 字段类型异常: %T, 值: %v", v, v)
-				}
-			} else if len(values) >= 1 {
-				log.Printf("[processPendingEmbeddings] id 字段为 nil，values[0] 类型: %T", values[0])
-			}
-
-			if len(values) >= 2 && values[1] != nil {
-				switch v := values[1].(type) {
-				case string:
-					content = v
-				case []byte:
-					content = string(v)
-				default:
-					// 尝试通过 fmt.Sprintf 转换
-					content = fmt.Sprintf("%v", v)
-					log.Printf("[processPendingEmbeddings] content 字段类型异常: %T", v)
-				}
-			}
-			if len(values) >= 3 {
-				metadataVal = values[2]
-			}
-
-			// metadataVal 被扫描但当前未使用，保留以备将来使用
-			_ = metadataVal
-
-			// 如果 id 为空，说明无法从扫描结果中提取有效的 id 值，跳过这一行
-			// 可能原因：id 字段为 NULL、类型转换失败、或值为空字符串
-			if id == "" {
-				var idValue interface{}
-				if len(values) >= 1 {
-					idValue = values[0]
-				}
-				log.Printf("[processPendingEmbeddings] 跳过无效行（id 为空），values[0] 类型: %T, 值: %v", idValue, idValue)
-				continue
-			}
-
-			log.Printf("[processPendingEmbeddings] 开始处理文档 ID: %s", id)
-
-			// 解析文档
-			var doc map[string]any
-			if err := json.Unmarshal([]byte(content), &doc); err != nil {
-				log.Printf("[processPendingEmbeddings] 解析文档失败 (ID: %s): %v", id, err)
-				// 解析失败时，更新状态为failed，避免重复查询
-				updateCtx, updateCancel := context.WithTimeout(ctx, 1*time.Second)
-				updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
-				_, _ = db.ExecContext(updateCtx, updateStatusSQL, id)
-				updateCancel()
-				continue
-			}
-
-			// 提取文本内容
-			textContent := ""
-			if text, ok := doc["content"].(string); ok {
-				textContent = text
-			}
-			if textContent == "" {
-				log.Printf("[processPendingEmbeddings] 文档内容为空 (ID: %s)，跳过并标记为failed", id)
-				// 内容为空时，更新状态为failed，避免重复查询
-				updateCtx, updateCancel := context.WithTimeout(ctx, 1*time.Second)
-				updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
-				_, _ = db.ExecContext(updateCtx, updateStatusSQL, id)
-				updateCancel()
-				continue
-			}
-
-			log.Printf("[processPendingEmbeddings] 文档内容长度: %d 字符 (ID: %s)", len(textContent), id)
-
-			// 检查数据库是否已关闭
-			db = v.db
-			if db == nil {
-				log.Printf("[processPendingEmbeddings] 数据库连接已关闭，退出处理")
-				queryCancel()
-				return
-			}
-
-			// 检查 context 是否已取消
-			select {
-			case <-ctx.Done():
-				log.Printf("[processPendingEmbeddings] Context已取消，退出处理")
-				queryCancel()
-				return
-			default:
-			}
-
-			// 更新状态为processing（使用带超时的 context）
-			updateCtx, updateCancel := context.WithTimeout(ctx, 1*time.Second)
-			updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND embedding IS NULL AND embedding_status = 'pending'`, v.tableName)
-			_, _ = db.ExecContext(updateCtx, updateStatusSQL, id)
-			updateCancel()
-			log.Printf("[processPendingEmbeddings] 更新文档状态为 processing (ID: %s)", id)
-
-			// 生成embedding
-			if v.embedder != nil {
-				// 检查 context 是否已取消
-				select {
-				case <-ctx.Done():
-					log.Printf("[processPendingEmbeddings] Context已取消，退出embedding生成")
-					queryCancel()
-					return
-				default:
-				}
-
-				// 再次检查 context 是否已取消
-				select {
-				case <-ctx.Done():
-					log.Printf("[processPendingEmbeddings] Context已取消，退出embedding生成")
-					queryCancel()
-					return
-				default:
-				}
-
-				log.Printf("[processPendingEmbeddings] 开始生成embedding (ID: %s)", id)
-
-				// 尝试使用 text-embedding-v4 模型
-				embedding, err := v.embedWithV4Model(ctx, textContent)
-				if err == nil && len(embedding) > 0 {
-					log.Printf("[processPendingEmbeddings] Embedding生成成功 (ID: %s, 维度: %d)", id, len(embedding))
-					// 将向量序列化为 JSON 格式存储为 BLOB
-					embeddingJSON, err := json.Marshal(embedding)
-					if err == nil {
-						// 再次检查数据库是否已关闭
-						db = v.db
-						if db == nil {
-							log.Printf("[processPendingEmbeddings] 数据库连接已关闭，无法保存embedding (ID: %s)", id)
-							queryCancel()
-							return
-						}
-						// 更新向量列和状态（使用带超时的 context）
-						updateCtx2, updateCancel2 := context.WithTimeout(ctx, 1*time.Second)
-						updateVectorSQL := fmt.Sprintf(`UPDATE %s SET embedding = ?, embedding_status = 'completed' WHERE id = ?`, v.tableName)
-						_, _ = db.ExecContext(updateCtx2, updateVectorSQL, embeddingJSON, id)
-						updateCancel2()
-						log.Printf("[processPendingEmbeddings] 文档处理完成 (ID: %s)", id)
-						processedCount++
-						batchCount++
-					} else {
-						log.Printf("[processPendingEmbeddings] 序列化embedding失败 (ID: %s): %v", id, err)
-						// 更新状态为failed（使用带超时的 context）
-						updateCtx3, updateCancel3 := context.WithTimeout(ctx, 1*time.Second)
-						updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
-						_, _ = db.ExecContext(updateCtx3, updateStatusSQL, id)
-						updateCancel3()
-					}
-				} else {
-					log.Printf("[processPendingEmbeddings] Embedding生成失败 (ID: %s): %v", id, err)
-					// 更新状态为failed（使用带超时的 context）
-					updateCtx4, updateCancel4 := context.WithTimeout(ctx, 1*time.Second)
-					updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
-					_, _ = db.ExecContext(updateCtx4, updateStatusSQL, id)
-					updateCancel4()
-				}
-			} else {
-				log.Printf("[processPendingEmbeddings] Embedder未设置，跳过embedding生成 (ID: %s)", id)
-				// Embedder未设置时，更新状态为failed，避免重复查询
-				updateCtx, updateCancel := context.WithTimeout(ctx, 1*time.Second)
-				updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
-				_, _ = db.ExecContext(updateCtx, updateStatusSQL, id)
-				updateCancel()
-			}
-		}
-
-		// 检查 rows 是否有错误
+		batchCount, hasRows := v.processBatch(ctx, rows, &processedCount)
 		if err := rows.Err(); err != nil {
 			log.Printf("[processPendingEmbeddings] 处理行时发生错误: %v", err)
-			// 即使有错误，也继续处理，但记录错误
 		}
 
-		// defer 中已经处理了 rows.Close() 和 queryCancel()
+		rows.Close()
+		queryCancel()
 
-		// 如果这一批没有查询到任何文档，说明没有更多待处理的文档了
 		if !hasRows {
 			log.Printf("[processPendingEmbeddings] 没有查询到待处理的文档，退出循环")
 			break
 		}
 
-		// 如果这一批没有成功处理任何文档（所有文档都失败了），也退出循环，避免无限循环
 		if batchCount == 0 {
 			log.Printf("[processPendingEmbeddings] 本批所有文档处理失败，退出循环")
 			break
@@ -338,6 +67,323 @@ func (v *VecStore) processPendingEmbeddings(ctx context.Context) {
 	}
 
 	log.Printf("[processPendingEmbeddings] 处理完成，共处理 %d 个文档", processedCount)
+}
+
+// acquireProcessingLock 获取处理锁，防止并发执行
+func (v *VecStore) acquireProcessingLock() bool {
+	if v.isProcessing {
+		log.Printf("[processPendingEmbeddings] 已有处理任务在运行，跳过")
+		return false
+	}
+	v.isProcessing = true
+	return true
+}
+
+// checkContextAndDB 检查context和数据库连接
+func (v *VecStore) checkContextAndDB(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+	}
+
+	if v.db == nil {
+		return false
+	}
+	return true
+}
+
+// queryPendingDocuments 查询待处理的文档
+func (v *VecStore) queryPendingDocuments(ctx context.Context) (*sql.Rows, context.CancelFunc, error) {
+	queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
+	querySQL := fmt.Sprintf(`
+		SELECT id, content, metadata
+		FROM %s
+		WHERE embedding IS NULL AND embedding_status = 'pending' AND id IS NOT NULL AND length(id) = 16
+		LIMIT 10
+	`, v.tableName)
+
+	log.Printf("[processPendingEmbeddings] 准备执行查询: %s", querySQL)
+	queryStart := time.Now()
+	rows, err := v.db.QueryContext(queryCtx, querySQL)
+	queryDuration := time.Since(queryStart)
+
+	if err != nil {
+		queryCancel()
+		if err == context.Canceled || err == context.DeadlineExceeded {
+			log.Printf("[processPendingEmbeddings] 查询超时或被取消 (耗时: %v): %v", queryDuration, err)
+			return nil, nil, err
+		}
+		log.Printf("[processPendingEmbeddings] 查询失败 (耗时: %v): %v", queryDuration, err)
+		return nil, nil, err
+	}
+
+	log.Printf("[processPendingEmbeddings] 查询成功 (耗时: %v)，开始处理结果", queryDuration)
+	return rows, queryCancel, nil
+}
+
+// validateQueryColumns 验证查询返回的列
+func (v *VecStore) validateQueryColumns(rows *sql.Rows) bool {
+	columns, err := rows.Columns()
+	if err != nil {
+		log.Printf("[processPendingEmbeddings] 获取列信息失败: %v", err)
+		return false
+	}
+
+	if len(columns) != 3 {
+		log.Printf("[processPendingEmbeddings] 查询返回的列数不正确: 期望 3 列，实际 %d 列，列名: %v", len(columns), columns)
+		return false
+	}
+
+	log.Printf("[processPendingEmbeddings] 查询返回 %d 列: %v", len(columns), columns)
+	return true
+}
+
+// processBatch 处理一批文档
+func (v *VecStore) processBatch(ctx context.Context, rows *sql.Rows, processedCount *int) (int, bool) {
+	batchCount := 0
+	hasRows := false
+
+	for rows.Next() {
+		hasRows = true
+
+		if !v.checkContextAndDB(ctx) {
+			log.Printf("[processPendingEmbeddings] 处理过程中Context已取消或数据库已关闭，已处理 %d 个文档", *processedCount)
+			return batchCount, hasRows
+		}
+
+		id, content, ok := v.scanDocumentRow(rows)
+		if !ok || id == "" {
+			continue
+		}
+
+		log.Printf("[processPendingEmbeddings] 开始处理文档 ID: %s", id)
+
+		success := v.processDocument(ctx, id, content)
+		if success {
+			(*processedCount)++
+			batchCount++
+		}
+	}
+
+	return batchCount, hasRows
+}
+
+// scanDocumentRow 扫描文档行并提取id、content和metadata
+func (v *VecStore) scanDocumentRow(rows *sql.Rows) (id, content string, ok bool) {
+	columns, err := rows.Columns()
+	if err != nil {
+		return "", "", false
+	}
+
+	values := make([]interface{}, len(columns))
+	valuePtrs := make([]interface{}, len(columns))
+	for i := range values {
+		valuePtrs[i] = &values[i]
+	}
+
+	scanErr := func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[processPendingEmbeddings] 扫描行时发生 panic: %v, 列数: %d", r, len(columns))
+				err = fmt.Errorf("panic during scan: %v", r)
+			}
+		}()
+		return rows.Scan(valuePtrs...)
+	}()
+
+	if scanErr != nil {
+		log.Printf("[processPendingEmbeddings] 扫描行失败: %v", scanErr)
+		return "", "", false
+	}
+
+	// 转换id（从二进制 UUID 转换为字符串）
+	if len(values) >= 1 && values[0] != nil {
+		var idBytes []byte
+		switch v := values[0].(type) {
+		case []byte:
+			idBytes = v
+		case string:
+			// 兼容旧数据：如果是字符串，尝试解析
+			idBytes = []byte(v)
+		default:
+			log.Printf("[processPendingEmbeddings] id 字段类型异常: %T, 值: %v", v, v)
+			return "", "", false
+		}
+
+		// 将二进制 UUID 转换为字符串
+		if len(idBytes) == 16 {
+			idStr, err := sqlite3_driver.BytesToUUIDString(idBytes)
+			if err != nil {
+				log.Printf("[processPendingEmbeddings] 无效的 UUID 二进制数据: %v", err)
+				return "", "", false
+			}
+			id = idStr
+		} else {
+			log.Printf("[processPendingEmbeddings] id 长度不正确: 期望 16 字节，实际 %d 字节", len(idBytes))
+			return "", "", false
+		}
+	} else {
+		log.Printf("[processPendingEmbeddings] id 字段为 nil")
+		return "", "", false
+	}
+
+	// 转换content
+	if len(values) >= 2 && values[1] != nil {
+		switch v := values[1].(type) {
+		case string:
+			content = v
+		case []byte:
+			content = string(v)
+		default:
+			content = fmt.Sprintf("%v", v)
+			log.Printf("[processPendingEmbeddings] content 字段类型异常: %T", v)
+		}
+	}
+
+	if id == "" {
+		log.Printf("[processPendingEmbeddings] 跳过无效行（id 为空）")
+		return "", "", false
+	}
+
+	return id, content, true
+}
+
+// processDocument 处理单个文档：解析、提取文本、生成embedding并保存
+func (v *VecStore) processDocument(ctx context.Context, id, content string) bool {
+	// 解析文档
+	doc, err := v.parseDocument(id, content)
+	if err != nil {
+		v.updateDocumentStatus(ctx, id, "failed")
+		return false
+	}
+
+	// 提取文本内容
+	textContent := v.extractTextContent(doc, id)
+	if textContent == "" {
+		v.updateDocumentStatus(ctx, id, "failed")
+		return false
+	}
+
+	log.Printf("[processPendingEmbeddings] 文档内容长度: %d 字符 (ID: %s)", len(textContent), id)
+
+	if !v.checkContextAndDB(ctx) {
+		return false
+	}
+
+	// 更新状态为processing
+	v.updateDocumentStatus(ctx, id, "processing")
+	log.Printf("[processPendingEmbeddings] 更新文档状态为 processing (ID: %s)", id)
+
+	// 生成并保存embedding
+	return v.generateAndSaveEmbedding(ctx, id, textContent)
+}
+
+// parseDocument 解析文档JSON
+func (v *VecStore) parseDocument(id, content string) (map[string]any, error) {
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(content), &doc); err != nil {
+		log.Printf("[processPendingEmbeddings] 解析文档失败 (ID: %s): %v", id, err)
+		return nil, err
+	}
+	return doc, nil
+}
+
+// extractTextContent 从文档中提取文本内容
+func (v *VecStore) extractTextContent(doc map[string]any, id string) string {
+	textContent := ""
+	if text, ok := doc["content"].(string); ok {
+		textContent = text
+	}
+	if textContent == "" {
+		log.Printf("[processPendingEmbeddings] 文档内容为空 (ID: %s)，跳过并标记为failed", id)
+	}
+	return textContent
+}
+
+// generateAndSaveEmbedding 生成embedding并保存到数据库
+func (v *VecStore) generateAndSaveEmbedding(ctx context.Context, id, textContent string) bool {
+	if v.embedder == nil {
+		log.Printf("[processPendingEmbeddings] Embedder未设置，跳过embedding生成 (ID: %s)", id)
+		v.updateDocumentStatus(ctx, id, "failed")
+		return false
+	}
+
+	if !v.checkContextAndDB(ctx) {
+		return false
+	}
+
+	log.Printf("[processPendingEmbeddings] 开始生成embedding (ID: %s)", id)
+
+	// 尝试使用 text-embedding-v4 模型
+	embedding, err := v.embedWithV4Model(ctx, textContent)
+	if err != nil || len(embedding) == 0 {
+		log.Printf("[processPendingEmbeddings] Embedding生成失败 (ID: %s): %v", id, err)
+		v.updateDocumentStatus(ctx, id, "failed")
+		return false
+	}
+
+	log.Printf("[processPendingEmbeddings] Embedding生成成功 (ID: %s, 维度: %d)", id, len(embedding))
+
+	// 将向量序列化为 JSON 格式存储为 BLOB
+	embeddingJSON, err := json.Marshal(embedding)
+	if err != nil {
+		log.Printf("[processPendingEmbeddings] 序列化embedding失败 (ID: %s): %v", id, err)
+		v.updateDocumentStatus(ctx, id, "failed")
+		return false
+	}
+
+	if !v.checkContextAndDB(ctx) {
+		log.Printf("[processPendingEmbeddings] 数据库连接已关闭，无法保存embedding (ID: %s)", id)
+		return false
+	}
+
+	// 将 UUID 字符串转换为二进制
+	idBytes, err := sqlite3_driver.UUIDStringToBytes(id)
+	if err != nil {
+		log.Printf("[generateAndSaveEmbedding] 无效的 UUID 字符串: %v", err)
+		v.updateDocumentStatus(ctx, id, "failed")
+		return false
+	}
+
+	// 更新向量列和状态
+	updateCtx, updateCancel := context.WithTimeout(ctx, 1*time.Second)
+	updateVectorSQL := fmt.Sprintf(`UPDATE %s SET embedding = ?, embedding_status = 'completed' WHERE id = ?`, v.tableName)
+	_, _ = v.db.ExecContext(updateCtx, updateVectorSQL, embeddingJSON, idBytes)
+	updateCancel()
+
+	log.Printf("[processPendingEmbeddings] 文档处理完成 (ID: %s)", id)
+	return true
+}
+
+// updateDocumentStatus 更新文档状态
+func (v *VecStore) updateDocumentStatus(ctx context.Context, id, status string) {
+	if v.db == nil {
+		return
+	}
+
+	// 将 UUID 字符串转换为二进制
+	idBytes, err := sqlite3_driver.UUIDStringToBytes(id)
+	if err != nil {
+		log.Printf("[updateDocumentStatus] 无效的 UUID 字符串: %v", err)
+		return
+	}
+
+	updateCtx, updateCancel := context.WithTimeout(ctx, 1*time.Second)
+	defer updateCancel()
+
+	var updateSQL string
+	if status == "processing" {
+		updateSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND embedding IS NULL AND embedding_status = 'pending'`, v.tableName)
+	} else {
+		updateSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = ? WHERE id = ?`, v.tableName)
+	}
+
+	if status == "processing" {
+		_, _ = v.db.ExecContext(updateCtx, updateSQL, idBytes)
+	} else {
+		_, _ = v.db.ExecContext(updateCtx, updateSQL, status, idBytes)
+	}
 }
 
 // embedWithV4Model 使用 text-embedding-v4 模型生成 embedding

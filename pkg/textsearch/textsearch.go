@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
+	sqlite3_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"golang.org/x/time/rate"
 )
 
@@ -70,7 +70,7 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 	// embedding 存储为 BLOB（JSON 格式的向量数组）
 	createTableSQL := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
-			id TEXT PRIMARY KEY NOT NULL,
+			id BLOB(16) PRIMARY KEY NOT NULL, -- UUID 转换为二进制
 			content TEXT,
 			metadata TEXT,
 			embedding BLOB,
@@ -85,16 +85,48 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to create table: %w", err)
 	}
 
-	// 清理无效数据：删除 id 为 NULL 或空字符串的记录
+	// 检查并添加 embedding_status 列（如果不存在）
+	// SQLite 使用 PRAGMA table_info 来检查列是否存在
+	checkColumnSQL := fmt.Sprintf(`PRAGMA table_info(%s)`, v.tableName)
+	rows, err := v.db.QueryContext(ctx, checkColumnSQL)
+	if err == nil {
+		defer rows.Close()
+		hasEmbeddingStatus := false
+		for rows.Next() {
+			var cid int
+			var name string
+			var dataType string
+			var notNull int
+			var defaultValue interface{}
+			var pk int
+			if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err == nil {
+				if name == "embedding_status" {
+					hasEmbeddingStatus = true
+					break
+				}
+			}
+		}
+		if !hasEmbeddingStatus {
+			// 添加 embedding_status 列
+			alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN embedding_status TEXT DEFAULT 'pending'`, v.tableName)
+			if _, err := v.db.ExecContext(ctx, alterTableSQL); err != nil {
+				log.Printf("[Initialize] 添加 embedding_status 列时出错: %v", err)
+			} else {
+				log.Printf("[Initialize] 已添加 embedding_status 列")
+			}
+		}
+	}
+
+	// 清理无效数据：删除 id 为 NULL 或长度不为 16 的记录
 	cleanupSQL := fmt.Sprintf(`
 		DELETE FROM %s 
-		WHERE id IS NULL OR id = ''
+		WHERE id IS NULL OR length(id) != 16
 	`, v.tableName)
 	if _, err := v.db.ExecContext(ctx, cleanupSQL); err != nil {
 		// 记录错误但不阻止初始化
 		log.Printf("[Initialize] 清理无效数据时出错: %v", err)
 	} else {
-		log.Printf("[Initialize] 已清理无效数据（id 为 NULL 或空字符串的记录）")
+		log.Printf("[Initialize] 已清理无效数据（id 为 NULL 或长度不为 16 的记录）")
 	}
 
 	// 创建索引以提高查询性能
@@ -118,12 +150,14 @@ func (v *VecStore) Insert(ctx context.Context, text string, metadata map[string]
 		return fmt.Errorf("text cannot be empty")
 	}
 
-	// 使用 UUID 生成主键
-	id := uuid.New().String()
+	// 使用 UUID 生成主键（二进制形式）
+	uuidVal := uuid.New()
+	idBytes := uuidVal[:]     // UUID 本身就是 [16]byte
+	idStr := uuidVal.String() // 用于在 content JSON 中存储
 
 	// 构建文档
 	doc := map[string]any{
-		"id":         id,
+		"id":         idStr,
 		"content":    text,
 		"created_at": time.Now().Unix(),
 	}
@@ -152,13 +186,13 @@ func (v *VecStore) Insert(ctx context.Context, text string, metadata map[string]
 	contentJSON, _ := json.Marshal(doc)
 
 	// 插入到数据库
-	// 使用 UUID 作为主键，确保唯一性
+	// 使用 UUID 二进制作为主键，确保唯一性
 	insertSQL := fmt.Sprintf(`
 		INSERT INTO %s (id, content, metadata, _rev, embedding_status)
 		VALUES (?, ?, ?, 1, 'pending')
 	`, v.tableName)
 
-	_, err := v.db.ExecContext(ctx, insertSQL, id, string(contentJSON), metadataJSON)
+	_, err := v.db.ExecContext(ctx, insertSQL, idBytes, string(contentJSON), metadataJSON)
 	if err != nil {
 		return fmt.Errorf("failed to insert text: %w", err)
 	}
@@ -263,13 +297,20 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 
 	var candidates []candidateResult
 	for rows.Next() {
-		var id string
+		var idBytes []byte
 		var content string
 		var metadataVal any
 		var embeddingBlob []byte
 
-		err := rows.Scan(&id, &content, &metadataVal, &embeddingBlob)
+		err := rows.Scan(&idBytes, &content, &metadataVal, &embeddingBlob)
 		if err != nil {
+			continue
+		}
+
+		// 将二进制 UUID 转换为字符串
+		id, err := sqlite3_driver.BytesToUUIDString(idBytes)
+		if err != nil {
+			log.Printf("[Search] 无效的 UUID 二进制数据: %v", err)
 			continue
 		}
 
