@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"sync"
 
@@ -69,11 +71,11 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 		filterConditions := []string{}
 		for key, value := range metadataFilter {
 			// 转义key以防止SQL注入（虽然key来自map，但为了安全还是转义）
-			// 使用json_extract_path_text来提取JSON字段值
-			// 注意：SQLite的json_extract_path_text需要转义单引号
+			// 使用json_extract来提取JSON字段值
+			// 注意：SQLite的json_extract使用 $ 路径语法
 			escapedKey := strings.ReplaceAll(key, "'", "''")
 			condition := fmt.Sprintf(
-				"(json_extract_path_text(COALESCE(metadata, '{}'), '%s') = ? OR json_extract_path_text(content, '$.%s') = ?)",
+				"(json_extract(COALESCE(metadata, '{}'), '$.%s') = ? OR json_extract(content, '$.%s') = ?)",
 				escapedKey, escapedKey,
 			)
 			filterConditions = append(filterConditions, condition)
@@ -101,31 +103,27 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 		}
 	}
 
-	// 使用SQLite的向量相似度搜索
-	// 注意：参数顺序：第一个vectorStr用于SELECT，metadata过滤参数在中间，第二个vectorStr用于ORDER BY，最后是limit
+	// 查询所有候选文档（在内存中计算相似度）
+	// SQLite 不支持 list_cosine_similarity 函数，需要在内存中计算
 	sqlQuery := fmt.Sprintf(`
 		SELECT 
 			id,
 			content,
 			metadata,
-			list_cosine_similarity(%s, ?) as similarity
+			%s as vector_embedding
 		FROM %s
 		WHERE %s
-		ORDER BY list_cosine_similarity(%s, ?) DESC
-		LIMIT ?
-	`, v.vectorColumn, v.tableName, whereClause, v.vectorColumn)
+	`, v.vectorColumn, v.tableName, whereClause)
 
-	// 构建完整的参数列表：vectorStr（SELECT用）+ metadata过滤参数 + vectorStr（ORDER BY用）+ limit
-	finalArgs := []any{vectorStr}
-	finalArgs = append(finalArgs, queryArgs...)
-	finalArgs = append(finalArgs, vectorStr, limit)
+	// 构建参数列表：metadata过滤参数
+	finalArgs := queryArgs
 
 	// 使用 GORM 的 Raw SQL 查询
 	type SearchRow struct {
-		ID         []byte
-		Content    string
-		Metadata   string
-		Similarity float64
+		ID              []byte
+		Content         string
+		Metadata        string
+		VectorEmbedding string
 	}
 
 	var rows []SearchRow
@@ -133,7 +131,15 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 		return nil, fmt.Errorf("failed to search vectors: %w", err)
 	}
 
-	var results []SearchResult
+	// 在内存中计算余弦相似度并排序
+	type candidateResult struct {
+		id         string
+		content    string
+		doc        map[string]any
+		similarity float64
+	}
+
+	var candidates []candidateResult
 	for _, row := range rows {
 		// 将二进制 UUID 转换为字符串
 		id, err := sqlite3_driver.BytesToUUIDString(row.ID)
@@ -141,18 +147,54 @@ func (v *VectorSearch) Search(ctx context.Context, embedding []float64, limit in
 			continue // 跳过无效的 UUID
 		}
 
+		// 解析存储的向量（JSON格式字符串）
+		var storedEmbedding []float64
+		if row.VectorEmbedding != "" {
+			if err := json.Unmarshal([]byte(row.VectorEmbedding), &storedEmbedding); err != nil {
+				continue
+			}
+		}
+
+		if len(storedEmbedding) == 0 || len(storedEmbedding) != len(embedding) {
+			continue
+		}
+
+		// 计算余弦相似度
+		similarity := cosineSimilarity(embedding, storedEmbedding)
+
 		var doc map[string]any
 		if err := json.Unmarshal([]byte(row.Content), &doc); err != nil {
 			doc = map[string]any{"id": id, "content": row.Content}
 		}
 
-		results = append(results, SearchResult{
-			ID:      id,
-			Content: getContentFromDoc(doc),
-			Score:   row.Similarity,
-			Source:  "vector",
-			Data:    doc,
+		candidates = append(candidates, candidateResult{
+			id:         id,
+			content:    row.Content,
+			doc:        doc,
+			similarity: similarity,
 		})
+	}
+
+	// 按相似度降序排序
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].similarity > candidates[j].similarity
+	})
+
+	// 取前 limit 个结果
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+
+	// 转换为 SearchResult
+	results := make([]SearchResult, len(candidates))
+	for i, cand := range candidates {
+		results[i] = SearchResult{
+			ID:      cand.id,
+			Content: getContentFromDoc(cand.doc),
+			Score:   cand.similarity,
+			Source:  "vector",
+			Data:    cand.doc,
+		}
 	}
 
 	return results, nil
@@ -176,9 +218,9 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 	querySQL := fmt.Sprintf(`
 		SELECT id, content, metadata
 		FROM %s
-		WHERE %s IS NULL AND embedding_status = 'pending'
+		WHERE (%s IS NULL OR %s = '') AND (embedding_status = 'pending' OR embedding_status = 'processing')
 		LIMIT 10
-	`, v.tableName, v.vectorColumn)
+	`, v.tableName, v.vectorColumn, v.vectorColumn)
 
 	if err := v.db.WithContext(ctx).Raw(querySQL).Scan(&pendingDocs).Error; err != nil {
 		return
@@ -191,35 +233,77 @@ func (v *VectorSearch) processPendingEmbeddings(ctx context.Context) {
 			continue
 		}
 
-		// 更新状态为processing
-		updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND %s IS NULL AND embedding_status = 'pending'`, v.tableName, v.vectorColumn)
-		_ = v.db.WithContext(ctx).Exec(updateStatusSQL, pendingDoc.ID).Error
+		// 更新状态为processing（只更新pending状态的文档，避免并发问题）
+		updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND embedding_status = 'pending' AND (%s IS NULL OR %s = '')`, v.tableName, v.vectorColumn, v.vectorColumn)
+		result := v.db.WithContext(ctx).Exec(updateStatusSQL, pendingDoc.ID)
+		if result.Error != nil {
+			continue
+		}
+		// 检查是否真的更新了行（可能已经被其他goroutine处理了）
+		if result.RowsAffected == 0 {
+			continue
+		}
 
 		// 生成embedding
-		if v.docToEmbedding != nil {
-			// 等待速率限制
-			_ = v.embeddingLimiter.Wait(ctx)
+		if v.docToEmbedding == nil {
+			// 如果没有embedding函数，将状态设置为failed
+			updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
+			v.db.WithContext(ctx).Exec(updateStatusSQL, pendingDoc.ID)
+			continue
+		}
 
-			embedding, err := v.docToEmbedding(doc)
-			if err == nil && len(embedding) > 0 {
-				// 转换为字符串格式
-				vectorStr := "["
-				for i, val := range embedding {
-					if i > 0 {
-						vectorStr += ", "
-					}
-					vectorStr += fmt.Sprintf("%g", val)
+		// 等待速率限制
+		if err := v.embeddingLimiter.Wait(ctx); err != nil {
+			// 如果context被取消，更新状态回pending以便重试
+			updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'pending' WHERE id = ?`, v.tableName)
+			v.db.WithContext(ctx).Exec(updateStatusSQL, pendingDoc.ID)
+			continue
+		}
+
+		embedding, err := v.docToEmbedding(doc)
+		if err == nil && len(embedding) > 0 {
+			// 转换为字符串格式
+			vectorStr := "["
+			for i, val := range embedding {
+				if i > 0 {
+					vectorStr += ", "
 				}
-				vectorStr += "]"
-
-				// 更新向量列和状态为completed
-				updateVectorSQL := fmt.Sprintf(`UPDATE %s SET %s = ?, embedding_status = 'completed' WHERE id = ?`, v.tableName, v.vectorColumn)
-				_ = v.db.WithContext(ctx).Exec(updateVectorSQL, vectorStr, pendingDoc.ID).Error
-			} else {
-				// 更新状态为failed
-				updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
-				_ = v.db.WithContext(ctx).Exec(updateStatusSQL, pendingDoc.ID).Error
+				vectorStr += fmt.Sprintf("%g", val)
 			}
+			vectorStr += "]"
+
+			// 更新向量列和状态为completed（只更新processing状态的文档）
+			updateVectorSQL := fmt.Sprintf(`UPDATE %s SET %s = ?, embedding_status = 'completed' WHERE id = ? AND embedding_status = 'processing'`, v.tableName, v.vectorColumn)
+			result = v.db.WithContext(ctx).Exec(updateVectorSQL, vectorStr, pendingDoc.ID)
+			if result.Error != nil {
+				// 如果更新失败，记录错误但继续处理
+				continue
+			}
+			// 如果 RowsAffected == 0，说明状态已经被改变（可能被其他goroutine处理），这是正常的
+		} else {
+			// 更新状态为failed
+			updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'failed' WHERE id = ?`, v.tableName)
+			v.db.WithContext(ctx).Exec(updateStatusSQL, pendingDoc.ID)
 		}
 	}
+}
+
+// cosineSimilarity 计算两个向量的余弦相似度
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return 0.0
+	}
+
+	var dotProduct, normA, normB float64
+	for i := 0; i < len(a); i++ {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+
+	if normA == 0 || normB == 0 {
+		return 0.0
+	}
+
+	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 }

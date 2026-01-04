@@ -113,7 +113,7 @@ func waitForEmbeddings(search *ImageSearch, maxWait time.Duration) {
 			search.imagesVector.processPendingEmbeddings(ctx)
 		}
 
-		// 检查是否还有pending的embedding（使用表前缀推断表名）
+		// 检查是否还有pending或processing的embedding（使用表前缀推断表名）
 		var pendingCount int
 		tablePrefix := search.tablePrefix
 		if tablePrefix == "" {
@@ -123,14 +123,16 @@ func waitForEmbeddings(search *ImageSearch, maxWait time.Duration) {
 		if search.textsVector != nil {
 			querySQL := fmt.Sprintf(`
 				SELECT COUNT(*) FROM %stexts 
-				WHERE text_embedding IS NULL AND embedding_status = 'pending'
+				WHERE ((text_embedding IS NULL OR text_embedding = '') AND (embedding_status = 'pending' OR embedding_status = 'processing'))
+				   OR (text_embedding IS NOT NULL AND text_embedding != '' AND embedding_status = 'processing')
 			`, tablePrefix)
 			_ = search.db.WithContext(ctx).Raw(querySQL).Row().Scan(&pendingCount)
 		}
 		if search.imagesVector != nil {
 			querySQL := fmt.Sprintf(`
 				SELECT COUNT(*) FROM %simages 
-				WHERE image_embedding IS NULL AND embedding_status = 'pending'
+				WHERE ((image_embedding IS NULL OR image_embedding = '') AND (embedding_status = 'pending' OR embedding_status = 'processing'))
+				   OR (image_embedding IS NOT NULL AND image_embedding != '' AND embedding_status = 'processing')
 			`, tablePrefix)
 			var imgPending int
 			_ = search.db.WithContext(ctx).Raw(querySQL).Row().Scan(&imgPending)

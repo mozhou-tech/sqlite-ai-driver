@@ -77,9 +77,24 @@ func (r *ImageSearch) InitializeStorages(ctx context.Context) error {
 	// 使用简单的路径标识即可，实际路径会被映射到共享数据库
 	// 所有表使用 tablePrefix 前缀以区分不同的业务模块
 	dbPath := filepath.Join(r.workingDir, "index.db")
+
+	// 尝试打开数据库
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
 	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
+		// 如果打开失败且文件存在，可能是损坏的数据库文件，尝试删除后重试
+		if _, statErr := os.Stat(dbPath); statErr == nil {
+			// 文件存在但打开失败，删除它和相关文件后重试
+			os.Remove(dbPath)
+			os.Remove(dbPath + "-shm")
+			os.Remove(dbPath + "-wal")
+			// 重试打开
+			db, err = gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+			if err != nil {
+				return fmt.Errorf("failed to open database: %w", err)
+			}
+		} else {
+			return fmt.Errorf("failed to open database: %w", err)
+		}
 	}
 	r.db = db
 

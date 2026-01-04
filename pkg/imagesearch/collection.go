@@ -28,23 +28,44 @@ func (r *ImageSearch) createCollection(ctx context.Context, name string) (*Colle
 	}
 
 	// 检查并创建必要的列（如果不存在）
-	// SQLite 不支持直接检查列是否存在，所以我们使用 ALTER TABLE IF NOT EXISTS 的变通方法
-	// 由于 SQLite 的限制，我们直接尝试添加列，如果已存在会忽略错误
+	// 使用 PRAGMA table_info 检查列是否存在，避免重复添加
+	var columns []struct {
+		Cid       int
+		Name      string
+		Type      string
+		Notnull   int
+		DfltValue *string
+		Pk        int
+	}
 
-	// 创建 text_embedding 列（如果不存在）
-	_ = r.db.WithContext(ctx).Exec(fmt.Sprintf(`
-		ALTER TABLE %s ADD COLUMN text_embedding TEXT
-	`, tableName)).Error
+	// 查询表结构
+	if err := r.db.WithContext(ctx).Raw(fmt.Sprintf("PRAGMA table_info(%s)", tableName)).Scan(&columns).Error; err == nil {
+		columnMap := make(map[string]bool)
+		for _, col := range columns {
+			columnMap[col.Name] = true
+		}
 
-	// 创建 image_embedding 列（如果不存在）
-	_ = r.db.WithContext(ctx).Exec(fmt.Sprintf(`
-		ALTER TABLE %s ADD COLUMN image_embedding TEXT
-	`, tableName)).Error
+		// 创建 text_embedding 列（如果不存在）
+		if !columnMap["text_embedding"] {
+			_ = r.db.WithContext(ctx).Exec(fmt.Sprintf(`
+				ALTER TABLE %s ADD COLUMN text_embedding TEXT
+			`, tableName)).Error
+		}
 
-	// 创建 embedding_status 列（如果不存在）
-	_ = r.db.WithContext(ctx).Exec(fmt.Sprintf(`
-		ALTER TABLE %s ADD COLUMN embedding_status TEXT DEFAULT 'pending'
-	`, tableName)).Error
+		// 创建 image_embedding 列（如果不存在）
+		if !columnMap["image_embedding"] {
+			_ = r.db.WithContext(ctx).Exec(fmt.Sprintf(`
+				ALTER TABLE %s ADD COLUMN image_embedding TEXT
+			`, tableName)).Error
+		}
+
+		// 创建 embedding_status 列（如果不存在）
+		if !columnMap["embedding_status"] {
+			_ = r.db.WithContext(ctx).Exec(fmt.Sprintf(`
+				ALTER TABLE %s ADD COLUMN embedding_status TEXT DEFAULT 'pending'
+			`, tableName)).Error
+		}
+	}
 
 	return &Collection{
 		db:        r.db,
