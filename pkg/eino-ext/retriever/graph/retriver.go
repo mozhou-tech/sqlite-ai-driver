@@ -12,7 +12,7 @@ import (
 	"github.com/cloudwego/eino/components/prompt"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 	"github.com/sirupsen/logrus"
 )
 
@@ -35,7 +35,7 @@ type DocumentGetter func(ctx context.Context, docID string) (*schema.Document, e
 // RetrieverConfig defines the configuration for the Graph retriever.
 type RetrieverConfig struct {
 	// Graph is the GraphStore instance to use for retrieval.
-	Graph     *graphstore.GraphStore
+	Graph     *graphsearch.GraphStore
 	TableName string
 	// LLM is the language model to use for extracting keywords from queries.
 	LLM LLM

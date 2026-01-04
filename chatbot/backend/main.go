@@ -31,12 +31,12 @@ import (
 	vssindexer "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/indexer/vec"
 	sqliteretriever "github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/retriever/vec"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch"
 	"github.com/sirupsen/logrus"
 )
 
 var (
-	vecStoreInstance *vecstore.VecStore
+	vecStoreInstance *textsearch.VecStore
 	ragGraph         compose.Runnable[string, *schema.Message]
 	einoIndexer      indexer.Indexer
 	einoRetriever    retriever.Retriever
@@ -102,7 +102,7 @@ func main() {
 
 	if vecStoreInstance != nil {
 		if err := vecStoreInstance.Close(); err != nil {
-			log.Printf("Failed to close vecstore: %v", err)
+			log.Printf("Failed to close textsearch: %v", err)
 		}
 	}
 
@@ -157,13 +157,13 @@ func initRAG() error {
 	}
 
 	// 创建 VecStore 实例
-	vecStoreInstance = vecstore.New(vecstore.Options{
+	vecStoreInstance = textsearch.New(textsearch.Options{
 		Embedder: nil, // VecStore 不需要 embedder，由 indexer 处理
 	})
 
 	// 初始化 VecStore
 	if err := vecStoreInstance.Initialize(ctx); err != nil {
-		return fmt.Errorf("failed to initialize vecstore: %w", err)
+		return fmt.Errorf("failed to initialize textsearch: %w", err)
 	}
 
 	// 初始化 Eino 组件

@@ -8,6 +8,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
+	github.com/mozhou-tech/sqlite-ai-driver v0.0.0
 )
 
 require (
@@ -33,6 +34,6 @@ require (
 
 replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ../cayley-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ../sqlite3-driver
+	github.com/mozhou-tech/sqlite-ai-driver => ../../
 )

@@ -1,4 +1,4 @@
-package duckdb
+package vec
 
 import (
 	"context"
@@ -11,13 +11,13 @@ import (
 	"github.com/cloudwego/eino/components/embedding"
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch"
 )
 
 type RetrieverConfig struct {
-	// VecStore is a vecstore instance used as the underlying storage.
-	// This retriever uses vecstore as the backend storage.
-	VecStore *vecstore.VecStore
+	// VecStore is a textsearch instance used as the underlying storage.
+	// This retriever uses textsearch as the backend storage.
+	VecStore *textsearch.VecStore
 	// TableName is the name of the table to retrieve documents from.
 	// Default "documents".
 	TableName string
@@ -44,7 +44,7 @@ func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, err
 	}
 
 	if config.VecStore == nil {
-		return nil, fmt.Errorf("[NewRetriever] vecstore instance not provided, must pass a *vecstore.VecStore instance")
+		return nil, fmt.Errorf("[NewRetriever] textsearch instance not provided, must pass a *textsearch.VecStore instance")
 	}
 
 	if config.TableName == "" {
@@ -66,15 +66,15 @@ func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, err
 		config.DocumentConverter = defaultResultParser(config.ReturnFields)
 	}
 
-	// Initialize vecstore if not already initialized
+	// Initialize textsearch if not already initialized
 	if err := config.VecStore.Initialize(ctx); err != nil {
-		return nil, fmt.Errorf("[NewRetriever] failed to initialize vecstore: %w", err)
+		return nil, fmt.Errorf("[NewRetriever] failed to initialize textsearch: %w", err)
 	}
 
-	// Access vecstore's internal fields via public methods
+	// Access textsearch's internal fields via public methods
 	db, tableName, err := getVecStoreInternalsForRetriever(config.VecStore)
 	if err != nil {
-		return nil, fmt.Errorf("[NewRetriever] failed to access vecstore internals: %w", err)
+		return nil, fmt.Errorf("[NewRetriever] failed to access textsearch internals: %w", err)
 	}
 
 	return &Retriever{
@@ -84,11 +84,11 @@ func NewRetriever(ctx context.Context, config *RetrieverConfig) (*Retriever, err
 	}, nil
 }
 
-// getVecStoreInternalsForRetriever gets vecstore's internal fields via public methods
-func getVecStoreInternalsForRetriever(vs *vecstore.VecStore) (*sql.DB, string, error) {
+// getVecStoreInternalsForRetriever gets textsearch's internal fields via public methods
+func getVecStoreInternalsForRetriever(vs *textsearch.VecStore) (*sql.DB, string, error) {
 	db := vs.GetDB()
 	if db == nil {
-		return nil, "", fmt.Errorf("vecstore db is nil")
+		return nil, "", fmt.Errorf("textsearch db is nil")
 	}
 	tableName := vs.GetTableName()
 	return db, tableName, nil
@@ -141,9 +141,9 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	}
 	vectorStr += "]"
 
-	// Build SQL query for vector search using vecstore's table structure
+	// Build SQL query for vector search using textsearch's table structure
 	// Use list_cosine_similarity for cosine similarity search
-	// vecstore stores vectors in 'embedding' column and content in 'content' column (as JSON)
+	// textsearch stores vectors in 'embedding' column and content in 'content' column (as JSON)
 	sqlQuery := fmt.Sprintf(`
 		SELECT 
 			id,
@@ -159,7 +159,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	// Add metadata filters if provided
 	if io.MetadataFilter != nil && len(io.MetadataFilter) > 0 {
 		for key, value := range io.MetadataFilter {
-			// Use json_extract_path_text similar to vecstore's implementation
+			// Use json_extract_path_text similar to textsearch's implementation
 			escapedKey := key // Simple escaping, could be improved
 			condition := fmt.Sprintf(
 				"(json_extract_path_text(COALESCE(metadata, '{}'), '%s') = ? OR json_extract_path_text(content, '$.%s') = ?)",
@@ -194,7 +194,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 	sqlQuery += " ORDER BY list_cosine_similarity(embedding, ?) DESC LIMIT ?"
 	args = append(args, vectorStr, *co.TopK)
 
-	// Execute query using vecstore's database connection
+	// Execute query using textsearch's database connection
 	rows, err := r.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("[sqlite retriever] search failed: %w", err)
@@ -211,7 +211,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 			return nil, fmt.Errorf("[sqlite retriever] failed to scan row: %w", err)
 		}
 
-		// Parse content JSON (vecstore stores all document data in content field as JSON)
+		// Parse content JSON (textsearch stores all document data in content field as JSON)
 		var contentDoc map[string]any
 		if err := json.Unmarshal([]byte(content), &contentDoc); err != nil {
 			// If content is not JSON, treat it as plain text
@@ -262,7 +262,7 @@ func (r *Retriever) Retrieve(ctx context.Context, query string, opts ...retrieve
 			}
 		}
 
-		// Set distance (vecstore returns similarity, convert to distance)
+		// Set distance (textsearch returns similarity, convert to distance)
 		// Distance = 1 - similarity
 		distance := 1.0 - similarity
 		doc.MetaData[SortByDistanceAttributeName] = distance

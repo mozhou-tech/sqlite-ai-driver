@@ -12,10 +12,10 @@ require (
 require (
 	github.com/bytedance/mockey v1.4.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore v0.0.0-00010101000000-000000000000
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch v0.0.0-00010101000000-000000000000
 	github.com/smartystreets/goconvey v1.8.1
 )
 
@@ -28,12 +28,6 @@ require (
 	github.com/bytedance/sonic v1.14.2 // indirect
 	github.com/bytedance/sonic/loader v0.4.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
-	github.com/duckdb/duckdb-go-bindings v0.1.9 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.4 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.4 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.4 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.4 // indirect
-	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.4 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/eino-contrib/jsonschema v1.0.3 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
@@ -49,9 +43,6 @@ require (
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
-	github.com/marcboeker/go-duckdb/arrowmapping v0.0.2 // indirect
-	github.com/marcboeker/go-duckdb/mapping v0.0.2 // indirect
-	github.com/marcboeker/go-duckdb/v2 v2.0.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
@@ -88,8 +79,8 @@ require (
 replace (
 	github.com/mozhou-tech/sqlite-ai-driver => ../..
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ../cayley-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore => ./../graphsearch
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch => ./../graphsearch
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ../sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ../sqlite3-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ./../textsearch
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch => ./../textsearch
 )
