@@ -15,6 +15,8 @@ import (
 	"github.com/google/uuid"
 	sqlite3_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"golang.org/x/time/rate"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // Embedder 向量嵌入生成器接口
@@ -28,9 +30,25 @@ type Options struct {
 	Embedder Embedder
 }
 
+// Document GORM 模型，表示向量存储中的文档
+type Document struct {
+	ID              []byte    `gorm:"type:BLOB(16);primaryKey;not null"` // UUID 二进制
+	Content         string    `gorm:"type:TEXT"`
+	Metadata        string    `gorm:"type:TEXT"` // JSON 格式的元数据
+	Embedding       []byte    `gorm:"type:BLOB"` // JSON 格式的向量数组
+	EmbeddingStatus string    `gorm:"type:TEXT;default:'pending'"`
+	CreatedAt       time.Time `gorm:"autoCreateTime"`
+	Rev             int       `gorm:"column:_rev;default:1"`
+}
+
+// TableName 指定表名
+func (Document) TableName() string {
+	return "vecstore_documents"
+}
+
 // VecStore 基于SQLite的纯文本向量搜索存储
 type VecStore struct {
-	db           *sql.DB
+	db           *gorm.DB
 	tableName    string
 	embedder     Embedder
 	initialized  bool
@@ -49,7 +67,7 @@ func New(opts Options) *VecStore {
 }
 
 // Initialize 初始化存储后端
-// 使用 sqlite3-driver 的 SQLite 数据库
+// 使用 sqlite3-driver 的 SQLite 数据库和 GORM
 func (v *VecStore) Initialize(ctx context.Context) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -58,71 +76,23 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 		return nil
 	}
 
-	// 打开SQLite数据库连接
+	// 打开SQLite数据库连接，使用 GORM
 	// sqlite3-driver 会自动处理路径和 WAL 模式
-	db, err := sql.Open("sqlite3", "vecstore.db")
+	// 注意：GORM 的 sqlite 驱动使用 modernc.org/sqlite，但我们可以通过 DSN 来利用 sqlite3-driver 的特性
+	db, err := gorm.Open(sqlite.Open("vecstore.db"), &gorm.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	v.db = db
 
-	// 创建表（如果不存在）
-	// embedding 存储为 BLOB（JSON 格式的向量数组）
-	createTableSQL := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			id BLOB(16) PRIMARY KEY NOT NULL, -- UUID 转换为二进制
-			content TEXT,
-			metadata TEXT,
-			embedding BLOB,
-			embedding_status TEXT DEFAULT 'pending',
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			_rev INTEGER DEFAULT 1
-		)
-	`, v.tableName)
-
-	_, err = v.db.ExecContext(ctx, createTableSQL)
-	if err != nil {
-		return fmt.Errorf("failed to create table: %w", err)
-	}
-
-	// 检查并添加 embedding_status 列（如果不存在）
-	// SQLite 使用 PRAGMA table_info 来检查列是否存在
-	checkColumnSQL := fmt.Sprintf(`PRAGMA table_info(%s)`, v.tableName)
-	rows, err := v.db.QueryContext(ctx, checkColumnSQL)
-	if err == nil {
-		defer rows.Close()
-		hasEmbeddingStatus := false
-		for rows.Next() {
-			var cid int
-			var name string
-			var dataType string
-			var notNull int
-			var defaultValue interface{}
-			var pk int
-			if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err == nil {
-				if name == "embedding_status" {
-					hasEmbeddingStatus = true
-					break
-				}
-			}
-		}
-		if !hasEmbeddingStatus {
-			// 添加 embedding_status 列
-			alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN embedding_status TEXT DEFAULT 'pending'`, v.tableName)
-			if _, err := v.db.ExecContext(ctx, alterTableSQL); err != nil {
-				log.Printf("[Initialize] 添加 embedding_status 列时出错: %v", err)
-			} else {
-				log.Printf("[Initialize] 已添加 embedding_status 列")
-			}
-		}
+	// 使用 GORM AutoMigrate 创建表（如果不存在）
+	// GORM 会自动处理表结构迁移
+	if err := v.db.AutoMigrate(&Document{}); err != nil {
+		return fmt.Errorf("failed to migrate table: %w", err)
 	}
 
 	// 清理无效数据：删除 id 为 NULL 或长度不为 16 的记录
-	cleanupSQL := fmt.Sprintf(`
-		DELETE FROM %s 
-		WHERE id IS NULL OR length(id) != 16
-	`, v.tableName)
-	if _, err := v.db.ExecContext(ctx, cleanupSQL); err != nil {
+	if err := v.db.WithContext(ctx).Where("id IS NULL OR length(id) != 16").Delete(&Document{}).Error; err != nil {
 		// 记录错误但不阻止初始化
 		log.Printf("[Initialize] 清理无效数据时出错: %v", err)
 	} else {
@@ -130,11 +100,13 @@ func (v *VecStore) Initialize(ctx context.Context) error {
 	}
 
 	// 创建索引以提高查询性能
-	createIndexSQL := fmt.Sprintf(`
+	// GORM 可以通过标签自动创建索引，但这里我们手动创建以确保兼容性
+	if err := v.db.Exec(fmt.Sprintf(`
 		CREATE INDEX IF NOT EXISTS %s_embedding_status_idx 
 		ON %s (embedding_status)
-	`, v.tableName, v.tableName)
-	_, _ = v.db.ExecContext(ctx, createIndexSQL)
+	`, v.tableName, v.tableName)).Error; err != nil {
+		log.Printf("[Initialize] 创建索引时出错: %v", err)
+	}
 
 	v.initialized = true
 	return nil
@@ -185,15 +157,17 @@ func (v *VecStore) Insert(ctx context.Context, text string, metadata map[string]
 	// 将doc序列化为content字段（存储所有数据）
 	contentJSON, _ := json.Marshal(doc)
 
-	// 插入到数据库
+	// 插入到数据库，使用 GORM Create
 	// 使用 UUID 二进制作为主键，确保唯一性
-	insertSQL := fmt.Sprintf(`
-		INSERT INTO %s (id, content, metadata, _rev, embedding_status)
-		VALUES (?, ?, ?, 1, 'pending')
-	`, v.tableName)
+	document := Document{
+		ID:              idBytes,
+		Content:         string(contentJSON),
+		Metadata:        metadataJSON,
+		EmbeddingStatus: "pending",
+		Rev:             1,
+	}
 
-	_, err := v.db.ExecContext(ctx, insertSQL, idBytes, string(contentJSON), metadataJSON)
-	if err != nil {
+	if err := v.db.WithContext(ctx).Create(&document).Error; err != nil {
 		return fmt.Errorf("failed to insert text: %w", err)
 	}
 
@@ -229,13 +203,13 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 		return nil, fmt.Errorf("empty embedding vector")
 	}
 
-	// 构建WHERE子句
-	whereClause := "embedding IS NOT NULL AND embedding_status = 'completed'"
-	var queryArgs []any
+	// 使用 GORM 查询所有候选文档（带metadata过滤）
+	var documents []Document
+	dbQuery := v.db.WithContext(ctx).Model(&Document{}).
+		Where("embedding IS NOT NULL AND embedding_status = ?", "completed")
 
 	// 添加metadata过滤条件
 	if metadataFilter != nil && len(metadataFilter) > 0 {
-		filterConditions := []string{}
 		for key, value := range metadataFilter {
 			// 转义key以防止SQL注入
 			escapedKey := strings.ReplaceAll(key, "'", "''")
@@ -244,7 +218,6 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 				"(json_extract(COALESCE(metadata, '{}'), '$.%s') = ? OR json_extract(content, '$.%s') = ?)",
 				escapedKey, escapedKey,
 			)
-			filterConditions = append(filterConditions, condition)
 
 			// 将value转换为字符串进行比较
 			var valueStr string
@@ -262,29 +235,13 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 					valueStr = valueStr[1 : len(valueStr)-1]
 				}
 			}
-			queryArgs = append(queryArgs, valueStr, valueStr)
-		}
-		if len(filterConditions) > 0 {
-			whereClause += " AND (" + strings.Join(filterConditions, " AND ") + ")"
+			dbQuery = dbQuery.Where(condition, valueStr, valueStr)
 		}
 	}
 
-	// 查询所有候选文档（带metadata过滤）
-	sqlQuery := fmt.Sprintf(`
-		SELECT 
-			id,
-			content,
-			metadata,
-			embedding
-		FROM %s
-		WHERE %s
-	`, v.tableName, whereClause)
-
-	rows, err := v.db.QueryContext(ctx, sqlQuery, queryArgs...)
-	if err != nil {
+	if err := dbQuery.Find(&documents).Error; err != nil {
 		return nil, fmt.Errorf("failed to search vectors: %w", err)
 	}
-	defer rows.Close()
 
 	// 在内存中计算余弦相似度并排序
 	type candidateResult struct {
@@ -296,19 +253,9 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 	}
 
 	var candidates []candidateResult
-	for rows.Next() {
-		var idBytes []byte
-		var content string
-		var metadataVal any
-		var embeddingBlob []byte
-
-		err := rows.Scan(&idBytes, &content, &metadataVal, &embeddingBlob)
-		if err != nil {
-			continue
-		}
-
+	for _, doc := range documents {
 		// 将二进制 UUID 转换为字符串
-		id, err := sqlite3_driver.BytesToUUIDString(idBytes)
+		id, err := sqlite3_driver.BytesToUUIDString(doc.ID)
 		if err != nil {
 			log.Printf("[Search] 无效的 UUID 二进制数据: %v", err)
 			continue
@@ -316,23 +263,28 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 
 		// 解析存储的向量（JSON格式）
 		var storedEmbedding []float64
-		if err := json.Unmarshal(embeddingBlob, &storedEmbedding); err != nil {
+		if err := json.Unmarshal(doc.Embedding, &storedEmbedding); err != nil {
 			continue
 		}
 
 		// 计算余弦相似度
 		similarity := cosineSimilarity(queryEmbedding, storedEmbedding)
 
-		var doc map[string]any
-		if err := json.Unmarshal([]byte(content), &doc); err != nil {
-			doc = map[string]any{"id": id, "content": content}
+		var docMap map[string]any
+		if err := json.Unmarshal([]byte(doc.Content), &docMap); err != nil {
+			docMap = map[string]any{"id": id, "content": doc.Content}
+		}
+
+		var metadataVal any
+		if doc.Metadata != "" {
+			json.Unmarshal([]byte(doc.Metadata), &metadataVal)
 		}
 
 		candidates = append(candidates, candidateResult{
 			id:         id,
-			content:    content,
+			content:    doc.Content,
 			metadata:   metadataVal,
-			doc:        doc,
+			doc:        docMap,
 			similarity: similarity,
 		})
 	}
@@ -370,14 +322,26 @@ func (v *VecStore) Search(ctx context.Context, query string, limit int, metadata
 // Close 关闭VecStore
 func (v *VecStore) Close() error {
 	if v.db != nil {
-		return v.db.Close()
+		sqlDB, err := v.db.DB()
+		if err != nil {
+			return err
+		}
+		return sqlDB.Close()
 	}
 	return nil
 }
 
 // GetDB 返回内部的数据库连接（用于需要直接访问数据库的场景）
-func (v *VecStore) GetDB() *sql.DB {
+func (v *VecStore) GetDB() *gorm.DB {
 	return v.db
+}
+
+// GetSQLDB 返回底层的 *sql.DB 连接（用于需要直接访问 SQL 的场景）
+func (v *VecStore) GetSQLDB() (*sql.DB, error) {
+	if v.db != nil {
+		return v.db.DB()
+	}
+	return nil, fmt.Errorf("database not initialized")
 }
 
 // GetTableName 返回表名
