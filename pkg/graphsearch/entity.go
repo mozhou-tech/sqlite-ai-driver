@@ -2,10 +2,10 @@ package graphsearch
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"time"
+
+	"gorm.io/gorm"
 )
 
 // AddEntity 添加实体及其embedding信息
@@ -54,31 +54,17 @@ func (g *graphsearch) AddEntity(ctx context.Context, entityID, entityName string
 		}
 	}
 
-	// 插入或更新实体
-	insertSQL := fmt.Sprintf(`
-		INSERT INTO %s (entity_id, entity_name, metadata, embedding, embedding_status, updated_at)
-		VALUES (?, ?, ?, %s, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT (entity_id) DO UPDATE SET
-			entity_name = excluded.entity_name,
-			metadata = excluded.metadata,
-			embedding = excluded.embedding,
-		embedding_status = excluded.embedding_status,
-		updated_at = CURRENT_TIMESTAMP
-	`, g.tableName, func() string {
-		if embeddingStr != "" {
-			return "?"
-		}
-		return "NULL"
-	}())
-
-	var err error
-	if embeddingStr != "" {
-		_, err = g.db.ExecContext(ctx, insertSQL, entityID, entityName, metadataJSON, embeddingStr, embeddingStatus)
-	} else {
-		_, err = g.db.ExecContext(ctx, insertSQL, entityID, entityName, metadataJSON, embeddingStatus)
+	// 使用 GORM 插入或更新实体
+	entity := &Entity{
+		EntityID:        entityID,
+		EntityName:      entityName,
+		Metadata:        metadataJSON,
+		Embedding:       embeddingStr,
+		EmbeddingStatus: embeddingStatus,
 	}
 
-	if err != nil {
+	// 使用 GORM 的 Save 方法实现 upsert（如果主键存在则更新，否则插入）
+	if err := g.db.WithContext(ctx).Table(g.tableName).Save(entity).Error; err != nil {
 		return fmt.Errorf("failed to add entity: %w", err)
 	}
 
@@ -91,39 +77,25 @@ func (g *graphsearch) GetEntity(ctx context.Context, entityID string) (map[strin
 		return nil, fmt.Errorf("store not initialized, call Initialize first")
 	}
 
-	querySQL := fmt.Sprintf(`
-		SELECT entity_id, entity_name, metadata, embedding_status
-		FROM %s
-		WHERE entity_id = ?
-	`, g.tableName)
-
-	row := g.db.QueryRowContext(ctx, querySQL, entityID)
-
-	var id, name string
-	var metadataVal any
-	var embeddingStatus string
-
-	err := row.Scan(&id, &name, &metadataVal, &embeddingStatus)
-	if err != nil {
-		if err == sql.ErrNoRows {
+	var entity Entity
+	if err := g.db.WithContext(ctx).Table(g.tableName).Where("entity_id = ?", entityID).First(&entity).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("entity not found: %s", entityID)
 		}
 		return nil, fmt.Errorf("failed to get entity: %w", err)
 	}
 
 	result := map[string]any{
-		"entity_id":        id,
-		"entity_name":      name,
-		"embedding_status": embeddingStatus,
+		"entity_id":        entity.EntityID,
+		"entity_name":      entity.EntityName,
+		"embedding_status": entity.EmbeddingStatus,
 	}
 
 	// 解析metadata
-	if metadataVal != nil {
-		if metadataStr, ok := metadataVal.(string); ok {
-			var metadata map[string]any
-			if err := json.Unmarshal([]byte(metadataStr), &metadata); err == nil {
-				result["metadata"] = metadata
-			}
+	if entity.Metadata != "" {
+		var metadata map[string]any
+		if err := json.Unmarshal([]byte(entity.Metadata), &metadata); err == nil {
+			result["metadata"] = metadata
 		}
 	}
 
@@ -140,45 +112,29 @@ func (g *graphsearch) ListEntities(ctx context.Context, limit int, offset int) (
 		limit = 100
 	}
 
-	querySQL := fmt.Sprintf(`
-		SELECT entity_id, entity_name, metadata, embedding_status, created_at
-		FROM %s
-		ORDER BY created_at DESC
-		LIMIT ? OFFSET ?
-	`, g.tableName)
-
-	rows, err := g.db.QueryContext(ctx, querySQL, limit, offset)
-	if err != nil {
+	var entities []Entity
+	if err := g.db.WithContext(ctx).Table(g.tableName).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&entities).Error; err != nil {
 		return nil, fmt.Errorf("failed to list entities: %w", err)
 	}
-	defer rows.Close()
 
 	var results []map[string]any
-	for rows.Next() {
-		var id, name string
-		var metadataVal any
-		var embeddingStatus string
-		var createdAt time.Time
-
-		err := rows.Scan(&id, &name, &metadataVal, &embeddingStatus, &createdAt)
-		if err != nil {
-			continue
-		}
-
+	for _, entity := range entities {
 		result := map[string]any{
-			"entity_id":        id,
-			"entity_name":      name,
-			"embedding_status": embeddingStatus,
-			"created_at":       createdAt,
+			"entity_id":        entity.EntityID,
+			"entity_name":      entity.EntityName,
+			"embedding_status": entity.EmbeddingStatus,
+			"created_at":       entity.CreatedAt,
 		}
 
 		// 解析metadata
-		if metadataVal != nil {
-			if metadataStr, ok := metadataVal.(string); ok {
-				var metadata map[string]any
-				if err := json.Unmarshal([]byte(metadataStr), &metadata); err == nil {
-					result["metadata"] = metadata
-				}
+		if entity.Metadata != "" {
+			var metadata map[string]any
+			if err := json.Unmarshal([]byte(entity.Metadata), &metadata); err == nil {
+				result["metadata"] = metadata
 			}
 		}
 

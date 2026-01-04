@@ -2,21 +2,22 @@ package graphsearch
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"sync"
 
 	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // graphsearch 基于cayley-driver和sqlite-driver的纯图谱存储
 // - 使用cayley-driver存储图谱关系（三元组）
-// - 使用sqlite-driver的index.db共享数据库存储实体的embedding信息，用于向量检索
+// - 使用sqlite-driver的data.db共享数据库存储实体的embedding信息，用于向量检索
 // - 支持语义检索图谱（通过向量相似度搜索找到相关实体，然后返回图谱关系）
 type graphsearch struct {
 	graph       cayley_driver.Graph
-	db          *sql.DB
+	db          *gorm.DB
 	embedder    Embedder
 	tableName   string
 	initialized bool
@@ -57,31 +58,23 @@ func (g *graphsearch) Initialize(ctx context.Context) error {
 		return nil
 	}
 
-	// 打开SQLite数据库用于向量检索
-	// 注意：无论传入什么路径，都会被 sqlite-driver 统一映射到共享数据库文件 ./data/indexing/index.db
-	// 向量检索使用 sqlite-driver 的 index.db 共享数据库，不同的业务模块通过表名区分
-	db, err := sql.Open("sqlite3", "graphsearch.db")
+	// 打开SQLite数据库用于向量检索，使用 GORM
+	// 注意：无论传入什么路径，都会被 sqlite-driver 统一映射到共享数据库文件 ./data/indexing/data.db
+	// 向量检索使用 sqlite-driver 的 data.db 共享数据库，不同的业务模块通过表名区分
+	db, err := gorm.Open(sqlite.Open("graphsearch.db"), &gorm.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	g.db = db
 
-	// 创建表（如果不存在）
-	createTableSQL := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			entity_id VARCHAR PRIMARY KEY,
-			entity_name TEXT,
-			metadata JSON,
-			embedding FLOAT[],
-			embedding_status VARCHAR DEFAULT 'pending',
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		)
-	`, g.tableName)
+	// 使用 GORM AutoMigrate 创建表（如果不存在）
+	// 注意：由于表名是动态的，我们需要使用 Table() 方法指定表名
+	// 但 AutoMigrate 需要模型类型，所以我们先创建一个临时模型
+	entityModel := &Entity{}
 
-	_, err = g.db.ExecContext(ctx, createTableSQL)
-	if err != nil {
-		return fmt.Errorf("failed to create table: %w", err)
+	// 使用 Table() 方法指定表名进行迁移
+	if err := g.db.Table(g.tableName).AutoMigrate(entityModel); err != nil {
+		return fmt.Errorf("failed to migrate table: %w", err)
 	}
 
 	// 创建索引
@@ -90,8 +83,7 @@ func (g *graphsearch) Initialize(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS idx_%s_embedding_status ON %s(embedding_status);
 	`, g.tableName, g.tableName, g.tableName, g.tableName)
 
-	_, err = g.db.ExecContext(ctx, createIndexSQL)
-	if err != nil {
+	if err := g.db.Exec(createIndexSQL).Error; err != nil {
 		return fmt.Errorf("failed to create indexes: %w", err)
 	}
 
@@ -110,7 +102,12 @@ func (g *graphsearch) Close() error {
 	}
 
 	if g.db != nil {
-		if err := g.db.Close(); err != nil {
+		sqlDB, err := g.db.DB()
+		if err == nil {
+			if err := sqlDB.Close(); err != nil {
+				errs = append(errs, err)
+			}
+		} else {
 			errs = append(errs, err)
 		}
 	}

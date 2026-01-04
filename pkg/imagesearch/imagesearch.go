@@ -76,7 +76,7 @@ func (r *ImageSearch) InitializeStorages(ctx context.Context) error {
 	// 打开SQLite数据库，使用 GORM
 	// 使用简单的路径标识即可，实际路径会被映射到共享数据库
 	// 所有表使用 tablePrefix 前缀以区分不同的业务模块
-	dbPath := filepath.Join(r.workingDir, "index.db")
+	dbPath := filepath.Join(r.workingDir, "data.db")
 
 	// 尝试打开数据库
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})

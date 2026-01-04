@@ -42,21 +42,12 @@ func (g *graphsearch) SemanticSearch(ctx context.Context, query string, limit in
 
 	// 查询所有候选实体（在内存中计算相似度）
 	// SQLite 不支持 list_cosine_similarity 函数，需要在内存中计算
-	sqlQuery := fmt.Sprintf(`
-		SELECT 
-			entity_id,
-			entity_name,
-			metadata,
-			embedding
-		FROM %s
-		WHERE embedding IS NOT NULL AND embedding_status = 'completed'
-	`, g.tableName)
-
-	rows, err := g.db.QueryContext(ctx, sqlQuery)
-	if err != nil {
+	var entities []Entity
+	if err := g.db.WithContext(ctx).Table(g.tableName).
+		Where("embedding IS NOT NULL AND embedding != '' AND embedding_status = ?", "completed").
+		Find(&entities).Error; err != nil {
 		return nil, fmt.Errorf("failed to search entities: %w", err)
 	}
-	defer rows.Close()
 
 	// 在内存中计算余弦相似度并排序
 	type candidateResult struct {
@@ -68,39 +59,12 @@ func (g *graphsearch) SemanticSearch(ctx context.Context, query string, limit in
 
 	var candidates []candidateResult
 
-	for rows.Next() {
-		var entityID, entityName string
-		var metadataVal any
-		var embeddingVal any
-
-		err := rows.Scan(&entityID, &entityName, &metadataVal, &embeddingVal)
-		if err != nil {
-			continue
-		}
-
+	for _, entity := range entities {
 		// 解析 embedding
 		var storedEmbedding []float64
-		if embeddingVal != nil {
-			// 尝试不同的格式：字符串、JSON、字节数组
-			switch v := embeddingVal.(type) {
-			case string:
-				// 尝试解析 JSON 格式的向量（格式：[1.0, 2.0, 3.0]）
-				if err := json.Unmarshal([]byte(v), &storedEmbedding); err != nil {
-					continue
-				}
-			case []byte:
-				if err := json.Unmarshal(v, &storedEmbedding); err != nil {
-					continue
-				}
-			default:
-				// 尝试转换为字符串再解析
-				if str, ok := v.(string); ok {
-					if err := json.Unmarshal([]byte(str), &storedEmbedding); err != nil {
-						continue
-					}
-				} else {
-					continue
-				}
+		if entity.Embedding != "" {
+			if err := json.Unmarshal([]byte(entity.Embedding), &storedEmbedding); err != nil {
+				continue
 			}
 		}
 
@@ -113,18 +77,16 @@ func (g *graphsearch) SemanticSearch(ctx context.Context, query string, limit in
 
 		// 解析metadata
 		var metadata map[string]any
-		if metadataVal != nil {
-			if metadataStr, ok := metadataVal.(string); ok {
-				_ = json.Unmarshal([]byte(metadataStr), &metadata)
-			}
+		if entity.Metadata != "" {
+			_ = json.Unmarshal([]byte(entity.Metadata), &metadata)
 		}
 		if metadata == nil {
 			metadata = make(map[string]any)
 		}
 
 		candidates = append(candidates, candidateResult{
-			entityID:   entityID,
-			entityName: entityName,
+			entityID:   entity.EntityID,
+			entityName: entity.EntityName,
 			metadata:   metadata,
 			similarity: similarity,
 		})
