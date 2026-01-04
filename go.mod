@@ -3,18 +3,19 @@ module github.com/mozhou-tech/sqlite-ai-driver
 go 1.24.2
 
 require (
-	github.com/alifiroozi80/duckdb v1.1.1
 	github.com/benbjohnson/litestream v0.5.5
 	github.com/cloudwego/eino v0.7.14
 	github.com/cloudwego/eino-ext/components/document/parser/docx v0.0.0-20251229121631-716047332ba5
-	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251226123311-1d93d527c144
+	github.com/cloudwego/eino-ext/components/embedding/openai v0.0.0-20251229121631-716047332ba5
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.2
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext v0.0.0-00010101000000-000000000000
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/imagesearch v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego v0.0.0
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver v0.0.0
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch v0.0.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.31.1
 	modernc.org/sqlite v1.38.2
@@ -32,12 +33,6 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.2 // indirect
-	github.com/duckdb/duckdb-go-bindings v0.1.9 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-amd64 v0.1.4 // indirect
-	github.com/duckdb/duckdb-go-bindings/darwin-arm64 v0.1.4 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-amd64 v0.1.4 // indirect
-	github.com/duckdb/duckdb-go-bindings/linux-arm64 v0.1.4 // indirect
-	github.com/duckdb/duckdb-go-bindings/windows-amd64 v0.1.4 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/eino-contrib/docx2md v0.0.1 // indirect
 	github.com/eino-contrib/jsonschema v1.0.3 // indirect
@@ -60,10 +55,6 @@ require (
 	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728 // indirect
 	github.com/magefile/mage v1.14.0 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
-	github.com/marcboeker/go-duckdb v1.8.5 // indirect
-	github.com/marcboeker/go-duckdb/arrowmapping v0.0.2 // indirect
-	github.com/marcboeker/go-duckdb/mapping v0.0.2 // indirect
-	github.com/marcboeker/go-duckdb/v2 v2.0.0 // indirect
 	github.com/markusmobius/go-dateparser v1.2.4 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
@@ -72,7 +63,6 @@ require (
 	github.com/meguminnnnnnnnn/go-openai v0.1.0 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver v0.0.0 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
@@ -118,12 +108,11 @@ require (
 replace (
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/attachments => ./pkg/attachments
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver => ./pkg/cayley-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite-driver => ./pkg/sqlite-driver
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext => ./pkg/eino-ext
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/eino-ext/document/parser/pdf => ./pkg/eino-ext/document/parser/pdf
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch => ./pkg/graphsearch
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/lightrag => ./pkg/lightrag
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/imagesearch => ./pkg/imagesearch
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sego => ./pkg/sego
 	github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver => ./pkg/sqlite3-driver
-	github.com/mozhou-tech/sqlite-ai-driver/pkg/vecstore => ./pkg/textsearch
+	github.com/mozhou-tech/sqlite-ai-driver/pkg/textsearch => ./pkg/textsearch
 )
