@@ -670,26 +670,44 @@ func (f *sqliteFulltextSearch) FindWithScores(ctx context.Context, query string,
 
 	// 使用 sego 分词查询
 	queryTokens := sego.Tokenize(query)
+	if queryTokens == "" {
+		// 如果分词结果为空，使用原始查询
+		queryTokens = query
+	}
 	ftsTableName := f.tableName + "_fts"
 
 	// 使用 SQLite FTS5 进行搜索
+	// FTS5 MATCH 查询需要使用 bm25() 函数来获取 rank
+	// 注意：如果 FTS5 表为空或查询无结果，Rows() 可能返回 nil
 	searchSQL := fmt.Sprintf(`
 		SELECT 
 			d.id,
 			d.content,
 			d.metadata,
-			rank
+			bm25(%s) as rank
 		FROM %s fts
 		JOIN %s d ON fts.rowid = d.id
 		WHERE %s MATCH ?
 		ORDER BY rank
 		LIMIT ?
-	`, ftsTableName, f.tableName, ftsTableName)
+	`, ftsTableName, ftsTableName, f.tableName, ftsTableName)
 
 	var results []FulltextSearchResult
-	rows, err := f.db.Raw(searchSQL, queryTokens, limit*2).Rows()
+
+	// 使用 WithContext 确保查询在正确的上下文中执行
+	stmt := f.db.WithContext(ctx).Raw(searchSQL, queryTokens, limit*2)
+	if stmt.Error != nil {
+		return nil, fmt.Errorf("failed to prepare search: %w", stmt.Error)
+	}
+
+	rows, err := stmt.Rows()
 	if err != nil {
-		return nil, fmt.Errorf("failed to search: %w", err)
+		return nil, fmt.Errorf("failed to execute search: %w", err)
+	}
+	if rows == nil {
+		// 如果 rows 为 nil，可能是查询没有结果或 FTS5 表不存在
+		// 返回空结果而不是错误
+		return results, nil
 	}
 	defer rows.Close()
 

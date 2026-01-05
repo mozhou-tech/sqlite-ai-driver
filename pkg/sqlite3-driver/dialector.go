@@ -151,6 +151,58 @@ func (m Migrator) FullDataTypeOf(field *schema.Field) clause.Expr {
 	return expr
 }
 
+// HasTable 检查表是否存在
+// 使用 sqlite_master 表来安全地检查表是否存在，避免 Row.Scan 的 nil 指针问题
+func (m Migrator) HasTable(value interface{}) bool {
+	var tableName string
+
+	// 检查 Config 和 DB 是否有效
+	if m.Migrator.Config.DB == nil {
+		return false
+	}
+
+	// 使用 RunWithValue 来获取表名，这是 GORM migrator 的标准模式
+	if err := m.Migrator.RunWithValue(value, func(stmt *gorm.Statement) error {
+		if stmt.Schema != nil {
+			tableName = stmt.Schema.Table
+		}
+		return nil
+	}); err != nil {
+		return false
+	}
+
+	if tableName == "" {
+		return false
+	}
+
+	// 使用 GORM 的 Raw().Row() 方法，但需要检查 Row 是否为 nil
+	row := m.Migrator.Config.DB.Raw(
+		"SELECT COUNT(*) FROM sqlite_master WHERE type = ? AND name = ?",
+		"table", tableName,
+	).Row()
+
+	// 检查 Row 是否为 nil
+	if row == nil {
+		return false
+	}
+
+	// 使用 Row.Scan 扫描结果
+	var count int64
+	err := row.Scan(&count)
+
+	// 处理错误
+	if err != nil {
+		// sql.ErrNoRows 表示没有找到记录，表不存在
+		if err == sql.ErrNoRows {
+			return false
+		}
+		// 其他错误也返回 false
+		return false
+	}
+
+	return count > 0
+}
+
 // Open 创建一个新的 SQLite3 dialector
 // dsn: 数据库连接字符串，支持相对路径和绝对路径
 // 如果提供了 workingDir 参数（通过查询字符串），会使用 sqlite3-driver 的路径处理功能
