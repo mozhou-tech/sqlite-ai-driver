@@ -2,14 +2,17 @@ package graphsearch
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
+	"sort"
 	"sync"
 	"time"
 
 	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // Embedder 向量嵌入生成器接口
@@ -18,22 +21,39 @@ type Embedder interface {
 	Dimensions() int
 }
 
+// Entity GORM 模型，表示图谱存储中的实体
+type Entity struct {
+	EntityID        string    `gorm:"type:VARCHAR;primaryKey;not null"`
+	EntityName      string    `gorm:"type:TEXT"`
+	Metadata        string    `gorm:"type:TEXT"` // JSON 格式的元数据
+	Embedding       []byte    `gorm:"type:BLOB"` // JSON 格式的向量数组
+	EmbeddingStatus string    `gorm:"type:VARCHAR;default:'pending'"`
+	CreatedAt       time.Time `gorm:"autoCreateTime"`
+	UpdatedAt       time.Time `gorm:"autoUpdateTime"`
+}
+
+// TableName 指定表名
+func (Entity) TableName() string {
+	return "graphstore_entities"
+}
+
 // Options GraphStore配置选项
 type Options struct {
 	Embedder   Embedder
 	WorkingDir string // 工作目录，作为基础目录
-	TableName  string // DuckDB 表名，默认为 "graphstore_entities"
+	TableName  string // SQLite 表名，默认为 "graphstore_entities"
 }
 
-// GraphStore 基于cayley-driver和duckdb-driver的纯图谱存储
+// GraphStore 基于cayley-driver和sqlite3-driver的纯图谱存储
 // - 使用cayley-driver存储图谱关系（三元组）
-// - 使用duckdb-driver的index.db共享数据库存储实体的embedding信息，用于向量检索
+// - 使用sqlite3-driver和GORM存储实体的embedding信息，用于向量检索
 // - 支持语义检索图谱（通过向量相似度搜索找到相关实体，然后返回图谱关系）
 type GraphStore struct {
 	graph       cayley_driver.Graph
-	db          *sql.DB
+	db          *gorm.DB
 	embedder    Embedder
 	tableName   string
+	workingDir  string
 	initialized bool
 	mu          sync.Mutex
 }
@@ -57,13 +77,15 @@ func New(opts Options) (*GraphStore, error) {
 	}
 
 	return &GraphStore{
-		graph:     graph,
-		embedder:  opts.Embedder,
-		tableName: tableName,
+		graph:      graph,
+		embedder:   opts.Embedder,
+		tableName:  tableName,
+		workingDir: workingDir,
 	}, nil
 }
 
 // Initialize 初始化存储后端
+// 使用 sqlite3-driver 的 SQLite 数据库和 GORM
 func (g *GraphStore) Initialize(ctx context.Context) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -72,42 +94,36 @@ func (g *GraphStore) Initialize(ctx context.Context) error {
 		return nil
 	}
 
-	// 打开DuckDB数据库用于向量检索
-	// 注意：无论传入什么路径，都会被 duckdb-driver 统一映射到共享数据库文件 ./data/indexing/index.db
-	// 向量检索使用 duckdb-driver 的 index.db 共享数据库，不同的业务模块通过表名区分
-	db, err := sql.Open("duckdb", "graphstore.db")
+	// 打开SQLite数据库连接，使用 GORM
+	// sqlite3-driver 会自动处理路径和 WAL 模式
+	// 使用 workingDir 参数来指定工作目录
+	dsn := fmt.Sprintf("graphstore.db?workingDir=%s", g.workingDir)
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	g.db = db
 
-	// 创建表（如果不存在）
-	createTableSQL := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			entity_id VARCHAR PRIMARY KEY,
-			entity_name TEXT,
-			metadata JSON,
-			embedding FLOAT[],
-			embedding_status VARCHAR DEFAULT 'pending',
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		)
-	`, g.tableName)
-
-	_, err = g.db.ExecContext(ctx, createTableSQL)
-	if err != nil {
-		return fmt.Errorf("failed to create table: %w", err)
+	// 使用 GORM AutoMigrate 创建表（如果不存在）
+	// 使用 Table() 方法指定表名
+	entityModel := Entity{}
+	if err := g.db.WithContext(ctx).Table(g.tableName).AutoMigrate(&entityModel); err != nil {
+		return fmt.Errorf("failed to migrate table: %w", err)
 	}
 
-	// 创建索引
-	createIndexSQL := fmt.Sprintf(`
-		CREATE INDEX IF NOT EXISTS idx_%s_entity_name ON %s(entity_name);
-		CREATE INDEX IF NOT EXISTS idx_%s_embedding_status ON %s(embedding_status);
-	`, g.tableName, g.tableName, g.tableName, g.tableName)
+	// 创建索引以提高查询性能
+	if err := g.db.Exec(fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS idx_%s_entity_name 
+		ON %s (entity_name)
+	`, g.tableName, g.tableName)).Error; err != nil {
+		return fmt.Errorf("failed to create entity_name index: %w", err)
+	}
 
-	_, err = g.db.ExecContext(ctx, createIndexSQL)
-	if err != nil {
-		return fmt.Errorf("failed to create indexes: %w", err)
+	if err := g.db.Exec(fmt.Sprintf(`
+		CREATE INDEX IF NOT EXISTS idx_%s_embedding_status 
+		ON %s (embedding_status)
+	`, g.tableName, g.tableName)).Error; err != nil {
+		return fmt.Errorf("failed to create embedding_status index: %w", err)
 	}
 
 	g.initialized = true
@@ -139,52 +155,36 @@ func (g *GraphStore) AddEntity(ctx context.Context, entityID, entityName string,
 			metadataJSON = string(metadataBytes)
 		}
 	}
+	if metadataJSON == "" {
+		metadataJSON = "{}"
+	}
 
 	// 如果提供了embedder，生成embedding
-	var embeddingStr string
+	var embeddingBytes []byte
 	embeddingStatus := "pending"
 	if g.embedder != nil && entityName != "" {
 		embedding, err := g.embedder.Embed(ctx, entityName)
 		if err == nil && len(embedding) > 0 {
-			// 转换为字符串格式
-			vectorStr := "["
-			for i, val := range embedding {
-				if i > 0 {
-					vectorStr += ", "
-				}
-				vectorStr += fmt.Sprintf("%g", val)
+			// 将向量序列化为JSON格式的字节数组
+			embeddingBytes, err = json.Marshal(embedding)
+			if err == nil {
+				embeddingStatus = "completed"
 			}
-			vectorStr += "]"
-			embeddingStr = vectorStr
-			embeddingStatus = "completed"
 		}
 	}
 
-	// 插入或更新实体
-	insertSQL := fmt.Sprintf(`
-		INSERT INTO %s (entity_id, entity_name, metadata, embedding, embedding_status, updated_at)
-		VALUES (?, ?, ?, %s, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT (entity_id) DO UPDATE SET
-			entity_name = excluded.entity_name,
-			metadata = excluded.metadata,
-			embedding = excluded.embedding,
-			embedding_status = excluded.embedding_status,
-			updated_at = CURRENT_TIMESTAMP
-	`, g.tableName, func() string {
-		if embeddingStr != "" {
-			return "?::FLOAT[]"
-		}
-		return "NULL"
-	}())
-
-	var err error
-	if embeddingStr != "" {
-		_, err = g.db.ExecContext(ctx, insertSQL, entityID, entityName, metadataJSON, embeddingStr, embeddingStatus)
-	} else {
-		_, err = g.db.ExecContext(ctx, insertSQL, entityID, entityName, metadataJSON, embeddingStatus)
+	// 创建实体模型
+	entity := Entity{
+		EntityID:        entityID,
+		EntityName:      entityName,
+		Metadata:        metadataJSON,
+		Embedding:       embeddingBytes,
+		EmbeddingStatus: embeddingStatus,
 	}
 
-	if err != nil {
+	// 使用 GORM 的 Save 方法（如果主键存在则更新，否则插入）
+	// 使用 Table() 方法指定表名
+	if err := g.db.WithContext(ctx).Table(g.tableName).Save(&entity).Error; err != nil {
 		return fmt.Errorf("failed to add entity: %w", err)
 	}
 
@@ -275,72 +275,75 @@ func (g *GraphStore) SemanticSearch(ctx context.Context, query string, limit int
 		return nil, fmt.Errorf("empty embedding vector")
 	}
 
-	// 转换向量为字符串格式
-	vectorStr := "["
-	for i, val := range queryEmbedding {
-		if i > 0 {
-			vectorStr += ", "
-		}
-		vectorStr += fmt.Sprintf("%g", val)
-	}
-	vectorStr += "]"
-
-	// 使用DuckDB的list_cosine_similarity进行向量搜索
-	// 向量检索使用 duckdb-driver 的 index.db 共享数据库
-	sqlQuery := fmt.Sprintf(`
-		SELECT 
-			entity_id,
-			entity_name,
-			metadata,
-			list_cosine_similarity(embedding, ?::FLOAT[]) as similarity
-		FROM %s
-		WHERE embedding IS NOT NULL AND embedding_status = 'completed'
-		ORDER BY list_cosine_similarity(embedding, ?::FLOAT[]) DESC
-		LIMIT ?
-	`, g.tableName)
-
-	rows, err := g.db.QueryContext(ctx, sqlQuery, vectorStr, vectorStr, limit)
-	if err != nil {
+	// 使用 GORM 查询所有候选实体
+	var entities []Entity
+	if err := g.db.WithContext(ctx).Table(g.tableName).
+		Where("embedding IS NOT NULL AND embedding_status = ?", "completed").
+		Find(&entities).Error; err != nil {
 		return nil, fmt.Errorf("failed to search entities: %w", err)
 	}
-	defer rows.Close()
 
-	var results []SemanticSearchResult
-	entityIDs := make(map[string]bool)
+	// 在内存中计算余弦相似度并排序
+	type candidateResult struct {
+		entity     Entity
+		similarity float64
+	}
 
-	for rows.Next() {
-		var entityID, entityName string
-		var metadataVal any
-		var similarity float64
-
-		err := rows.Scan(&entityID, &entityName, &metadataVal, &similarity)
-		if err != nil {
+	var candidates []candidateResult
+	for _, entity := range entities {
+		// 解析存储的向量（JSON格式）
+		var storedEmbedding []float64
+		if err := json.Unmarshal(entity.Embedding, &storedEmbedding); err != nil {
 			continue
 		}
 
+		// 计算余弦相似度
+		similarity := cosineSimilarity(queryEmbedding, storedEmbedding)
+
+		candidates = append(candidates, candidateResult{
+			entity:     entity,
+			similarity: similarity,
+		})
+	}
+
+	// 按相似度降序排序
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i].similarity > candidates[j].similarity
+	})
+
+	// 取前 limit 个结果
+	if len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+
+	// 转换为 SemanticSearchResult
+	var results []SemanticSearchResult
+	entityIDs := make(map[string]bool)
+
+	for _, cand := range candidates {
+		entity := cand.entity
+
 		// 解析metadata
 		var metadata map[string]any
-		if metadataVal != nil {
-			if metadataStr, ok := metadataVal.(string); ok {
-				_ = json.Unmarshal([]byte(metadataStr), &metadata)
-			}
+		if entity.Metadata != "" {
+			_ = json.Unmarshal([]byte(entity.Metadata), &metadata)
 		}
 		if metadata == nil {
 			metadata = make(map[string]any)
 		}
 
 		// 获取该实体在图谱中的关系（子图）
-		triples := g.getSubgraphTriples(ctx, entityID, maxDepth)
+		triples := g.getSubgraphTriples(ctx, entity.EntityID, maxDepth)
 
 		results = append(results, SemanticSearchResult{
-			EntityID:   entityID,
-			EntityName: entityName,
-			Score:      similarity,
+			EntityID:   entity.EntityID,
+			EntityName: entity.EntityName,
+			Score:      cand.similarity,
 			Metadata:   metadata,
 			Triples:    triples,
 		})
 
-		entityIDs[entityID] = true
+		entityIDs[entity.EntityID] = true
 	}
 
 	return results, nil
@@ -463,39 +466,27 @@ func (g *GraphStore) GetEntity(ctx context.Context, entityID string) (map[string
 		return nil, fmt.Errorf("store not initialized, call Initialize first")
 	}
 
-	querySQL := fmt.Sprintf(`
-		SELECT entity_id, entity_name, metadata, embedding_status
-		FROM %s
-		WHERE entity_id = ?
-	`, g.tableName)
-
-	row := g.db.QueryRowContext(ctx, querySQL, entityID)
-
-	var id, name string
-	var metadataVal any
-	var embeddingStatus string
-
-	err := row.Scan(&id, &name, &metadataVal, &embeddingStatus)
-	if err != nil {
-		if err == sql.ErrNoRows {
+	var entity Entity
+	if err := g.db.WithContext(ctx).Table(g.tableName).
+		Where("entity_id = ?", entityID).
+		First(&entity).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
 			return nil, fmt.Errorf("entity not found: %s", entityID)
 		}
 		return nil, fmt.Errorf("failed to get entity: %w", err)
 	}
 
 	result := map[string]any{
-		"entity_id":        id,
-		"entity_name":      name,
-		"embedding_status": embeddingStatus,
+		"entity_id":        entity.EntityID,
+		"entity_name":      entity.EntityName,
+		"embedding_status": entity.EmbeddingStatus,
 	}
 
 	// 解析metadata
-	if metadataVal != nil {
-		if metadataStr, ok := metadataVal.(string); ok {
-			var metadata map[string]any
-			if err := json.Unmarshal([]byte(metadataStr), &metadata); err == nil {
-				result["metadata"] = metadata
-			}
+	if entity.Metadata != "" {
+		var metadata map[string]any
+		if err := json.Unmarshal([]byte(entity.Metadata), &metadata); err == nil {
+			result["metadata"] = metadata
 		}
 	}
 
@@ -512,52 +503,56 @@ func (g *GraphStore) ListEntities(ctx context.Context, limit int, offset int) ([
 		limit = 100
 	}
 
-	querySQL := fmt.Sprintf(`
-		SELECT entity_id, entity_name, metadata, embedding_status, created_at
-		FROM %s
-		ORDER BY created_at DESC
-		LIMIT ? OFFSET ?
-	`, g.tableName)
-
-	rows, err := g.db.QueryContext(ctx, querySQL, limit, offset)
-	if err != nil {
+	var entities []Entity
+	if err := g.db.WithContext(ctx).Table(g.tableName).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&entities).Error; err != nil {
 		return nil, fmt.Errorf("failed to list entities: %w", err)
 	}
-	defer rows.Close()
 
-	var results []map[string]any
-	for rows.Next() {
-		var id, name string
-		var metadataVal any
-		var embeddingStatus string
-		var createdAt time.Time
-
-		err := rows.Scan(&id, &name, &metadataVal, &embeddingStatus, &createdAt)
-		if err != nil {
-			continue
-		}
-
+	results := make([]map[string]any, len(entities))
+	for i, entity := range entities {
 		result := map[string]any{
-			"entity_id":        id,
-			"entity_name":      name,
-			"embedding_status": embeddingStatus,
-			"created_at":       createdAt,
+			"entity_id":        entity.EntityID,
+			"entity_name":      entity.EntityName,
+			"embedding_status": entity.EmbeddingStatus,
+			"created_at":       entity.CreatedAt,
 		}
 
 		// 解析metadata
-		if metadataVal != nil {
-			if metadataStr, ok := metadataVal.(string); ok {
-				var metadata map[string]any
-				if err := json.Unmarshal([]byte(metadataStr), &metadata); err == nil {
-					result["metadata"] = metadata
-				}
+		if entity.Metadata != "" {
+			var metadata map[string]any
+			if err := json.Unmarshal([]byte(entity.Metadata), &metadata); err == nil {
+				result["metadata"] = metadata
 			}
 		}
 
-		results = append(results, result)
+		results[i] = result
 	}
 
 	return results, nil
+}
+
+// cosineSimilarity 计算两个向量的余弦相似度
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return 0.0
+	}
+
+	var dotProduct, normA, normB float64
+	for i := 0; i < len(a); i++ {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+
+	if normA == 0 || normB == 0 {
+		return 0.0
+	}
+
+	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
 // Close 关闭GraphStore
@@ -570,9 +565,13 @@ func (g *GraphStore) Close() error {
 		}
 	}
 
+	// GORM 的 DB 不需要显式关闭，但我们可以获取底层 sql.DB 来关闭
 	if g.db != nil {
-		if err := g.db.Close(); err != nil {
-			errs = append(errs, err)
+		sqlDB, err := g.db.DB()
+		if err == nil && sqlDB != nil {
+			if err := sqlDB.Close(); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 

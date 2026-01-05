@@ -1,4 +1,4 @@
-package graphstore_test
+package graphsearch_test
 
 import (
 	"context"
@@ -6,7 +6,7 @@ import (
 	"log"
 	"testing"
 
-	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 )
 
 // SimpleEmbedder 简单的嵌入生成器示例（用于测试）
@@ -42,10 +42,10 @@ func ExampleGraphStore() {
 	embedder := NewSimpleEmbedder(768)
 
 	// 2. 创建 GraphStore 实例
-	store, err := graphstore.New(graphstore.Options{
+	store, err := graphsearch.New(graphsearch.Options{
 		Embedder:   embedder,
 		WorkingDir: "./testdata",          // 工作目录，作为基础目录
-		TableName:  "graphstore_entities", // DuckDB 表名
+		TableName:  "graphstore_entities", // SQLite 表名
 	})
 	if err != nil {
 		log.Fatalf("Failed to create GraphStore: %v", err)
@@ -192,7 +192,7 @@ func TestSemanticSearchUsage(t *testing.T) {
 	embedder := NewSimpleEmbedder(768)
 
 	// 创建 GraphStore
-	store, err := graphstore.New(graphstore.Options{
+	store, err := graphsearch.New(graphsearch.Options{
 		Embedder:   embedder,
 		WorkingDir: "./testdata", // 工作目录，作为基础目录
 	})

@@ -1,11 +1,11 @@
 # GraphStore
 
-基于 `cayley-driver` 和 `duckdb-driver` 的纯图谱存储系统，支持实体 embedding 存储和语义检索图谱。
+基于 `cayley-driver` 和 `sqlite3-driver` + GORM 的纯图谱存储系统，支持实体 embedding 存储和语义检索图谱。
 
 ## 功能特性
 
 - **图谱存储**：使用 `cayley-driver` 存储图谱关系（三元组）
-- **实体 Embedding**：使用 `duckdb-driver` 存储实体的 embedding 信息
+- **实体 Embedding**：使用 `sqlite3-driver` 和 GORM 存储实体的 embedding 信息
 - **语义检索**：通过查询文本找到相似的实体，然后返回这些实体在图谱中的关系
 - **子图查询**：支持获取实体的子图（指定深度内的所有关系）
 
@@ -16,18 +16,17 @@
 ```go
 import (
     "context"
-    "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore"
+    "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
 )
 
 // 创建 embedder（需要实现 Embedder 接口）
 embedder := &YourEmbedder{}
 
 // 创建 GraphStore
-store, err := graphstore.New(graphstore.Options{
+store, err := graphsearch.New(graphsearch.Options{
     Embedder:   embedder,
     WorkingDir: "./data",         // 工作目录，作为基础目录（必填）
-    GraphDB:    "graphstore.db",  // 图谱数据库路径（可选，默认 "graphstore.db"）
-    TableName:  "graphstore_entities", // DuckDB 表名（可选，默认 "graphstore_entities"）
+    TableName:  "graphstore_entities", // SQLite 表名（可选，默认 "graphstore_entities"）
 })
 if err != nil {
     log.Fatal(err)
@@ -64,7 +63,7 @@ err = store.Link(ctx, "entity2", "works_at", "company1")
 向量检索是 GraphStore 的核心功能，它通过以下步骤工作：
 
 1. **生成查询向量**：使用 Embedder 将查询文本转换为向量
-2. **向量相似度搜索**：在 DuckDB 的 `index.db` 数据库中，使用 `list_cosine_similarity` 函数查找最相似的实体
+2. **向量相似度搜索**：在 SQLite 数据库中查询所有实体，在内存中计算余弦相似度，找到最相似的实体
 3. **获取图谱关系**：为每个找到的实体获取其在图谱中的关系（子图）
 
 ```go
@@ -93,8 +92,8 @@ for _, result := range results {
 
 **向量检索的工作原理**：
 
-1. **向量存储**：实体添加时，`AddEntity` 会自动调用 Embedder 生成 embedding 并存储到 DuckDB
-2. **向量搜索**：`SemanticSearch` 使用 DuckDB 的 `list_cosine_similarity` 函数计算查询向量与所有实体向量的相似度
+1. **向量存储**：实体添加时，`AddEntity` 会自动调用 Embedder 生成 embedding 并存储到 SQLite（以 JSON 格式存储在 BLOB 字段中）
+2. **向量搜索**：`SemanticSearch` 从 SQLite 查询所有实体，在内存中计算查询向量与每个实体向量的余弦相似度
 3. **结果排序**：按相似度从高到低排序，返回 top-K 个实体
 4. **图谱扩展**：为每个找到的实体，获取其在图谱中深度为 `maxDepth` 的子图关系
 
@@ -165,10 +164,11 @@ type Embedder interface {
 ## 数据存储
 
 - **图谱数据**：存储在 SQLite 数据库中（通过 `cayley-driver`）
-- **实体 Embedding（向量检索）**：存储在 DuckDB 数据库中（通过 `duckdb-driver`）
-  - 向量检索使用 `duckdb-driver` 的 `index.db` 共享数据库
-  - 所有 DuckDB 数据统一映射到 `./data/indexing/index.db`
+- **实体 Embedding（向量检索）**：存储在 SQLite 数据库中（通过 `sqlite3-driver` 和 GORM）
+  - 向量数据以 JSON 格式存储在 BLOB 字段中
+  - 数据库文件位置由 `sqlite3-driver` 自动管理，基于 `WorkingDir` 参数
   - 不同的业务模块通过表名区分（如 `graphstore_entities`）
+  - 使用 GORM ORM 进行数据库操作，支持自动迁移和索引管理
 
 ## 注意事项
 
