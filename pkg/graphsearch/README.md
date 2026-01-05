@@ -1,38 +1,33 @@
-# graphsearch
+# GraphStore
 
-基于 `cayley-driver` 和 `sqlite-driver` 的纯图谱存储系统，支持实体 embedding 存储和语义检索图谱。实现了完整的 **GraphRAG (Retrieval-Augmented Generation with Graphs)** 框架。
+基于 `cayley-driver` 和 `duckdb-driver` 的纯图谱存储系统，支持实体 embedding 存储和语义检索图谱。
 
 ## 功能特性
 
 - **图谱存储**：使用 `cayley-driver` 存储图谱关系（三元组）
-- **实体 Embedding**：使用 `sqlite-driver` 存储实体的 embedding 信息
+- **实体 Embedding**：使用 `duckdb-driver` 存储实体的 embedding 信息
 - **语义检索**：通过查询文本找到相似的实体，然后返回这些实体在图谱中的关系
 - **子图查询**：支持获取实体的子图（指定深度内的所有关系）
-- **GraphRAG 框架**：完整的图增强检索生成框架，包括：
-  - **Query Processor**：查询处理（实体识别、关系提取、查询分解、查询扩展）
-  - **Retriever**：多策略检索（启发式检索、学习式检索、混合策略）
-  - **Organizer**：结果组织（图剪枝、重排序、图增强、文本化）
-  - **Generator**：答案生成（基于判别、LLM、图结构、混合方法）
 
 ## 使用方法
 
-### 1. 创建 graphsearch 实例
+### 1. 创建 GraphStore 实例
 
 ```go
 import (
     "context"
-    "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
+    "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphstore"
 )
 
 // 创建 embedder（需要实现 Embedder 接口）
 embedder := &YourEmbedder{}
 
-// 创建 graphsearch
-store, err := graphsearch.New(graphsearch.Options{
+// 创建 GraphStore
+store, err := graphstore.New(graphstore.Options{
     Embedder:   embedder,
     WorkingDir: "./data",         // 工作目录，作为基础目录（必填）
-    GraphDB:    "graphsearch.db",  // 图谱数据库路径（可选，默认 "graphsearch.db"）
-    TableName:  "graphsearch_entities", // sqlite 表名（可选，默认 "graphsearch_entities"）
+    GraphDB:    "graphstore.db",  // 图谱数据库路径（可选，默认 "graphstore.db"）
+    TableName:  "graphstore_entities", // DuckDB 表名（可选，默认 "graphstore_entities"）
 })
 if err != nil {
     log.Fatal(err)
@@ -66,10 +61,10 @@ err = store.Link(ctx, "entity2", "works_at", "company1")
 
 ### 4. 向量检索图谱实体（语义检索）
 
-向量检索是 graphsearch 的核心功能，它通过以下步骤工作：
+向量检索是 GraphStore 的核心功能，它通过以下步骤工作：
 
 1. **生成查询向量**：使用 Embedder 将查询文本转换为向量
-2. **向量相似度搜索**：在 sqlite 的 `index.db` 数据库中，使用 `list_cosine_similarity` 函数查找最相似的实体
+2. **向量相似度搜索**：在 DuckDB 的 `index.db` 数据库中，使用 `list_cosine_similarity` 函数查找最相似的实体
 3. **获取图谱关系**：为每个找到的实体获取其在图谱中的关系（子图）
 
 ```go
@@ -98,8 +93,8 @@ for _, result := range results {
 
 **向量检索的工作原理**：
 
-1. **向量存储**：实体添加时，`AddEntity` 会自动调用 Embedder 生成 embedding 并存储到 sqlite
-2. **向量搜索**：`SemanticSearch` 使用 sqlite 的 `list_cosine_similarity` 函数计算查询向量与所有实体向量的相似度
+1. **向量存储**：实体添加时，`AddEntity` 会自动调用 Embedder 生成 embedding 并存储到 DuckDB
+2. **向量搜索**：`SemanticSearch` 使用 DuckDB 的 `list_cosine_similarity` 函数计算查询向量与所有实体向量的相似度
 3. **结果排序**：按相似度从高到低排序，返回 top-K 个实体
 4. **图谱扩展**：为每个找到的实体，获取其在图谱中深度为 `maxDepth` 的子图关系
 
@@ -170,214 +165,15 @@ type Embedder interface {
 ## 数据存储
 
 - **图谱数据**：存储在 SQLite 数据库中（通过 `cayley-driver`）
-- **实体 Embedding（向量检索）**：存储在 sqlite 数据库中（通过 `sqlite-driver`）
-  - 向量检索使用 `sqlite-driver` 的 `index.db` 共享数据库
-  - 所有 sqlite 数据统一映射到 `./testdata/data.db`
-  - 不同的业务模块通过表名区分（如 `graphsearch_entities`）
-
-## GraphRAG 使用指南
-
-GraphRAG 是一个完整的图增强检索生成框架，整合了查询处理、检索、组织和生成四个核心组件。
-
-### GraphRAG 基本使用
-
-```go
-// 执行完整的 GraphRAG 查询
-answer, err := store.GraphRAGQuery(ctx, "查询文本", nil)
-if err != nil {
-    log.Fatal(err)
-}
-
-fmt.Printf("答案: %s\n", answer.Answer)
-fmt.Printf("置信度: %.2f\n", answer.Confidence)
-fmt.Printf("来源数量: %d\n", len(answer.Sources))
-```
-
-### GraphRAG 高级配置
-
-```go
-// 自定义 GraphRAG 选项
-options := &graphsearch.GraphRAGOptions{
-    RetrievalOptions: &graphsearch.RetrievalOptions{
-        Limit:    20,                                    // 检索结果数量
-        MaxDepth: 3,                                    // 图遍历深度
-        Strategy: graphsearch.StrategyHybrid,            // 混合检索策略
-        SimilarityThreshold: 0.5,                      // 相似度阈值
-    },
-    OrganizationOptions: &graphsearch.OrganizationOptions{
-        EnablePruning:      true,                       // 启用图剪枝
-        EnableReranking:    true,                       // 启用重排序
-        EnableAugmentation: false,                     // 禁用图增强
-        EnableVerbalization: true,                     // 启用文本化
-        PruningOptions: &graphsearch.PruningOptions{
-            MaxNodes:         100,                      // 最大节点数
-            MaxEdges:         200,                      // 最大边数
-            MinScore:         0.3,                     // 最小分数阈值
-            KeepCoreEntities: true,                     // 保留核心实体
-        },
-        RerankingOptions: &graphsearch.RerankingOptions{
-            Method:            graphsearch.RerankByHybrid, // 混合重排序
-            TopK:              10,                        // TopK 结果
-            UseGraphStructure: true,                      // 使用图结构信息
-        },
-    },
-    GenerationOptions: &graphsearch.GenerationOptions{
-        Method:          graphsearch.MethodHybrid,  // 混合生成方法
-        MaxLength:       1000,                     // 最大生成长度
-        Temperature:     0.7,                      // LLM 温度参数
-        IncludeSources:  true,                     // 包含来源信息
-        UseGraphContext: true,                     // 使用图上下文
-    },
-}
-
-answer, err := store.GraphRAGQuery(ctx, "查询文本", options)
-```
-
-### GraphRAG 组件自定义
-
-```go
-// 获取并自定义各个组件
-queryProcessor := store.GetQueryProcessor()
-retriever := store.GetRetriever()
-organizer := store.GetOrganizer()
-generator := store.GetGenerator()
-
-// 设置自定义 LLM 生成器
-llmGenerator := &YourLLMGenerator{}
-store.SetLLMGenerator(llmGenerator)
-```
-
-### GraphRAG 检索策略
-
-```go
-// 1. 仅启发式检索（基于实体和关系直接查找）
-options.RetrievalOptions.Strategy = graphsearch.StrategyHeuristicOnly
-
-// 2. 仅学习式检索（基于向量相似度）
-options.RetrievalOptions.Strategy = graphsearch.StrategyLearningOnly
-
-// 3. 混合策略（结合两种方法）
-options.RetrievalOptions.Strategy = graphsearch.StrategyHybrid
-
-// 4. 自适应策略（根据查询特征自动选择）
-options.RetrievalOptions.Strategy = graphsearch.StrategyAdaptive
-```
-
-### GraphRAG 重排序方法
-
-```go
-// 按分数排序
-options.OrganizationOptions.RerankingOptions.Method = graphsearch.RerankByScore
-
-// 按中心性排序
-options.OrganizationOptions.RerankingOptions.Method = graphsearch.RerankByCentrality
-
-// 按多样性排序
-options.OrganizationOptions.RerankingOptions.Method = graphsearch.RerankByDiversity
-
-// 混合排序
-options.OrganizationOptions.RerankingOptions.Method = graphsearch.RerankByHybrid
-```
-
-### GraphRAG 生成方法
-
-```go
-// 基于判别的方法
-options.GenerationOptions.Method = graphsearch.MethodDiscrimination
-
-// 基于 LLM 的方法（需要设置 LLMGenerator）
-options.GenerationOptions.Method = graphsearch.MethodLLM
-
-// 基于图结构的方法
-options.GenerationOptions.Method = graphsearch.MethodGraph
-
-// 混合方法
-options.GenerationOptions.Method = graphsearch.MethodHybrid
-```
-
-### GraphRAG 便捷函数使用
-
-```go
-// 使用便捷函数构建选项并执行查询
-answer, err := store.GraphRAGQueryWithOptions(ctx, "查询文本",
-    graphsearch.WithRetrievalStrategy(graphsearch.StrategyHybrid),
-    graphsearch.WithRetrievalLimit(20),
-    graphsearch.WithRetrievalMaxDepth(3),
-    graphsearch.WithGenerationMethod(graphsearch.MethodHybrid),
-    graphsearch.WithRerankingMethod(graphsearch.RerankByHybrid),
-)
-
-// 或者使用 BuildGraphRAGOptions 构建选项
-options := graphsearch.BuildGraphRAGOptions(
-    graphsearch.WithRetrievalStrategy(graphsearch.StrategyHybrid),
-    graphsearch.WithRetrievalLimit(20),
-)
-answer, err := store.GraphRAGQuery(ctx, "查询文本", options)
-```
-
-### GraphRAG 完整示例
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "log"
-    "github.com/mozhou-tech/sqlite-ai-driver/pkg/graphsearch"
-)
-
-func main() {
-    ctx := context.Background()
-    
-    // 1. 创建 graphsearch 实例
-    embedder := &YourEmbedder{}
-    store, err := graphsearch.New(graphsearch.Options{
-        Embedder:   embedder,
-        WorkingDir: "./data",
-    })
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer store.Close()
-    
-    // 2. 初始化
-    if err := store.Initialize(ctx); err != nil {
-        log.Fatal(err)
-    }
-    
-    // 3. 添加实体和关系
-    store.AddEntity(ctx, "Alice", "Alice", map[string]any{"type": "person"})
-    store.AddEntity(ctx, "Bob", "Bob", map[string]any{"type": "person"})
-    store.AddEntity(ctx, "Company", "Tech Company", map[string]any{"type": "company"})
-    store.Link(ctx, "Alice", "knows", "Bob")
-    store.Link(ctx, "Bob", "works_at", "Company")
-    
-    // 4. 执行 GraphRAG 查询
-    answer, err := store.GraphRAGQuery(ctx, "Alice 认识谁？", nil)
-    if err != nil {
-        log.Fatal(err)
-    }
-    
-    // 5. 输出结果
-    fmt.Printf("问题: Alice 认识谁？\n")
-    fmt.Printf("答案: %s\n", answer.Answer)
-    fmt.Printf("置信度: %.2f\n", answer.Confidence)
-    
-    // 6. 查看来源
-    for i, source := range answer.Sources {
-        fmt.Printf("来源 %d: %s (ID: %s, 分数: %.2f)\n", 
-            i+1, source.Type, source.ID, source.Score)
-    }
-}
-```
+- **实体 Embedding（向量检索）**：存储在 DuckDB 数据库中（通过 `duckdb-driver`）
+  - 向量检索使用 `duckdb-driver` 的 `index.db` 共享数据库
+  - 所有 DuckDB 数据统一映射到 `./data/indexing/index.db`
+  - 不同的业务模块通过表名区分（如 `graphstore_entities`）
 
 ## 注意事项
 
-1. 调用 `Initialize()` 之前，graphsearch 未初始化，大部分操作会返回错误
+1. 调用 `Initialize()` 之前，GraphStore 未初始化，大部分操作会返回错误
 2. 如果提供了 `Embedder`，`AddEntity` 会自动生成 embedding
 3. `SemanticSearch` 只返回有 embedding 的实体（`embedding_status = 'completed'`）
 4. 子图查询使用 BFS 算法，深度从 0 开始计算
-5. GraphRAG 查询需要先初始化 graphsearch 实例
-6. 使用 LLM 生成方法时，需要先设置 `LLMGenerator`
 
