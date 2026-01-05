@@ -2,19 +2,21 @@ package lightrag
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
 
 	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
-	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
-	duckdb_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/duckdb-driver"
+	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
+	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 // --- Interfaces ---
@@ -165,41 +167,61 @@ type VectorSearchConfig struct {
 	Dimensions     int
 }
 
-// --- DuckDB Implementation ---
+// --- SQLite Implementation ---
 
-// duckdbDatabase 基于DuckDB的数据库实现
-type duckdbDatabase struct {
-	db          *sql.DB
+// DocumentModel GORM 模型，表示文档集合中的文档
+type DocumentModel struct {
+	ID              string    `gorm:"type:VARCHAR;primaryKey;not null"`
+	Content         string    `gorm:"type:TEXT"`
+	Metadata        string    `gorm:"type:TEXT"`                       // JSON 格式的元数据
+	ContentTokens   string    `gorm:"type:TEXT;column:content_tokens"` // 分词后的内容，用于 FTS
+	EmbeddingStatus string    `gorm:"type:VARCHAR;default:'pending';column:embedding_status"`
+	ChunkLength     int       `gorm:"type:INTEGER;column:chunk_length"`
+	Rev             int       `gorm:"column:_rev;default:1"`
+	CreatedAt       time.Time `gorm:"autoCreateTime"`
+}
+
+// sqliteDatabase 基于SQLite的数据库实现
+type sqliteDatabase struct {
+	db          *gorm.DB
 	graph       cayley_driver.Graph
-	collections []*duckdbCollection // 跟踪所有创建的集合，以便在关闭时停止它们的 worker
+	collections []*sqliteCollection // 跟踪所有创建的集合，以便在关闭时停止它们的 worker
 	mu          sync.Mutex          // 保护 collections 的并发访问
 }
 
 // CreateDatabase 创建数据库实例
-// 注意：数据库路径会被 duckdb-driver 统一映射到共享数据库文件 {WorkingDir}/indexing/index.db
-// 目录创建由 duckdb-driver 自动处理，无需在此处创建
+// 注意：数据库路径会被 sqlite3-driver 统一映射到共享数据库文件 {WorkingDir}/db/index.db
+// 目录创建由 sqlite3-driver 自动处理，无需在此处创建
 //
 // 数据库文件行为：
 // - 如果数据库文件已存在：会打开现有数据库，保留所有现有数据和表结构
-// - 如果数据库文件不存在：DuckDB 会自动创建新的数据库文件
-// - 表创建：使用 CREATE TABLE IF NOT EXISTS，如果表已存在则不会重新创建
-// - 列添加：如果表存在但缺少某些列（如 content_tokens、embedding_status），会自动添加（向后兼容）
+// - 如果数据库文件不存在：SQLite 会自动创建新的数据库文件
+// - 表创建：使用 GORM AutoMigrate，如果表已存在则不会重新创建
+// - 列添加：GORM 会自动处理列的增加（向后兼容）
 func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error) {
+	// 构建数据库路径
+	// sqlite3-driver 会自动处理路径映射，如果提供了 workingDir，会映射到 {workingDir}/db/index.db
+	dbPath := "index.db"
+	dsn := dbPath
+	if opts.WorkingDir != "" {
+		dsn = fmt.Sprintf("%s?workingDir=%s", dbPath, opts.WorkingDir)
+	}
 
-	// 打开DuckDB数据库
-	// 路径会被 duckdb-driver 统一映射到共享数据库，目录会自动创建
-	// 如果数据库文件已存在，会打开现有数据库；如果不存在，会自动创建
-	db, err := sql.Open("duckdb", duckdb_driver.INDEX_DB_FILE)
+	// 打开SQLite数据库，使用 GORM
+	// sqlite3-driver 会自动处理路径和 WAL 模式
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	// 初始化图数据库（如果需要）
-	// 使用 graphstore 中约定的数据库文件路径，只需要创建新的连接
 	var graph cayley_driver.Graph
 	if opts.GraphOptions != nil && opts.GraphOptions.Enabled {
 		if opts.WorkingDir == "" {
-			db.Close()
+			sqlDB, _ := db.DB()
+			if sqlDB != nil {
+				sqlDB.Close()
+			}
 			return nil, fmt.Errorf("WorkingDir is required when GraphOptions.Enabled is true")
 		}
 		// 使用 graphstore 约定的数据库文件路径 "graphstore.db"
@@ -207,71 +229,31 @@ func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error)
 		// 使用表前缀 "lightrag_" 以区分不同的数据
 		graph, err = cayley_driver.NewGraphWithNamespace(opts.WorkingDir, cayley_driver.GRAPH_DB_FILE, "lightrag_")
 		if err != nil {
-			db.Close()
+			sqlDB, _ := db.DB()
+			if sqlDB != nil {
+				sqlDB.Close()
+			}
 			return nil, fmt.Errorf("failed to create graph database: %w", err)
 		}
 	}
 
-	return &duckdbDatabase{
+	return &sqliteDatabase{
 		db:    db,
 		graph: graph,
 	}, nil
 }
 
-func (d *duckdbDatabase) Collection(ctx context.Context, name string, schema Schema) (Collection, error) {
-	// 创建表（如果不存在）
+func (d *sqliteDatabase) Collection(ctx context.Context, name string, schema Schema) (Collection, error) {
 	tableName := name
-	createTableSQL := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-			id VARCHAR PRIMARY KEY,
-			content TEXT,
-			metadata JSON,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			_rev INTEGER DEFAULT 1
-		)
-	`, tableName)
 
-	_, err := d.db.ExecContext(ctx, createTableSQL)
+	// 使用 GORM AutoMigrate 创建表（如果不存在）
+	// 使用 GORM 的 Table 方法指定表名进行迁移
+	err := d.db.Table(tableName).AutoMigrate(&DocumentModel{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create table: %w", err)
 	}
 
-	// 创建FTS索引（如果不存在）
-	// 注意：这里先不创建，等AddFulltextSearch时再创建
-	// 创建tokens列用于FTS
-	tokensColumn := "content_tokens"
-	// 使用 DuckDB 原生的 information_schema 查询列信息，避免触发 sqlite 扩展的 catalog 错误
-	checkColumnSQL := fmt.Sprintf(`
-		SELECT COUNT(*) 
-		FROM information_schema.columns 
-		WHERE table_name = '%s' AND column_name = ?
-	`, tableName)
-
-	var count int
-	err = d.db.QueryRowContext(ctx, checkColumnSQL, tokensColumn).Scan(&count)
-	if err == nil && count == 0 {
-		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s TEXT`, tableName, tokensColumn)
-		_, _ = d.db.ExecContext(ctx, alterTableSQL)
-	}
-
-	// 创建 embedding_status 列用于跟踪 embedding 状态
-	// 状态值: 'pending' (待处理), 'processing' (处理中), 'completed' (已完成), 'failed' (失败)
-	statusColumn := "embedding_status"
-	err = d.db.QueryRowContext(ctx, checkColumnSQL, statusColumn).Scan(&count)
-	if err == nil && count == 0 {
-		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s VARCHAR DEFAULT 'pending'`, tableName, statusColumn)
-		_, _ = d.db.ExecContext(ctx, alterTableSQL)
-	}
-
-	// 创建 chunk_length 列用于存储 chunk 长度
-	chunkLengthColumn := "chunk_length"
-	err = d.db.QueryRowContext(ctx, checkColumnSQL, chunkLengthColumn).Scan(&count)
-	if err == nil && count == 0 {
-		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s INTEGER`, tableName, chunkLengthColumn)
-		_, _ = d.db.ExecContext(ctx, alterTableSQL)
-	}
-
-	collection := &duckdbCollection{
+	collection := &sqliteCollection{
 		db:        d.db,
 		tableName: tableName,
 		schema:    schema,
@@ -286,7 +268,7 @@ func (d *duckdbDatabase) Collection(ctx context.Context, name string, schema Sch
 }
 
 // getEmbeddingLimiter 获取或初始化 embedding 速率限制器（每秒5次）
-func (c *duckdbCollection) getEmbeddingLimiter() *rate.Limiter {
+func (c *sqliteCollection) getEmbeddingLimiter() *rate.Limiter {
 	c.limiterOnce.Do(func() {
 		// 每秒5次，burst 为1（严格限制，不允许突发）
 		// rate.Limit(5) 表示每秒5次 = 每200ms一次
@@ -301,14 +283,14 @@ func (c *duckdbCollection) getEmbeddingLimiter() *rate.Limiter {
 	return c.embeddingLimiter
 }
 
-func (d *duckdbDatabase) Graph() GraphDatabase {
+func (d *sqliteDatabase) Graph() GraphDatabase {
 	if d.graph == nil {
 		return nil
 	}
-	return &duckdbGraphDatabase{graph: d.graph}
+	return &sqliteGraphDatabase{graph: d.graph}
 }
 
-func (d *duckdbDatabase) Close(ctx context.Context) error {
+func (d *sqliteDatabase) Close(ctx context.Context) error {
 	// 在关闭数据库之前，停止所有集合的后台 worker
 	d.mu.Lock()
 	for _, collection := range d.collections {
@@ -318,8 +300,11 @@ func (d *duckdbDatabase) Close(ctx context.Context) error {
 
 	var errs []error
 	if d.db != nil {
-		if err := d.db.Close(); err != nil {
-			errs = append(errs, err)
+		sqlDB, err := d.db.DB()
+		if err == nil && sqlDB != nil {
+			if err := sqlDB.Close(); err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 	if d.graph != nil {
@@ -333,12 +318,12 @@ func (d *duckdbDatabase) Close(ctx context.Context) error {
 	return nil
 }
 
-// duckdbCollection 基于DuckDB的集合实现
-type duckdbCollection struct {
-	db               *sql.DB
+// sqliteCollection 基于SQLite的集合实现
+type sqliteCollection struct {
+	db               *gorm.DB
 	tableName        string
 	schema           Schema
-	vectorSearches   []*duckdbVectorSearch // 存储所有注册的向量搜索配置
+	vectorSearches   []*sqliteVectorSearch // 存储所有注册的向量搜索配置
 	embeddingLimiter *rate.Limiter         // Embedding API 速率限制器（每秒5次）
 	limiterOnce      sync.Once             // 确保 limiter 只初始化一次
 
@@ -349,7 +334,7 @@ type duckdbCollection struct {
 	embeddingWorkerOnce   sync.Once
 }
 
-func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Document, error) {
+func (c *sqliteCollection) Insert(ctx context.Context, doc map[string]any) (Document, error) {
 	id, ok := doc["id"].(string)
 	if !ok {
 		return nil, fmt.Errorf("document must have 'id' field")
@@ -376,190 +361,138 @@ func (c *duckdbCollection) Insert(ctx context.Context, doc map[string]any) (Docu
 	}
 	metadataJSON, _ := json.Marshal(metadata)
 
-	insertSQL := fmt.Sprintf(`
-		INSERT INTO %s (id, content, metadata, _rev, embedding_status, chunk_length)
-		VALUES (?, ?, ?::JSON, 1, 'pending', ?)
-		ON CONFLICT (id) DO UPDATE SET
-			content = EXCLUDED.content,
-			metadata = EXCLUDED.metadata,
-			_rev = %s._rev + 1,
-			embedding_status = 'pending',
-			chunk_length = EXCLUDED.chunk_length
-	`, c.tableName, c.tableName)
-
-	_, err := c.db.ExecContext(ctx, insertSQL, id, content, string(metadataJSON), chunkLength)
-	if err != nil {
-		return nil, fmt.Errorf("failed to insert document: %w", err)
+	// 使用 sego 进行分词
+	tokens := ""
+	if content != "" {
+		tokens = sego.Tokenize(content)
 	}
 
-	// 更新tokens列
-	if content != "" {
-		tokens := duckdb_driver.TokenizeWithSego(content)
-		logrus.WithFields(logrus.Fields{
-			"id":     id,
-			"tokens": tokens,
-		}).Debug("Updating content_tokens for document")
-		updateSQL := fmt.Sprintf(`UPDATE %s SET content_tokens = ? WHERE id = ?`, c.tableName)
-		_, err = c.db.ExecContext(ctx, updateSQL, tokens, id)
-		if err != nil {
-			// 记录错误但不中断插入流程
-			logrus.WithError(err).Warnf("Failed to update content_tokens for document %s", id)
-		}
+	// 使用 GORM 进行插入或更新
+	model := &DocumentModel{
+		ID:              id,
+		Content:         content,
+		Metadata:        string(metadataJSON),
+		ContentTokens:   tokens,
+		EmbeddingStatus: "pending",
+		ChunkLength:     chunkLength,
+		Rev:             1,
+	}
+
+	// 使用 GORM 的 Save 方法（如果主键存在则更新，否则插入）
+	result := c.db.Table(c.tableName).WithContext(ctx).Save(model)
+	if result.Error != nil {
+		return nil, fmt.Errorf("failed to insert document: %w", result.Error)
+	}
+
+	// 如果是更新，需要增加 _rev
+	if result.RowsAffected > 0 {
+		c.db.Table(c.tableName).WithContext(ctx).
+			Where("id = ?", id).
+			Update("_rev", gorm.Expr("_rev + 1"))
 	}
 
 	// 启动后台 embedding worker（如果还没有启动）
 	c.startEmbeddingWorker(ctx)
 
-	// 不再立即处理 embedding，而是标记为 pending，由后台 worker 异步处理
-
-	return &duckdbDocument{
+	return &sqliteDocument{
 		id:      id,
 		data:    doc,
 		content: content,
 	}, nil
 }
 
-func (c *duckdbCollection) FindByID(ctx context.Context, id string) (Document, error) {
-	selectSQL := fmt.Sprintf(`
-		SELECT id, content, metadata
-		FROM %s
-		WHERE id = ?
-	`, c.tableName)
-
-	var docID, content string
-	var metadataVal any
-	err := c.db.QueryRowContext(ctx, selectSQL, id).Scan(&docID, &content, &metadataVal)
+func (c *sqliteCollection) FindByID(ctx context.Context, id string) (Document, error) {
+	var model DocumentModel
+	err := c.db.Table(c.tableName).WithContext(ctx).Where("id = ?", id).First(&model).Error
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to find document: %w", err)
 	}
 
 	doc := map[string]any{
-		"id":      docID,
-		"content": content,
+		"id":      model.ID,
+		"content": model.Content,
 	}
 
-	if metadataVal != nil {
-		switch v := metadataVal.(type) {
-		case string:
-			var metadata map[string]any
-			if err := json.Unmarshal([]byte(v), &metadata); err == nil {
-				for k, val := range metadata {
-					doc[k] = val
-				}
-			}
-		case []byte:
-			var metadata map[string]any
-			if err := json.Unmarshal(v, &metadata); err == nil {
-				for k, val := range metadata {
-					doc[k] = val
-				}
-			}
-		case map[string]any:
-			for k, val := range v {
+	if model.Metadata != "" {
+		var metadata map[string]any
+		if err := json.Unmarshal([]byte(model.Metadata), &metadata); err == nil {
+			for k, val := range metadata {
 				doc[k] = val
 			}
 		}
 	}
 
-	return &duckdbDocument{
-		id:      docID,
+	return &sqliteDocument{
+		id:      model.ID,
 		data:    doc,
-		content: content,
+		content: model.Content,
 	}, nil
 }
 
-func (c *duckdbCollection) Find(ctx context.Context, opts FindOptions) ([]Document, error) {
+func (c *sqliteCollection) Find(ctx context.Context, opts FindOptions) ([]Document, error) {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 100
 	}
 	offset := opts.Offset
 
-	selectSQL := fmt.Sprintf(`
-		SELECT id, content, metadata
-		FROM %s
-	`, c.tableName)
+	var models []DocumentModel
+	query := c.db.Table(c.tableName).WithContext(ctx)
 
 	// TODO: 实现 Selector 过滤
 
-	selectSQL += fmt.Sprintf(" ORDER BY created_at DESC LIMIT %d OFFSET %d", limit, offset)
+	query = query.Order("created_at DESC").Limit(limit).Offset(offset)
 
-	rows, err := c.db.QueryContext(ctx, selectSQL)
+	err := query.Find(&models).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to find documents: %w", err)
 	}
-	defer rows.Close()
 
 	var results []Document
-	for rows.Next() {
-		var docID, content string
-		var metadataVal any
-		if err := rows.Scan(&docID, &content, &metadataVal); err != nil {
-			continue
-		}
-
+	for _, model := range models {
 		doc := map[string]any{
-			"id":      docID,
-			"content": content,
+			"id":      model.ID,
+			"content": model.Content,
 		}
 
-		if metadataVal != nil {
-			switch v := metadataVal.(type) {
-			case string:
-				var metadata map[string]any
-				if err := json.Unmarshal([]byte(v), &metadata); err == nil {
-					for k, val := range metadata {
-						doc[k] = val
-					}
-				}
-			case []byte:
-				var metadata map[string]any
-				if err := json.Unmarshal(v, &metadata); err == nil {
-					for k, val := range metadata {
-						doc[k] = val
-					}
-				}
-			case map[string]any:
-				for k, val := range v {
+		if model.Metadata != "" {
+			var metadata map[string]any
+			if err := json.Unmarshal([]byte(model.Metadata), &metadata); err == nil {
+				for k, val := range metadata {
 					doc[k] = val
 				}
 			}
 		}
 
-		results = append(results, &duckdbDocument{
-			id:      docID,
+		results = append(results, &sqliteDocument{
+			id:      model.ID,
 			data:    doc,
-			content: content,
+			content: model.Content,
 		})
 	}
 
 	return results, nil
 }
 
-func (c *duckdbCollection) Delete(ctx context.Context, id string) error {
-	deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE id = ?", c.tableName)
-	_, err := c.db.ExecContext(ctx, deleteSQL, id)
+func (c *sqliteCollection) Delete(ctx context.Context, id string) error {
+	err := c.db.Table(c.tableName).WithContext(ctx).Where("id = ?", id).Delete(&DocumentModel{}).Error
 	if err != nil {
 		return fmt.Errorf("failed to delete document: %w", err)
 	}
 	return nil
 }
 
-func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any) ([]Document, error) {
+func (c *sqliteCollection) BulkUpsert(ctx context.Context, docs []map[string]any) ([]Document, error) {
 	if len(docs) == 0 {
 		return []Document{}, nil
 	}
 
-	tx, err := c.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
-
 	var results []Document
+	var models []DocumentModel
+
 	for _, doc := range docs {
 		id, ok := doc["id"].(string)
 		if !ok {
@@ -586,41 +519,43 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 		}
 		metadataJSON, _ := json.Marshal(metadata)
 
-		// 不使用 PrepareContext，直接使用 ExecContext
-		insertSQL := fmt.Sprintf(`
-			INSERT INTO %s (id, content, metadata, _rev, embedding_status, chunk_length)
-			VALUES (?, ?, ?::JSON, 1, 'pending', ?)
-			ON CONFLICT (id) DO UPDATE SET
-				content = EXCLUDED.content,
-				metadata = EXCLUDED.metadata,
-				_rev = %s._rev + 1,
-				embedding_status = 'pending',
-				chunk_length = EXCLUDED.chunk_length
-		`, c.tableName, c.tableName)
-
-		_, err := tx.ExecContext(ctx, insertSQL, id, content, string(metadataJSON), chunkLength)
-		if err != nil {
-			return nil, fmt.Errorf("failed to upsert document: %w", err)
-		}
-
-		// 更新tokens列
+		// 使用 sego 进行分词
+		tokens := ""
 		if content != "" {
-			tokens := duckdb_driver.TokenizeWithSego(content)
-			updateSQL := fmt.Sprintf(`UPDATE %s SET content_tokens = ? WHERE id = ?`, c.tableName)
-			_, _ = tx.ExecContext(ctx, updateSQL, tokens, id)
+			tokens = sego.Tokenize(content)
 		}
 
-		// 不再立即处理 embedding，而是标记为 pending，由后台 worker 异步处理
+		model := DocumentModel{
+			ID:              id,
+			Content:         content,
+			Metadata:        string(metadataJSON),
+			ContentTokens:   tokens,
+			EmbeddingStatus: "pending",
+			ChunkLength:     chunkLength,
+			Rev:             1,
+		}
+		models = append(models, model)
 
-		results = append(results, &duckdbDocument{
+		results = append(results, &sqliteDocument{
 			id:      id,
 			data:    doc,
 			content: content,
 		})
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	// 使用 GORM 批量保存
+	if len(models) > 0 {
+		err := c.db.Table(c.tableName).WithContext(ctx).Save(&models).Error
+		if err != nil {
+			return nil, fmt.Errorf("failed to upsert documents: %w", err)
+		}
+
+		// 更新 _rev 字段（对于已存在的记录）
+		for _, model := range models {
+			c.db.Table(c.tableName).WithContext(ctx).
+				Where("id = ?", model.ID).
+				Update("_rev", gorm.Expr("_rev + 1"))
+		}
 	}
 
 	// 启动后台 embedding worker（如果还没有启动）
@@ -633,126 +568,161 @@ func (c *duckdbCollection) BulkUpsert(ctx context.Context, docs []map[string]any
 	return results, nil
 }
 
-// duckdbDocument 文档实现
-type duckdbDocument struct {
+// sqliteDocument 文档实现
+type sqliteDocument struct {
 	id      string
 	data    map[string]any
 	content string
 }
 
-func (d *duckdbDocument) ID() string {
+func (d *sqliteDocument) ID() string {
 	return d.id
 }
 
-func (d *duckdbDocument) Data() map[string]any {
+func (d *sqliteDocument) Data() map[string]any {
 	return d.data
 }
 
-// duckdbFulltextSearch 全文搜索实现
-type duckdbFulltextSearch struct {
-	db        *sql.DB
+// sqliteFulltextSearch 全文搜索实现
+type sqliteFulltextSearch struct {
+	db        *gorm.DB
 	tableName string
 	config    FulltextSearchConfig
 }
 
 func AddFulltextSearch(collection Collection, config FulltextSearchConfig) (FulltextSearch, error) {
 	// 类型断言获取底层实现
-	duckdbColl, ok := collection.(*duckdbCollection)
+	sqliteColl, ok := collection.(*sqliteCollection)
 	if !ok {
-		return nil, fmt.Errorf("collection is not a duckdb collection")
+		return nil, fmt.Errorf("collection is not a sqlite collection")
 	}
 
-	// 创建FTS索引
-	err := duckdb_driver.CreateFTSIndexWithSego(
-		context.Background(),
-		duckdbColl.db,
-		duckdbColl.tableName,
-		"id",
-		"content",
-		"content_tokens",
-	)
+	// 创建 SQLite FTS5 虚拟表
+	ftsTableName := sqliteColl.tableName + "_fts"
+	createFTSSQL := fmt.Sprintf(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS %s USING fts5(
+			id UNINDEXED,
+			content,
+			content_tokens,
+			content_rowid=id
+		)
+	`, ftsTableName)
+
+	err := sqliteColl.db.Exec(createFTSSQL).Error
 	if err != nil {
-		// 如果索引已存在，忽略错误
+		// 如果表已存在，忽略错误
 		if !strings.Contains(err.Error(), "already exists") && !strings.Contains(err.Error(), "duplicate") {
-			return nil, fmt.Errorf("failed to create FTS index: %w", err)
+			return nil, fmt.Errorf("failed to create FTS table: %w", err)
 		}
 	}
+
+	// 创建触发器以同步数据到 FTS 表
+	triggerSQL := fmt.Sprintf(`
+		CREATE TRIGGER IF NOT EXISTS %s_fts_insert AFTER INSERT ON %s BEGIN
+			INSERT INTO %s(rowid, content, content_tokens) VALUES (new.id, new.content, new.content_tokens);
+		END;
+		CREATE TRIGGER IF NOT EXISTS %s_fts_update AFTER UPDATE ON %s BEGIN
+			UPDATE %s SET content = new.content, content_tokens = new.content_tokens WHERE rowid = new.id;
+		END;
+		CREATE TRIGGER IF NOT EXISTS %s_fts_delete AFTER DELETE ON %s BEGIN
+			DELETE FROM %s WHERE rowid = old.id;
+		END;
+	`, sqliteColl.tableName, sqliteColl.tableName, ftsTableName,
+		sqliteColl.tableName, sqliteColl.tableName, ftsTableName,
+		sqliteColl.tableName, sqliteColl.tableName, ftsTableName)
+
+	_ = sqliteColl.db.Exec(triggerSQL).Error
 
 	// 更新所有已存在文档的 content_tokens（如果它们还没有被填充）
-	// 这确保 FTS 索引能够正确索引所有文档
-	// 获取所有需要更新的文档
-	selectSQL := fmt.Sprintf(`
-		SELECT id, content 
-		FROM %s 
-		WHERE content IS NOT NULL AND (content_tokens IS NULL OR content_tokens = '')
-	`, duckdbColl.tableName)
+	var models []DocumentModel
+	sqliteColl.db.Table(sqliteColl.tableName).
+		Where("content IS NOT NULL AND (content_tokens IS NULL OR content_tokens = '')").
+		Find(&models)
 
-	rows, err := duckdbColl.db.QueryContext(context.Background(), selectSQL)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var id, content string
-			if err := rows.Scan(&id, &content); err == nil && content != "" {
-				tokens := duckdb_driver.TokenizeWithSego(content)
-				updateSQL := fmt.Sprintf(`UPDATE %s SET content_tokens = ? WHERE id = ?`, duckdbColl.tableName)
-				_, _ = duckdbColl.db.ExecContext(context.Background(), updateSQL, tokens, id)
-			}
+	for _, model := range models {
+		if model.Content != "" {
+			tokens := sego.Tokenize(model.Content)
+			sqliteColl.db.Table(sqliteColl.tableName).
+				Where("id = ?", model.ID).
+				Update("content_tokens", tokens)
 		}
 	}
 
-	return &duckdbFulltextSearch{
-		db:        duckdbColl.db,
-		tableName: duckdbColl.tableName,
+	// 同步现有数据到 FTS 表
+	syncSQL := fmt.Sprintf(`
+		INSERT OR REPLACE INTO %s(rowid, content, content_tokens)
+		SELECT id, content, content_tokens FROM %s WHERE content IS NOT NULL
+	`, ftsTableName, sqliteColl.tableName)
+	_ = sqliteColl.db.Exec(syncSQL).Error
+
+	return &sqliteFulltextSearch{
+		db:        sqliteColl.db,
+		tableName: sqliteColl.tableName,
 		config:    config,
 	}, nil
 }
 
-func (f *duckdbFulltextSearch) FindWithScores(ctx context.Context, query string, opts FulltextSearchOptions) ([]FulltextSearchResult, error) {
+func (f *sqliteFulltextSearch) FindWithScores(ctx context.Context, query string, opts FulltextSearchOptions) ([]FulltextSearchResult, error) {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 10
 	}
 
-	// 使用sego分词搜索
-	ids, err := duckdb_driver.SearchWithSego(ctx, f.db, f.tableName, query, "content", "content_tokens", limit*2) // 获取更多结果以便过滤
+	// 使用 sego 分词查询
+	queryTokens := sego.Tokenize(query)
+	ftsTableName := f.tableName + "_fts"
+
+	// 使用 SQLite FTS5 进行搜索
+	searchSQL := fmt.Sprintf(`
+		SELECT 
+			d.id,
+			d.content,
+			d.metadata,
+			rank
+		FROM %s fts
+		JOIN %s d ON fts.rowid = d.id
+		WHERE %s MATCH ?
+		ORDER BY rank
+		LIMIT ?
+	`, ftsTableName, f.tableName, ftsTableName)
+
+	var results []FulltextSearchResult
+	rows, err := f.db.Raw(searchSQL, queryTokens, limit*2).Rows()
 	if err != nil {
 		return nil, fmt.Errorf("failed to search: %w", err)
 	}
+	defer rows.Close()
 
-	var results []FulltextSearchResult
-	for i, id := range ids {
-		// 获取文档
-		selectSQL := fmt.Sprintf(`SELECT id, content, metadata FROM %s WHERE id = ?`, f.tableName)
-		var docID, content string
-		var metadataVal any
-		err := f.db.QueryRowContext(ctx, selectSQL, id).Scan(&docID, &content, &metadataVal)
-		if err != nil {
+	var models []struct {
+		ID       string
+		Content  string
+		Metadata string
+		Rank     float64
+	}
+
+	for rows.Next() {
+		var model struct {
+			ID       string
+			Content  string
+			Metadata string
+			Rank     float64
+		}
+		if err := rows.Scan(&model.ID, &model.Content, &model.Metadata, &model.Rank); err != nil {
 			continue
 		}
+		models = append(models, model)
+	}
 
+	for _, model := range models {
 		doc := map[string]any{
-			"id":      docID,
-			"content": content,
+			"id":      model.ID,
+			"content": model.Content,
 		}
 
-		if metadataVal != nil {
-			switch v := metadataVal.(type) {
-			case string:
-				var metadata map[string]any
-				if err := json.Unmarshal([]byte(v), &metadata); err == nil {
-					for k, val := range metadata {
-						doc[k] = val
-					}
-				}
-			case []byte:
-				var metadata map[string]any
-				if err := json.Unmarshal(v, &metadata); err == nil {
-					for k, val := range metadata {
-						doc[k] = val
-					}
-				}
-			case map[string]any:
-				for k, val := range v {
+		if model.Metadata != "" {
+			var metadata map[string]any
+			if err := json.Unmarshal([]byte(model.Metadata), &metadata); err == nil {
+				for k, val := range metadata {
 					doc[k] = val
 				}
 			}
@@ -762,12 +732,7 @@ func (f *duckdbFulltextSearch) FindWithScores(ctx context.Context, query string,
 		if opts.Selector != nil && len(opts.Selector) > 0 {
 			matched := true
 			for key, expectedValue := range opts.Selector {
-				// 检查 metadata 中的值
 				actualValue, exists := doc[key]
-				if !exists {
-					// 如果 metadata 中没有，检查是否在顶层 doc 中
-					actualValue, exists = doc[key]
-				}
 				if !exists || actualValue != expectedValue {
 					matched = false
 					break
@@ -778,19 +743,18 @@ func (f *duckdbFulltextSearch) FindWithScores(ctx context.Context, query string,
 			}
 		}
 
-		// 简单的分数计算（基于位置，越靠前分数越高）
-		score := 1.0 / float64(i+1)
+		// 使用 FTS5 的 rank 分数，归一化到 0-1 范围
+		score := 1.0 / (1.0 + model.Rank)
 
 		results = append(results, FulltextSearchResult{
-			Document: &duckdbDocument{
-				id:      docID,
+			Document: &sqliteDocument{
+				id:      model.ID,
 				data:    doc,
-				content: content,
+				content: model.Content,
 			},
 			Score: score,
 		})
 
-		// 如果已经达到限制，停止
 		if len(results) >= limit {
 			break
 		}
@@ -799,60 +763,53 @@ func (f *duckdbFulltextSearch) FindWithScores(ctx context.Context, query string,
 	return results, nil
 }
 
-func (f *duckdbFulltextSearch) Close() error {
-	// DuckDB的FTS索引不需要显式关闭
+func (f *sqliteFulltextSearch) Close() error {
+	// SQLite FTS5 表不需要显式关闭
 	return nil
 }
 
-// duckdbVectorSearch 向量搜索实现
-type duckdbVectorSearch struct {
-	db        *sql.DB
+// sqliteVectorSearch 向量搜索实现
+type sqliteVectorSearch struct {
+	db        *gorm.DB
 	tableName string
 	config    VectorSearchConfig
 }
 
 func AddVectorSearch(collection Collection, config VectorSearchConfig) (VectorSearch, error) {
-	duckdbColl, ok := collection.(*duckdbCollection)
+	sqliteColl, ok := collection.(*sqliteCollection)
 	if !ok {
-		return nil, fmt.Errorf("collection is not a duckdb collection")
+		return nil, fmt.Errorf("collection is not a sqlite collection")
 	}
 
-	// 检查并创建vector列
+	// 检查并创建vector列（SQLite 使用 TEXT 存储 JSON 格式的向量数组）
 	vectorColumn := "vector_" + config.Identifier
-	// 使用 DuckDB 原生的 information_schema 查询列信息，避免触发 sqlite 扩展的 catalog 错误
-	checkColumnSQL := fmt.Sprintf(`
-		SELECT COUNT(*) 
-		FROM information_schema.columns 
-		WHERE table_name = '%s' AND column_name = ?
-	`, duckdbColl.tableName)
+	// 使用 GORM 检查列是否存在（通过尝试查询）
+	var count int64
+	sqliteColl.db.Table(sqliteColl.tableName).
+		Select("COUNT(*)").Where("1=0").Count(&count) // 先检查表是否存在
 
-	var count int
-	err := duckdbColl.db.QueryRowContext(context.Background(), checkColumnSQL, vectorColumn).Scan(&count)
-	if err == nil && count == 0 {
-		// 创建vector列
-		alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s FLOAT[]`, duckdbColl.tableName, vectorColumn)
-		_, err = duckdbColl.db.ExecContext(context.Background(), alterTableSQL)
-		if err != nil {
-			return nil, fmt.Errorf("failed to add vector column: %w", err)
-		}
-	}
+	// 尝试添加列（如果不存在，GORM 会自动处理）
+	// SQLite 不支持直接检查列是否存在，我们使用 ALTER TABLE IF NOT EXISTS 的变通方法
+	// 由于 SQLite 的限制，我们直接尝试添加列，如果已存在会失败但可以忽略
+	alterTableSQL := fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s TEXT`, sqliteColl.tableName, vectorColumn)
+	_ = sqliteColl.db.Exec(alterTableSQL).Error // 忽略错误，列可能已存在
 
-	vectorSearch := &duckdbVectorSearch{
-		db:        duckdbColl.db,
-		tableName: duckdbColl.tableName,
+	vectorSearch := &sqliteVectorSearch{
+		db:        sqliteColl.db,
+		tableName: sqliteColl.tableName,
 		config:    config,
 	}
 
 	// 注册向量搜索到集合中，以便在插入时自动计算向量
-	duckdbColl.vectorSearches = append(duckdbColl.vectorSearches, vectorSearch)
+	sqliteColl.vectorSearches = append(sqliteColl.vectorSearches, vectorSearch)
 
 	// 启动后台 embedding worker（如果还没有启动）
-	duckdbColl.startEmbeddingWorker(context.Background())
+	sqliteColl.startEmbeddingWorker(context.Background())
 
 	return vectorSearch, nil
 }
 
-func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, opts VectorSearchOptions) ([]VectorSearchResult, error) {
+func (v *sqliteVectorSearch) Search(ctx context.Context, embedding []float64, opts VectorSearchOptions) ([]VectorSearchResult, error) {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = 10
@@ -860,47 +817,17 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 
 	vectorColumn := "vector_" + v.config.Identifier
 
-	// Convert []float64 to string format that DuckDB can parse
-	// DuckDB requires FLOAT[] type, but go-duckdb driver doesn't support []float64 directly
-	// So we convert to string format and use CAST in SQL
-	var vectorArg interface{}
 	if len(embedding) == 0 {
 		return nil, fmt.Errorf("empty embedding vector")
-	} else {
-		// Convert []float64 to string format that DuckDB can parse
-		// Format: [1.0, 2.0, 3.0]
-		vectorStr := "["
-		for i, v := range embedding {
-			if i > 0 {
-				vectorStr += ", "
-			}
-			vectorStr += fmt.Sprintf("%g", v)
-		}
-		vectorStr += "]"
-		vectorArg = vectorStr
 	}
 
-	// 使用DuckDB的list_cosine_similarity进行向量搜索
-	// 只查询 embedding_status = 'completed' 的文档，确保只返回已成功生成 embedding 的文档
-	sqlQuery := fmt.Sprintf(`
-		SELECT 
-			id,
-			content,
-			metadata,
-			1 - list_cosine_similarity(%s, ?::FLOAT[]) as distance
-		FROM %s
-		WHERE %s IS NOT NULL AND embedding_status = 'completed'
-		ORDER BY list_cosine_similarity(%s, ?::FLOAT[]) DESC
-		LIMIT ?
-	`, vectorColumn, v.tableName, vectorColumn, vectorColumn)
-
-	logrus.WithFields(logrus.Fields{
-		"table_name":    v.tableName,
-		"vector_column": vectorColumn,
-		"limit":         limit * 2,
-	}).Debug("Executing vector search query")
-
-	rows, err := v.db.QueryContext(ctx, sqlQuery, vectorArg, vectorArg, limit*2) // 获取更多结果以便过滤
+	// SQLite 使用 TEXT 存储 JSON 格式的向量数组
+	// 我们需要查询所有候选文档，然后在应用层计算余弦相似度
+	// 查询所有 embedding_status = 'completed' 的文档
+	var models []DocumentModel
+	err := v.db.Table(v.tableName).WithContext(ctx).
+		Where(fmt.Sprintf("%s IS NOT NULL AND embedding_status = ?", vectorColumn), "completed").
+		Find(&models).Error
 	if err != nil {
 		logrus.WithError(err).WithFields(logrus.Fields{
 			"table_name":    v.tableName,
@@ -908,44 +835,69 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 		}).Error("Vector search query failed")
 		return nil, fmt.Errorf("failed to search vectors: %w", err)
 	}
-	defer rows.Close()
 
-	var results []VectorSearchResult
-	resultCount := 0
-	for rows.Next() {
-		resultCount++
-		var id, content string
-		var metadataVal any
-		var distance float64
+	// 在内存中计算余弦相似度并排序
+	type candidateResult struct {
+		model  DocumentModel
+		score  float64
+		vector []float64
+	}
 
-		err := rows.Scan(&id, &content, &metadataVal, &distance)
-		if err != nil {
+	var candidates []candidateResult
+	for _, model := range models {
+		// 从 JSON 字符串解析向量
+		var storedVector []float64
+		// 尝试从 vectorColumn 字段读取向量
+		// 由于 GORM 模型中没有这个动态字段，我们需要使用 Raw SQL 查询
+		var vectorJSON string
+		querySQL := fmt.Sprintf("SELECT %s FROM %s WHERE id = ?", vectorColumn, v.tableName)
+		err := v.db.Raw(querySQL, model.ID).Scan(&vectorJSON).Error
+		if err != nil || vectorJSON == "" {
 			continue
 		}
 
-		doc := map[string]any{
-			"id":      id,
-			"content": content,
+		if err := json.Unmarshal([]byte(vectorJSON), &storedVector); err != nil {
+			continue
 		}
 
-		if metadataVal != nil {
-			switch v := metadataVal.(type) {
-			case string:
-				var metadata map[string]any
-				if err := json.Unmarshal([]byte(v), &metadata); err == nil {
-					for k, val := range metadata {
-						doc[k] = val
-					}
-				}
-			case []byte:
-				var metadata map[string]any
-				if err := json.Unmarshal(v, &metadata); err == nil {
-					for k, val := range metadata {
-						doc[k] = val
-					}
-				}
-			case map[string]any:
-				for k, val := range v {
+		if len(storedVector) != len(embedding) {
+			continue
+		}
+
+		// 计算余弦相似度
+		score := cosineSimilarity(embedding, storedVector)
+		candidates = append(candidates, candidateResult{
+			model:  model,
+			score:  score,
+			vector: storedVector,
+		})
+	}
+
+	// 按分数排序
+	for i := 0; i < len(candidates)-1; i++ {
+		for j := i + 1; j < len(candidates); j++ {
+			if candidates[i].score < candidates[j].score {
+				candidates[i], candidates[j] = candidates[j], candidates[i]
+			}
+		}
+	}
+
+	// 限制结果数量
+	if len(candidates) > limit*2 {
+		candidates = candidates[:limit*2]
+	}
+
+	var results []VectorSearchResult
+	for _, candidate := range candidates {
+		doc := map[string]any{
+			"id":      candidate.model.ID,
+			"content": candidate.model.Content,
+		}
+
+		if candidate.model.Metadata != "" {
+			var metadata map[string]any
+			if err := json.Unmarshal([]byte(candidate.model.Metadata), &metadata); err == nil {
+				for k, val := range metadata {
 					doc[k] = val
 				}
 			}
@@ -966,16 +918,13 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 			}
 		}
 
-		// 将distance转换为similarity score
-		score := 1.0 - distance
-
 		results = append(results, VectorSearchResult{
-			Document: &duckdbDocument{
-				id:      id,
+			Document: &sqliteDocument{
+				id:      candidate.model.ID,
 				data:    doc,
-				content: content,
+				content: candidate.model.Content,
 			},
-			Score: score,
+			Score: candidate.score,
 		})
 
 		if len(results) >= limit {
@@ -986,7 +935,7 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 	logrus.WithFields(logrus.Fields{
 		"table_name":       v.tableName,
 		"vector_column":    vectorColumn,
-		"total_rows":       resultCount,
+		"total_candidates": len(candidates),
 		"filtered_results": len(results),
 		"limit":            limit,
 	}).Info("Vector search completed")
@@ -994,28 +943,28 @@ func (v *duckdbVectorSearch) Search(ctx context.Context, embedding []float64, op
 	return results, nil
 }
 
-func (v *duckdbVectorSearch) Close() error {
+func (v *sqliteVectorSearch) Close() error {
 	return nil
 }
 
-// duckdbGraphDatabase 图数据库实现
-type duckdbGraphDatabase struct {
+// sqliteGraphDatabase 图数据库实现
+type sqliteGraphDatabase struct {
 	graph cayley_driver.Graph
 }
 
-func (g *duckdbGraphDatabase) Link(ctx context.Context, subject, predicate, object string) error {
+func (g *sqliteGraphDatabase) Link(ctx context.Context, subject, predicate, object string) error {
 	return g.graph.Link(ctx, subject, predicate, object)
 }
 
-func (g *duckdbGraphDatabase) GetNeighbors(ctx context.Context, node, predicate string) ([]string, error) {
+func (g *sqliteGraphDatabase) GetNeighbors(ctx context.Context, node, predicate string) ([]string, error) {
 	return g.graph.GetNeighbors(ctx, node, predicate)
 }
 
-func (g *duckdbGraphDatabase) GetInNeighbors(ctx context.Context, node, predicate string) ([]string, error) {
+func (g *sqliteGraphDatabase) GetInNeighbors(ctx context.Context, node, predicate string) ([]string, error) {
 	return g.graph.GetInNeighbors(ctx, node, predicate)
 }
 
-func (g *duckdbGraphDatabase) AllTriples(ctx context.Context) ([]GraphQueryResult, error) {
+func (g *sqliteGraphDatabase) AllTriples(ctx context.Context) ([]GraphQueryResult, error) {
 	triples, err := g.graph.AllTriples(ctx)
 	if err != nil {
 		return nil, err
@@ -1031,12 +980,12 @@ func (g *duckdbGraphDatabase) AllTriples(ctx context.Context) ([]GraphQueryResul
 	return results, nil
 }
 
-func (g *duckdbGraphDatabase) Query() GraphQuery {
-	return &duckdbGraphQuery{graph: g.graph}
+func (g *sqliteGraphDatabase) Query() GraphQuery {
+	return &sqliteGraphQuery{graph: g.graph}
 }
 
-// duckdbGraphQuery 图查询实现
-type duckdbGraphQuery struct {
+// sqliteGraphQuery 图查询实现
+type sqliteGraphQuery struct {
 	graph     cayley_driver.Graph
 	startNode string
 	steps     []queryStep
@@ -1047,16 +996,16 @@ type queryStep struct {
 	predicate string
 }
 
-func (q *duckdbGraphQuery) V(node string) GraphQuery {
-	return &duckdbGraphQuery{
+func (q *sqliteGraphQuery) V(node string) GraphQuery {
+	return &sqliteGraphQuery{
 		graph:     q.graph,
 		startNode: node,
 		steps:     q.steps,
 	}
 }
 
-func (q *duckdbGraphQuery) Both() GraphQuery {
-	return &duckdbGraphQuery{
+func (q *sqliteGraphQuery) Both() GraphQuery {
+	return &sqliteGraphQuery{
 		graph:     q.graph,
 		startNode: q.startNode,
 		steps: append(q.steps, queryStep{
@@ -1066,8 +1015,8 @@ func (q *duckdbGraphQuery) Both() GraphQuery {
 	}
 }
 
-func (q *duckdbGraphQuery) In(predicate string) GraphQuery {
-	return &duckdbGraphQuery{
+func (q *sqliteGraphQuery) In(predicate string) GraphQuery {
+	return &sqliteGraphQuery{
 		graph:     q.graph,
 		startNode: q.startNode,
 		steps: append(q.steps, queryStep{
@@ -1077,8 +1026,8 @@ func (q *duckdbGraphQuery) In(predicate string) GraphQuery {
 	}
 }
 
-func (q *duckdbGraphQuery) Out(predicate string) GraphQuery {
-	return &duckdbGraphQuery{
+func (q *sqliteGraphQuery) Out(predicate string) GraphQuery {
+	return &sqliteGraphQuery{
 		graph:     q.graph,
 		startNode: q.startNode,
 		steps: append(q.steps, queryStep{
@@ -1088,7 +1037,7 @@ func (q *duckdbGraphQuery) Out(predicate string) GraphQuery {
 	}
 }
 
-func (q *duckdbGraphQuery) All(ctx context.Context) ([]GraphQueryResult, error) {
+func (q *sqliteGraphQuery) All(ctx context.Context) ([]GraphQueryResult, error) {
 	if q.startNode == "" {
 		return nil, fmt.Errorf("query must start with V(node)")
 	}
@@ -1162,7 +1111,7 @@ func (q *duckdbGraphQuery) All(ctx context.Context) ([]GraphQueryResult, error) 
 }
 
 // startEmbeddingWorker 启动后台 embedding worker（只启动一次）
-func (c *duckdbCollection) startEmbeddingWorker(ctx context.Context) {
+func (c *sqliteCollection) startEmbeddingWorker(ctx context.Context) {
 	c.embeddingWorkerOnce.Do(func() {
 		workerCtx, cancel := context.WithCancel(context.Background())
 		c.embeddingWorkerCtx = workerCtx
@@ -1175,7 +1124,7 @@ func (c *duckdbCollection) startEmbeddingWorker(ctx context.Context) {
 }
 
 // stopEmbeddingWorker 停止后台 embedding worker
-func (c *duckdbCollection) stopEmbeddingWorker() {
+func (c *sqliteCollection) stopEmbeddingWorker() {
 	if c.embeddingWorkerCancel != nil {
 		c.embeddingWorkerCancel()
 		c.embeddingWorkerWg.Wait()
@@ -1184,7 +1133,7 @@ func (c *duckdbCollection) stopEmbeddingWorker() {
 }
 
 // embeddingWorker 后台 worker，定期检查并处理 pending 状态的 embedding
-func (c *duckdbCollection) embeddingWorker(ctx context.Context) {
+func (c *sqliteCollection) embeddingWorker(ctx context.Context) {
 	defer c.embeddingWorkerWg.Done()
 
 	ticker := time.NewTicker(2 * time.Second) // 每2秒检查一次
@@ -1201,7 +1150,7 @@ func (c *duckdbCollection) embeddingWorker(ctx context.Context) {
 }
 
 // processPendingEmbeddings 处理所有 pending 状态的 embedding
-func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
+func (c *sqliteCollection) processPendingEmbeddings(ctx context.Context) {
 	if len(c.vectorSearches) == 0 {
 		return
 	}
@@ -1210,23 +1159,22 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 	processCtx := context.Background()
 
 	// 查询所有 pending 状态的文档，限制每次处理的数量（并发处理100个）
-	selectSQL := fmt.Sprintf(`
-		SELECT id, content, metadata
-		FROM %s
-		WHERE embedding_status = 'pending'
-		LIMIT 100
-	`, c.tableName)
-
-	rows, err := c.db.QueryContext(processCtx, selectSQL)
+	var models []DocumentModel
+	err := c.db.Table(c.tableName).WithContext(processCtx).
+		Where("embedding_status = ?", "pending").
+		Limit(100).
+		Find(&models).Error
 	if err != nil {
 		// 如果数据库已关闭，这是预期的行为，不需要记录错误
-		if err.Error() == "sql: database is closed" {
-			return
+		sqlDB, _ := c.db.DB()
+		if sqlDB != nil {
+			if err.Error() == "sql: database is closed" {
+				return
+			}
 		}
 		logrus.WithError(err).Error("Failed to query pending embeddings")
 		return
 	}
-	defer rows.Close()
 
 	var pendingDocs []struct {
 		id       string
@@ -1234,16 +1182,12 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 		metadata string
 	}
 
-	for rows.Next() {
-		var id, content, metadata string
-		if err := rows.Scan(&id, &content, &metadata); err != nil {
-			continue
-		}
+	for _, model := range models {
 		pendingDocs = append(pendingDocs, struct {
 			id       string
 			content  string
 			metadata string
-		}{id: id, content: content, metadata: metadata})
+		}{id: model.ID, content: model.Content, metadata: model.Metadata})
 	}
 
 	if len(pendingDocs) == 0 {
@@ -1279,16 +1223,16 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 			}
 
 			// 将状态更新为 processing
-			updateStatusSQL := fmt.Sprintf(`UPDATE %s SET embedding_status = 'processing' WHERE id = ? AND embedding_status = 'pending'`, c.tableName)
-			result, err := c.db.ExecContext(processCtx, updateStatusSQL, doc.id)
-			if err != nil {
-				logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status to processing")
+			result := c.db.Table(c.tableName).WithContext(processCtx).
+				Where("id = ? AND embedding_status = ?", doc.id, "pending").
+				Update("embedding_status", "processing")
+			if result.Error != nil {
+				logrus.WithError(result.Error).WithField("doc_id", doc.id).Error("Failed to update embedding status to processing")
 				return nil // 不返回错误，继续处理其他文档
 			}
 
 			// 检查是否成功更新（可能被其他 worker 处理了）
-			rowsAffected, _ := result.RowsAffected()
-			if rowsAffected == 0 {
+			if result.RowsAffected == 0 {
 				return nil // 文档已被其他 worker 处理
 			}
 
@@ -1299,8 +1243,9 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 					"content_len": len([]rune(doc.content)),
 				}).Debug("Skipping embedding for chunk that is too short (<=10 characters)")
 				// 直接标记为 completed，跳过嵌入
-				updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = 'completed' WHERE id = ?`, c.tableName)
-				_, err = c.db.ExecContext(processCtx, updateStatusSQL, doc.id)
+				err = c.db.Table(c.tableName).WithContext(processCtx).
+					Where("id = ?", doc.id).
+					Update("embedding_status", "completed").Error
 				if err != nil {
 					logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status to completed")
 				}
@@ -1367,18 +1312,17 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 				}
 
 				if len(embedding) > 0 {
-					// 转换为字符串格式
-					vectorStr := "["
-					for i, v := range embedding {
-						if i > 0 {
-							vectorStr += ", "
-						}
-						vectorStr += fmt.Sprintf("%g", v)
+					// 转换为 JSON 格式存储
+					vectorJSON, err := json.Marshal(embedding)
+					if err != nil {
+						logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to marshal embedding")
+						allSuccess = false
+						continue
 					}
-					vectorStr += "]"
 					vectorColumn := "vector_" + vs.config.Identifier
-					updateSQL := fmt.Sprintf(`UPDATE %s SET %s = ?::FLOAT[] WHERE id = ?`, c.tableName, vectorColumn)
-					_, err = c.db.ExecContext(processCtx, updateSQL, vectorStr, doc.id)
+					err = c.db.Table(c.tableName).WithContext(processCtx).
+						Where("id = ?", doc.id).
+						Update(vectorColumn, string(vectorJSON)).Error
 					if err != nil {
 						logrus.WithError(err).WithFields(logrus.Fields{
 							"doc_id":        doc.id,
@@ -1403,8 +1347,9 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 			if !allSuccess {
 				status = "failed"
 			}
-			updateStatusSQL = fmt.Sprintf(`UPDATE %s SET embedding_status = ? WHERE id = ?`, c.tableName)
-			_, err = c.db.ExecContext(processCtx, updateStatusSQL, status, doc.id)
+			err = c.db.Table(c.tableName).WithContext(processCtx).
+				Where("id = ?", doc.id).
+				Update("embedding_status", status).Error
 			if err != nil {
 				logrus.WithError(err).WithField("doc_id", doc.id).Error("Failed to update embedding status")
 			}
@@ -1419,26 +1364,42 @@ func (c *duckdbCollection) processPendingEmbeddings(ctx context.Context) {
 }
 
 // countPendingEmbeddings 统计 pending 或 processing 状态的嵌入数量
-func (c *duckdbCollection) countPendingEmbeddings(ctx context.Context) (int, error) {
+func (c *sqliteCollection) countPendingEmbeddings(ctx context.Context) (int, error) {
 	if len(c.vectorSearches) == 0 {
 		return 0, nil
 	}
 
-	selectSQL := fmt.Sprintf(`
-		SELECT COUNT(*) 
-		FROM %s
-		WHERE embedding_status IN ('pending', 'processing')
-	`, c.tableName)
-
-	var count int
-	err := c.db.QueryRowContext(ctx, selectSQL).Scan(&count)
+	var count int64
+	err := c.db.Table(c.tableName).WithContext(ctx).
+		Where("embedding_status IN ?", []string{"pending", "processing"}).
+		Count(&count).Error
 	if err != nil {
 		// 如果数据库已关闭，这是预期的行为
-		if err.Error() == "sql: database is closed" {
-			return 0, nil
+		sqlDB, _ := c.db.DB()
+		if sqlDB != nil {
+			if err.Error() == "sql: database is closed" {
+				return 0, nil
+			}
 		}
 		return 0, fmt.Errorf("failed to count pending embeddings: %w", err)
 	}
 
-	return count, nil
+	return int(count), nil
+}
+
+// cosineSimilarity 计算两个向量的余弦相似度
+func cosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) {
+		return 0.0
+	}
+	var dotProduct, normA, normB float64
+	for i := range a {
+		dotProduct += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+	if normA == 0 || normB == 0 {
+		return 0.0
+	}
+	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
 }
