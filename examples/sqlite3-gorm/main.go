@@ -7,31 +7,10 @@ import (
 	"time"
 
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver" // 导入以注册驱动
-	"gorm.io/driver/sqlite"
+	sqlite3driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
-
-// openSQLite3 打开 SQLite3 数据库连接，使用自定义的 sqlite3-driver
-// 这个函数类似于 duckdb.Open，返回一个 GORM Dialector
-// 由于 gorm.io/driver/sqlite 内部使用 modernc.org/sqlite（注册为 "sqlite"），
-// 而我们的驱动注册为 "sqlite3"，我们需要创建一个自定义 Dialector
-func openSQLite3(dsn string) gorm.Dialector {
-	// 创建一个自定义 Dialector，使用我们注册的 "sqlite3" 驱动
-	// 我们通过创建一个新的 sqlite.Dialector 并设置其内部连接来实现
-	// 但 sqlite.Dialector 不支持直接设置驱动名称，所以我们使用另一种方式：
-	// 先使用 database/sql 打开连接（使用我们的 "sqlite3" 驱动），
-	// 然后使用 sqlite.Dialector 包装这个连接
-
-	// 方法1：直接使用 sqlite.Open，但它会使用 modernc.org/sqlite
-	// 为了使用我们的 sqlite3-driver，我们需要创建一个自定义实现
-	// 这里我们使用 sqlite.Open，但通过 DSN 来利用我们的驱动特性（如自动路径处理）
-
-	// 注意：由于 sqlite.Dialector 的限制，我们暂时使用 sqlite.Open
-	// 如果需要完全使用我们的 sqlite3-driver，需要创建一个完全自定义的 Dialector 实现
-	// 但这样会失去 GORM SQLite 驱动的一些优化特性
-	return sqlite.Open(dsn)
-}
 
 // User 用户模型
 type User struct {
@@ -153,8 +132,8 @@ func main() {
 
 	// 使用 sqlite3-driver 打开数据库连接
 	// 注意：需要先导入 pkg/sqlite3-driver 包以注册驱动
-	// 使用 openSQLite3 函数创建 GORM Dialector，它会使用我们注册的 "sqlite3" 驱动
-	db, err := gorm.Open(openSQLite3(dbPath), &gorm.Config{
+	// 使用 sqlite3driver.Open 创建 GORM Dialector，它会使用我们注册的 "sqlite3" 驱动
+	db, err := gorm.Open(sqlite3driver.Open(dbPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info), // 启用 SQL 日志
 	})
 	if err != nil {

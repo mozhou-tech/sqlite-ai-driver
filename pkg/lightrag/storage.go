@@ -12,10 +12,10 @@ import (
 	cayley_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/cayley-driver"
 	"github.com/mozhou-tech/sqlite-ai-driver/pkg/sego"
 	_ "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
+	sqlite3_driver "github.com/mozhou-tech/sqlite-ai-driver/pkg/sqlite3-driver"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -207,9 +207,9 @@ func CreateDatabase(ctx context.Context, opts DatabaseOptions) (Database, error)
 		dsn = fmt.Sprintf("%s?workingDir=%s", dbPath, opts.WorkingDir)
 	}
 
-	// 打开SQLite数据库，使用 GORM
-	// sqlite3-driver 会自动处理路径和 WAL 模式
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	// 使用 sqlite3-driver 提供的 dialector 打开数据库
+	// sqlite3-driver 会自动处理路径映射和 WAL 模式
+	db, err := gorm.Open(sqlite3_driver.Open(dsn), &gorm.Config{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
