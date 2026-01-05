@@ -82,7 +82,7 @@ func (r *LightRAG) InitializeStorages(ctx context.Context) error {
 
 	// 创建数据库
 	// 不同的业务模块通过表名前缀来区分（如 lightrag_documents）
-	// duckdb-driver 会自动创建目录并处理路径映射，无需手动创建目录
+	// sqlite3-driver 会自动创建目录并处理路径映射，无需手动创建目录
 	db, err := CreateDatabase(ctx, DatabaseOptions{
 		Name:       "lightrag",
 		WorkingDir: r.workingDir,
@@ -1263,14 +1263,14 @@ func (r *LightRAG) WaitForEmbeddings(ctx context.Context, maxWait time.Duration)
 		return nil // 没有向量搜索，不需要等待
 	}
 
-	// 使用类型断言访问底层的 duckdbCollection
+	// 使用类型断言访问底层的 sqliteCollection
 	type pendingCounter interface {
 		countPendingEmbeddings(ctx context.Context) (int, error)
 	}
 
 	collection, ok := r.docs.(pendingCounter)
 	if !ok {
-		// 如果不是 duckdbCollection，使用简单的超时等待
+		// 如果不是 sqliteCollection，使用简单的超时等待
 		logrus.Warn("Cannot check embedding status, using timeout-based wait")
 		select {
 		case <-ctx.Done():
